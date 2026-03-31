@@ -7,6 +7,7 @@ Minimal real transport for executing Kodi JSON-RPC commands over HTTP.
 import base64
 import json
 import socket
+import time
 from urllib import request as urllib_request
 from urllib.error import HTTPError, URLError
 
@@ -37,6 +38,7 @@ class HttpJsonRpcTransport(Transport):
         message: str,
         error_type: ErrorType = ErrorType.UNKNOWN_ERROR,
         error_code: int = None,
+        latency_ms: int = None,
     ) -> ResponseMessage:
         """Build a consistent error response with typed classification."""
         return ResponseMessage(
@@ -45,6 +47,7 @@ class HttpJsonRpcTransport(Transport):
             error=message,
             error_type=error_type,
             error_code=error_code,
+            latency_ms=latency_ms,
         )
 
     async def send_request(self, request: RequestMessage) -> ResponseMessage:
@@ -54,6 +57,7 @@ class HttpJsonRpcTransport(Transport):
                 request.request_id,
                 "unsupported command for http transport",
                 ErrorType.UNKNOWN_ERROR,
+                latency_ms=0,
             )
 
         payload = json.dumps(
@@ -78,10 +82,15 @@ class HttpJsonRpcTransport(Transport):
             method="POST",
         )
 
+        import time
+
+        start_time = time.time()
+
         try:
             with urllib_request.urlopen(http_request, timeout=self.timeout) as response:
                 raw_body = response.read().decode("utf-8")
         except HTTPError as exc:
+            latency_ms = int((time.time() - start_time) * 1000)
             # Map HTTP status codes to error types
             if exc.code in (401, 403):
                 error_type = ErrorType.AUTH_ERROR
@@ -96,31 +105,39 @@ class HttpJsonRpcTransport(Transport):
                 f"http error {exc.code}: {exc.reason}",
                 error_type,
                 exc.code,
+                latency_ms=latency_ms,
             )
         except socket.timeout:
+            latency_ms = int((time.time() - start_time) * 1000)
             return self._error_response(
                 request.request_id,
                 "request timeout",
                 ErrorType.TIMEOUT,
+                latency_ms=latency_ms,
             )
         except URLError as exc:
             reason = exc.reason
+            latency_ms = int((time.time() - start_time) * 1000)
             if isinstance(reason, socket.timeout):
                 return self._error_response(
                     request.request_id,
                     "request timeout",
                     ErrorType.TIMEOUT,
+                    latency_ms=latency_ms,
                 )
             return self._error_response(
                 request.request_id,
                 f"connection error: {reason}",
                 ErrorType.NETWORK_ERROR,
+                latency_ms=latency_ms,
             )
         except Exception as exc:
+            latency_ms = int((time.time() - start_time) * 1000)
             return self._error_response(
                 request.request_id,
                 f"request failed: {exc}",
                 ErrorType.UNKNOWN_ERROR,
+                latency_ms=latency_ms,
             )
 
         try:
@@ -131,6 +148,8 @@ class HttpJsonRpcTransport(Transport):
                 "invalid json response from kodi",
                 ErrorType.PARSE_ERROR,
             )
+
+        latency_ms = int((time.time() - start_time) * 1000)
 
         if response_data.get("error") is not None:
             error = response_data.get("error")
@@ -145,6 +164,7 @@ class HttpJsonRpcTransport(Transport):
                 error_text,
                 ErrorType.SERVER_ERROR,
                 code if isinstance(code, int) else None,
+                latency_ms=latency_ms,
             )
 
         return ResponseMessage(
@@ -153,4 +173,5 @@ class HttpJsonRpcTransport(Transport):
             error=None,
             error_type=None,
             error_code=None,
+            latency_ms=latency_ms,
         )

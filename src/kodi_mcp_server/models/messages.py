@@ -64,6 +64,7 @@ class ResponseMessage:
     error: Optional[str] = None
     error_type: Optional[ErrorType] = None
     error_code: Optional[int] = None
+    latency_ms: Optional[int] = None  # Request latency in milliseconds
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ResponseMessage":
@@ -82,6 +83,7 @@ class ResponseMessage:
             error=data.get("error"),
             error_type=error_type,
             error_code=data.get("error_code"),
+            latency_ms=data.get("latency_ms"),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -92,4 +94,5 @@ class ResponseMessage:
             "error": self.error,
             "error_type": self.error_type.value if self.error_type else None,
             "error_code": self.error_code,
+            "latency_ms": self.latency_ms,
         }
