@@ -9,9 +9,11 @@
 1. **`main.py`** — Server entry point
    - Creates combined app with `mcp_app` + `repo_app`
    - Runs via `uvicorn` on port 8000
+   - Calls `validate_config()` at startup - fails fast if config missing
 
 2. **`mcp_app.py`** — MCP-style endpoint handler
    - Receives requests, forwards to transport layer
+   - Exposes `/health` and `/status` endpoints
 
 3. **`repo_app.py`** — Repo server endpoints
    - Serves Kodi addon packages from `project/repo/`
@@ -22,19 +24,17 @@
 1. **`HttpJsonRpcTransport`** (`transport/http_jsonrpc.py`)
    - Sends JSON-RPC commands to Kodi over HTTP
    - Supports basic auth
-   - Returns `ResponseMessage` with result or error
+   - Returns `ResponseMessage` with result, error, error_type, error_code
 
 2. **`HttpBridgeClient`** (`transport/http_bridge.py`)
    - HTTP client for remote Kodi addon bridge
-   - Methods: `get_health`, `get_status`, `get_file`, `execute_addon`, etc.
-   - Returns `ResponseMessage` with result or error
+   - Methods: `get_health`, `get_status`, `get_log_tail`, `execute_addon`, etc.
+   - Returns `ResponseMessage` with result, error, error_type, error_code
 
-3. **`MockTransport`** (`transport/mock.py`)
-   - Placeholder for testing
-   - Returns mock responses
-
-4. **`Base Transport`** (`transport/base.py`)
+3. **`Base Transport`** (`transport/base.py`)
    - Abstract base class defining `send_request`, `connect`, `disconnect`
+
+**Note:** `MockTransport` (transport/mock.py) was removed in Phase 3. Server now assumes real remote Kodi connectivity.
 
 ### Request/Response Models
 
@@ -47,17 +47,31 @@
 - `request_id`: string
 - `result`: dict | None
 - `error`: string | None
+- `error_type`: ErrorType | None
+- `error_code`: int | None
+
+**`ErrorType`** (`models/messages.py`)
+- `NETWORK_ERROR` - TCP connection failed, DNS failure
+- `TIMEOUT` - Request timed out
+- `AUTH_ERROR` - 401/403 credential issues
+- `NOT_FOUND` - 404 resource not found
+- `SERVER_ERROR` - 5xx Kodi/server error
+- `PARSE_ERROR` - Invalid JSON response
+- `INVALID_RESPONSE` - Response schema mismatch
+- `CONFIG_ERROR` - Missing required config
+- `UNKNOWN_ERROR` - Unexpected errors
 
 ### Configuration
 
 **`config.py`**
-- Loads from environment variables
-- Also loads from `.env` in `project/mcp_repo_server/` (if exists)
-- Key settings:
-  - `KODI_JSONRPC_URL`, `KODI_JSONRPC_USERNAME`, `KODI_JSONRPC_PASSWORD`
+- Loads from `project/.env` (workspace root `.env` in project dir)
+- `validate_config()` function raises `ConfigError` if required values missing
+- Required values: `KODI_JSONRPC_URL`, `KODI_BRIDGE_BASE_URL`
+- Optional values:
+  - `KODI_JSONRPC_USERNAME`, `KODI_JSONRPC_PASSWORD` (if auth required)
   - `KODI_TCP_HOST`, `KODI_TCP_PORT` (9090)
   - `KODI_WEBSOCKET_URL`
-  - `KODI_BRIDGE_BASE_URL`
+  - `KODI_TIMEOUT` (default 10)
   - `REPO_SERVER_HOST` (0.0.0.0), `REPO_SERVER_PORT` (8001)
 - Authoritative repo root: `project/repo/`
 
@@ -65,24 +79,26 @@
 
 **`tools/`** directory contains:
 - `jsonrpc.py` — JSON-RPC command execution
-- `bridge.py` — Bridge endpoint interactions
+- `bridge.py` — Bridge endpoint interactions (including log retrieval)
 - `addon_ops.py` — Addon lifecycle operations
 - `repo.py` — Repo server operations
-- `logs.py` — Log retrieval
+
+**Note:** `tools/logs.py` was removed in Phase 3; log retrieval now via `BridgeTool.get_bridge_log_tail()`
 
 ## Known Gaps
 
-1. **Config loading** — Currently only loads from `.env` in workspace root. Should validate required values are present.
+1. **CLI wrappers** — Not yet implemented. Future work — do not assume they exist.
 
-2. **Error handling consistency** — Some transports return structured errors, others return raw exceptions.
+2. **Status endpoint enhancement** — `/status` exists but could be more diagnostic (probes more than just connectivity)
 
-3. **Mock transport** — Needs implementation for testing with realistic fake responses.
+3. **Integration tests** — No test suite exists yet. Tests would verify:
+   - Config validation catches missing values
+   - Transport error handling works correctly
+   - Endpoint responses match documented structure
 
-4. **CLI wrappers** — Not yet implemented. Future work — do not assume they exist.
+4. **Connection reuse** — New transport instance created per request (performance optimization for later)
 
-5. **Definition of Done** — No explicit criteria for "done" on backend tasks.
-
-6. **Error codes** — No standardized error types or structured error responses.
+5. **README/API docs** — Could be more aligned with current implementation (document `/status` response format, error types, etc.)
 
 ## Recent Changes
 
