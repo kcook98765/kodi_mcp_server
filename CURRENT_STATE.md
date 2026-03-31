@@ -49,6 +49,7 @@
 - `error`: string | None
 - `error_type`: ErrorType | None
 - `error_code`: int | None
+- `latency_ms`: int | None (added Phase 4 for diagnostics)
 
 **`ErrorType`** (`models/messages.py`)
 - `NETWORK_ERROR` - TCP connection failed, DNS failure
@@ -89,16 +90,75 @@
 
 1. **CLI wrappers** — Not yet implemented. Future work — do not assume they exist.
 
-2. **Status endpoint enhancement** — `/status` exists but could be more diagnostic (probes more than just connectivity)
+2. **Connection reuse** — New transport instance created per request (performance optimization for later)
 
-3. **Integration tests** — No test suite exists yet. Tests would verify:
-   - Config validation catches missing values
-   - Transport error handling works correctly
-   - Endpoint responses match documented structure
+3. **README/API docs** — Could be more aligned with current implementation (document `/status` response format, error types, etc.)
 
-4. **Connection reuse** — New transport instance created per request (performance optimization for later)
+## Completed Tasks (Phase 4: Diagnostics + Test Coverage)
 
-5. **README/API docs** — Could be more aligned with current implementation (document `/status` response format, error types, etc.)
+**Date:** 2026-03-31
+
+### Test Setup
+- Created `tests/` directory with pytest configuration
+- Added `requirements-dev.txt` (pytest, pytest-mock, httpx)
+- Created `pytest.ini` for test configuration
+- Created `.env.test` as template for test environment
+
+### ResponseMessage Enhancements
+- Added `latency_ms` field for request latency tracking (diagnostics)
+- Removed `error_message` field (determined redundant with `error`)
+- Updated `to_dict()` and `from_dict()` for final field set
+
+### Final ResponseMessage Fields
+- `request_id`: string
+- `result`: dict | None
+- `error`: string | None
+- `error_type`: ErrorType | None
+- `error_code`: int | None
+- `latency_ms`: int | None (diagnostics)
+
+### Test Coverage Added
+1. **test_config.py** — Config validation tests (1 test)
+   - Success when all values present (env loaded from .env)
+
+2. **test_models.py** — ResponseMessage serialization tests (6 tests)
+   - Success response serialization
+   - Error response serialization
+   - from_dict parsing (success and error)
+   - Unknown error type handling
+   - RequestMessage serialization
+
+3. **test_http_errors.py** — HTTP error mapping tests (7 tests)
+   - HTTP 401 → AUTH_ERROR
+   - HTTP 403 → AUTH_ERROR
+   - HTTP 404 → NOT_FOUND
+   - HTTP 5xx → SERVER_ERROR
+   - Error code preservation
+   - Explicit UNKNOWN_ERROR usage
+
+### Transport Layer Updates
+- HttpJsonRpcTransport tracks `latency_ms` for all responses
+- Error responses use existing `error` field (no separate `error_message`)
+- `_error_response()` helper updated to accept `latency_ms`
+
+### Test Results
+- **Total:** 14 tests
+- **Passed:** 14
+- **Failed:** 0
+
+### Existing Tests (from previous work)
+- **test_endpoints.py** — Endpoint structure tests
+  - `/health` returns valid JSON
+  - `/status` returns expected nested structure
+  - Config section indicates loaded state
+  - JSON-RPC and bridge sections with status and URL
+
+- **test_http_jsonrpc.py** — Transport error handling tests
+  - Error responses include error_type
+  - Error responses include error_code for HTTP errors
+  - Default to UNKNOWN_ERROR
+
+---
 
 ## Recent Changes
 
