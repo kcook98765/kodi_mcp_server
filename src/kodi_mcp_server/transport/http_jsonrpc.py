@@ -10,7 +10,7 @@ import socket
 from urllib import request as urllib_request
 from urllib.error import HTTPError, URLError
 
-from ..models.messages import RequestMessage, ResponseMessage
+from ..models.messages import ErrorType, RequestMessage, ResponseMessage
 from ..transport.base import Transport
 
 
@@ -31,12 +31,20 @@ class HttpJsonRpcTransport(Transport):
         """No-op disconnect for stateless HTTP transport."""
         return None
 
-    def _error_response(self, request_id: str, message: str) -> ResponseMessage:
-        """Build a consistent error response."""
+    def _error_response(
+        self,
+        request_id: str,
+        message: str,
+        error_type: ErrorType = ErrorType.UNKNOWN_ERROR,
+        error_code: int = None,
+    ) -> ResponseMessage:
+        """Build a consistent error response with typed classification."""
         return ResponseMessage(
             request_id=request_id,
             result=None,
             error=message,
+            error_type=error_type,
+            error_code=error_code,
         )
 
     async def send_request(self, request: RequestMessage) -> ResponseMessage:
@@ -45,6 +53,7 @@ class HttpJsonRpcTransport(Transport):
             return self._error_response(
                 request.request_id,
                 "unsupported command for http transport",
+                ErrorType.UNKNOWN_ERROR,
             )
 
         payload = json.dumps(
@@ -73,24 +82,45 @@ class HttpJsonRpcTransport(Transport):
             with urllib_request.urlopen(http_request, timeout=self.timeout) as response:
                 raw_body = response.read().decode("utf-8")
         except HTTPError as exc:
+            # Map HTTP status codes to error types
+            if exc.code in (401, 403):
+                error_type = ErrorType.AUTH_ERROR
+            elif exc.code == 404:
+                error_type = ErrorType.NOT_FOUND
+            elif 500 <= exc.code < 600:
+                error_type = ErrorType.SERVER_ERROR
+            else:
+                error_type = ErrorType.UNKNOWN_ERROR
             return self._error_response(
                 request.request_id,
                 f"http error {exc.code}: {exc.reason}",
+                error_type,
+                exc.code,
             )
         except socket.timeout:
-            return self._error_response(request.request_id, "request timeout")
+            return self._error_response(
+                request.request_id,
+                "request timeout",
+                ErrorType.TIMEOUT,
+            )
         except URLError as exc:
             reason = exc.reason
             if isinstance(reason, socket.timeout):
-                return self._error_response(request.request_id, "request timeout")
+                return self._error_response(
+                    request.request_id,
+                    "request timeout",
+                    ErrorType.TIMEOUT,
+                )
             return self._error_response(
                 request.request_id,
                 f"connection error: {reason}",
+                ErrorType.NETWORK_ERROR,
             )
         except Exception as exc:
             return self._error_response(
                 request.request_id,
                 f"request failed: {exc}",
+                ErrorType.UNKNOWN_ERROR,
             )
 
         try:
@@ -99,6 +129,7 @@ class HttpJsonRpcTransport(Transport):
             return self._error_response(
                 request.request_id,
                 "invalid json response from kodi",
+                ErrorType.PARSE_ERROR,
             )
 
         if response_data.get("error") is not None:
@@ -109,10 +140,17 @@ class HttpJsonRpcTransport(Transport):
                 error_text = f"jsonrpc error {code}: {message}"
             else:
                 error_text = str(error)
-            return self._error_response(request.request_id, error_text)
+            return self._error_response(
+                request.request_id,
+                error_text,
+                ErrorType.SERVER_ERROR,
+                code if isinstance(code, int) else None,
+            )
 
         return ResponseMessage(
             request_id=request.request_id,
             result=response_data.get("result"),
             error=None,
+            error_type=None,
+            error_code=None,
         )

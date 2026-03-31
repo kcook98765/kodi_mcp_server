@@ -4,7 +4,7 @@ Mock transport for Kodi MCP Server.
 Test-only in-memory transport for local vertical-slice testing.
 """
 
-from ..models.messages import RequestMessage, ResponseMessage
+from ..models.messages import ErrorType, RequestMessage, ResponseMessage
 from ..transport.base import Transport
 
 
@@ -32,6 +32,8 @@ class MockTransport(Transport):
                     ]
                 },
                 error=None,
+                error_type=None,
+                error_code=None,
             )
 
         if request.command == "execute_jsonrpc":
@@ -44,10 +46,14 @@ class MockTransport(Transport):
                     "mock": True,
                 },
                 error=None,
+                error_type=None,
+                error_code=None,
             )
 
         return ResponseMessage(
             request_id=request.request_id,
             result=None,
             error="unknown command",
+            error_type=ErrorType.UNKNOWN_ERROR,
+            error_code=None,
         )
