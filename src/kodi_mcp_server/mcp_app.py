@@ -6,7 +6,6 @@ from kodi_mcp_server.app_shared import (
     build_addon_ops_tool,
     build_bridge_tool,
     build_jsonrpc_tool,
-    build_log_tool,
     build_notification_probe,
     build_repo_tool,
 )
@@ -84,23 +83,25 @@ def configure_mcp_app(app):
     @app.get("/tools/get_kodi_log_tail")
     async def get_kodi_log_tail_endpoint(
         limit: int = Query(default=100, ge=1),
-        mock: bool = Query(default=False),
     ):
-        result = await build_log_tool(mock=mock).get_kodi_log_tail(limit=limit)
+        result = await build_bridge_tool().get_bridge_log_tail(lines=limit)
         return result.to_dict()
 
     @app.get("/tools/get_bridge_health")
     async def get_bridge_health_endpoint():
+
         result = await build_bridge_tool().get_bridge_health()
         return result.to_dict()
 
     @app.get("/tools/get_bridge_status")
     async def get_bridge_status_endpoint():
+
         result = await build_bridge_tool().get_bridge_status()
         return result.to_dict()
 
     @app.get("/tools/get_bridge_runtime_info")
     async def get_bridge_runtime_info_endpoint():
+
         result = await build_bridge_tool().get_bridge_runtime_info()
         return result.to_dict()
 
@@ -187,7 +188,7 @@ def configure_mcp_app(app):
         listen_seconds: int = Query(default=5, ge=1),
     ):
         probe = build_notification_probe()
-        tool = build_jsonrpc_tool(mock=False)
+        tool = build_jsonrpc_tool()
         result = await probe.listen_with_trigger(
             sample_size=sample_size,
             listen_seconds=listen_seconds,
@@ -197,42 +198,41 @@ def configure_mcp_app(app):
         return result.to_dict()
 
     @app.get("/tools/execute_jsonrpc")
-    async def execute_jsonrpc_endpoint(method: str, mock: bool = Query(default=False)):
-        result = await build_jsonrpc_tool(mock=mock).execute_jsonrpc(method=method)
+    async def execute_jsonrpc_endpoint(method: str): 
+        result = await build_jsonrpc_tool().execute_jsonrpc(method=method)
         return result.to_dict()
 
     @app.get("/tools/get_application_properties")
-    async def get_application_properties_endpoint(mock: bool = Query(default=False)):
-        result = await build_jsonrpc_tool(mock=mock).get_application_properties()
+    async def get_application_properties_endpoint():
+
+        result = await build_jsonrpc_tool().get_application_properties()
         return result.to_dict()
 
     @app.get("/tools/get_active_players")
-    async def get_active_players_endpoint(mock: bool = Query(default=False)):
-        result = await build_jsonrpc_tool(mock=mock).get_active_players()
+    async def get_active_players_endpoint():
+
+        result = await build_jsonrpc_tool().get_active_players()
         return result.to_dict()
 
     @app.get("/tools/get_movies_sample")
     async def get_movies_sample_endpoint(
         limit: int = Query(default=5, ge=1),
-        mock: bool = Query(default=False),
     ):
-        result = await build_jsonrpc_tool(mock=mock).get_movies_sample(limit=limit)
+        result = await build_jsonrpc_tool().get_movies_sample(limit=limit)
         return result.to_dict()
 
     @app.get("/tools/get_tvshows_sample")
     async def get_tvshows_sample_endpoint(
         limit: int = Query(default=5, ge=1),
-        mock: bool = Query(default=False),
     ):
-        result = await build_jsonrpc_tool(mock=mock).get_tvshows_sample(limit=limit)
+        result = await build_jsonrpc_tool().get_tvshows_sample(limit=limit)
         return result.to_dict()
 
     @app.get("/tools/get_sources")
     async def get_sources_endpoint(
         media: str = Query(default="files"),
-        mock: bool = Query(default=False),
     ):
-        result = await build_jsonrpc_tool(mock=mock).get_sources(media=media)
+        result = await build_jsonrpc_tool().get_sources(media=media)
         return result.to_dict()
 
     @app.post("/tools/publish_addon_to_repo")
@@ -288,22 +288,21 @@ def configure_mcp_app(app):
         return result.to_dict()
 
     @app.get("/tools/get_addons")
-    async def get_addons_endpoint(mock: bool = Query(default=False)):
-        result = await build_jsonrpc_tool(mock=mock).get_addons()
+    async def get_addons_endpoint():
+        result = await build_jsonrpc_tool().get_addons()
         return result.to_dict()
 
     @app.get("/tools/get_addon_details")
-    async def get_addon_details_endpoint(addonid: str, mock: bool = Query(default=False)):
-        result = await build_jsonrpc_tool(mock=mock).get_addon_details(addonid=addonid)
+    async def get_addon_details_endpoint(addonid: str): 
+        result = await build_jsonrpc_tool().get_addon_details(addonid=addonid)
         return result.to_dict()
 
     @app.get("/tools/set_addon_enabled")
     async def set_addon_enabled_endpoint(
         addonid: str,
         enabled: bool,
-        mock: bool = Query(default=False),
     ):
-        result = await build_jsonrpc_tool(mock=mock).set_addon_enabled(addonid=addonid, enabled=enabled)
+        result = await build_jsonrpc_tool().set_addon_enabled(addonid=addonid, enabled=enabled)
         return result.to_dict()
 
     @app.get("/tools/list_directory")
@@ -311,10 +310,9 @@ def configure_mcp_app(app):
         path: str = Query(default=r"C:\Users\kcook\Kodi_NFO_Sidecar_Test\\"),
         media: str = Query(default="files"),
         limit: int | None = Query(default=None, ge=1),
-        mock: bool = Query(default=False),
     ):
         limits = {"start": 0, "end": limit} if limit is not None else None
-        result = await build_jsonrpc_tool(mock=mock).list_directory(
+        result = await build_jsonrpc_tool().list_directory(
             path=path,
             media=media,
             properties=["title", "file"],
@@ -325,76 +323,72 @@ def configure_mcp_app(app):
     @app.get("/tools/get_recent_movies")
     async def get_recent_movies_endpoint(
         limit: int = Query(default=5, ge=1),
-        mock: bool = Query(default=False),
     ):
-        result = await build_jsonrpc_tool(mock=mock).get_recent_movies(limit=limit)
+        result = await build_jsonrpc_tool().get_recent_movies(limit=limit)
         return result.to_dict()
 
     @app.get("/tools/get_player_item")
-    async def get_player_item_endpoint(mock: bool = Query(default=False)):
-        result = await build_jsonrpc_tool(mock=mock).get_player_item()
+    async def endpoint():
+        result = await build_jsonrpc_tool().get_player_item()
         return result.to_dict()
 
     @app.get("/tools/list_addons")
     async def list_addons_endpoint(
         type: str | None = Query(default=None),
         enabled: bool | None = Query(default=None),
-        mock: bool = Query(default=False),
     ):
-        result = await build_jsonrpc_tool(mock=mock).list_addons(type=type, enabled=enabled)
+        result = await build_jsonrpc_tool().list_addons(type=type, enabled=enabled)
         return result.to_dict()
 
     @app.get("/tools/execute_addon")
     async def execute_addon_endpoint(
         addonid: str,
         wait: bool = Query(default=False),
-        mock: bool = Query(default=False),
     ):
-        result = await build_jsonrpc_tool(mock=mock).execute_addon(addonid=addonid, wait=wait)
+        result = await build_jsonrpc_tool().execute_addon(addonid=addonid, wait=wait)
         return result.to_dict()
 
     @app.get("/tools/get_setting_value")
-    async def get_setting_value_endpoint(setting: str, mock: bool = Query(default=False)):
-        result = await build_jsonrpc_tool(mock=mock).get_setting_value(setting=setting)
+    async def get_setting_value_endpoint(setting: str): 
+        result = await build_jsonrpc_tool().get_setting_value(setting=setting)
         return result.to_dict()
 
     @app.get("/tools/get_system_properties")
-    async def get_system_properties_endpoint(mock: bool = Query(default=False)):
-        result = await build_jsonrpc_tool(mock=mock).get_system_properties()
+    async def endpoint():
+        result = await build_jsonrpc_tool().get_system_properties()
         return result.to_dict()
 
     @app.get("/tools/inspect_addon")
-    async def inspect_addon_endpoint(addonid: str, mock: bool = Query(default=False)):
-        result = await build_jsonrpc_tool(mock=mock).inspect_addon(addonid=addonid)
+    async def inspect_addon_endpoint(addonid: str): 
+        result = await build_jsonrpc_tool().inspect_addon(addonid=addonid)
         return result.to_dict()
 
     @app.get("/tools/is_addon_installed")
-    async def is_addon_installed_endpoint(addonid: str, mock: bool = Query(default=False)):
-        result = await build_jsonrpc_tool(mock=mock).is_addon_installed(addonid=addonid)
+    async def is_addon_installed_endpoint(addonid: str): 
+        result = await build_jsonrpc_tool().is_addon_installed(addonid=addonid)
         return result.to_dict()
 
     @app.get("/tools/is_addon_enabled")
-    async def is_addon_enabled_endpoint(addonid: str, mock: bool = Query(default=False)):
-        result = await build_jsonrpc_tool(mock=mock).is_addon_enabled(addonid=addonid)
+    async def is_addon_enabled_endpoint(addonid: str): 
+        result = await build_jsonrpc_tool().is_addon_enabled(addonid=addonid)
         return result.to_dict()
 
     @app.get("/tools/ensure_addon_enabled")
-    async def ensure_addon_enabled_endpoint(addonid: str, mock: bool = Query(default=False)):
-        result = await build_jsonrpc_tool(mock=mock).ensure_addon_enabled(addonid=addonid)
+    async def ensure_addon_enabled_endpoint(addonid: str): 
+        result = await build_jsonrpc_tool().ensure_addon_enabled(addonid=addonid)
         return result.to_dict()
 
     @app.get("/tools/run_addon_and_report")
     async def run_addon_and_report_endpoint(
         addonid: str,
         wait: bool = Query(default=False),
-        mock: bool = Query(default=False),
     ):
-        result = await build_jsonrpc_tool(mock=mock).run_addon_and_report(addonid=addonid, wait=wait)
+        result = await build_jsonrpc_tool().run_addon_and_report(addonid=addonid, wait=wait)
         return result.to_dict()
 
     @app.get("/tools/get_jsonrpc_version")
-    async def get_jsonrpc_version_endpoint(mock: bool = Query(default=False)):
-        result = await build_jsonrpc_tool(mock=mock).get_jsonrpc_version()
+    async def endpoint():
+        result = await build_jsonrpc_tool().get_jsonrpc_version()
         return result.to_dict()
 
     @app.get("/tools/introspect_jsonrpc")
@@ -403,9 +397,8 @@ def configure_mcp_app(app):
         getmetadata: bool = Query(default=False),
         filterbytransport: bool = Query(default=False),
         summary: bool = Query(default=True),
-        mock: bool = Query(default=False),
     ):
-        result = await build_jsonrpc_tool(mock=mock).introspect_jsonrpc(
+        result = await build_jsonrpc_tool().introspect_jsonrpc(
             getdescriptions=getdescriptions,
             getmetadata=getmetadata,
             filterbytransport=filterbytransport,

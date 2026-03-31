@@ -34,8 +34,8 @@ class JsonRpcTool:
             params: Parameters to pass to the method
 
         Returns:
-            ResponseMessage containing either the tool result or a placeholder error
-            when transport is not implemented.
+            ResponseMessage containing either the tool result or an error
+            if transport is not configured (should not happen in production).
         """
         request = RequestMessage(
             request_id=str(uuid.uuid4()),
@@ -50,7 +50,8 @@ class JsonRpcTool:
             return ResponseMessage(
                 request_id=request.request_id,
                 result=None,
-                error="transport not implemented",
+                error="JSON-RPC transport not configured - this should not happen after mock mode removal",
+                error_type=None,  # Will be set by caller if needed
             )
 
         return await self.transport.send_request(request)
