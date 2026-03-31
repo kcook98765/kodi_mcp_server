@@ -72,15 +72,17 @@
 
 ## Known Gaps
 
-1. **Config loading** — Currently only loads from `mcp_repo_server/.env`. Should support workspace root or explicit path.
+1. **Config loading** — Currently only loads from `.env` in workspace root. Should validate required values are present.
 
 2. **Error handling consistency** — Some transports return structured errors, others return raw exceptions.
 
-3. **Mock transport** — Needs implementation for testing.
+3. **Mock transport** — Needs implementation for testing with realistic fake responses.
 
-4. **CLI wrappers** — Not yet implemented. Future work.
+4. **CLI wrappers** — Not yet implemented. Future work — do not assume they exist.
 
-5. **Documentation** — README exists but needs updating to reflect current architecture.
+5. **Definition of Done** — No explicit criteria for "done" on backend tasks.
+
+6. **Error codes** — No standardized error types or structured error responses.
 
 ## Recent Changes
 
@@ -91,11 +93,30 @@
 ## Next Steps
 
 1. Stabilize config loading
-2. Add integration tests for transports
+2. Standardize error handling
 3. Define CLI wrapper contract
-4. Update README with architecture diagram
-5. Document tool endpoints and expected inputs/outputs
+4. Add integration tests for transports
+5. Define error codes/types
 
 ---
 
-Use this file to track progress. Update it as you make changes.
+## Definition of Done (Backend Server Changes)
+
+For any backend server change, verify all of the following:
+
+- [ ] No existing endpoints broken
+- [ ] Responses follow standard JSON structure (`result` or `error` field)
+- [ ] Error handling is consistent across all tools
+- [ ] Config validation added if new config values introduced
+- [ ] CURRENT_STATE.md updated (what changed, why, what gaps remain)
+- [ ] Documentation updated if needed (README, SKILLS.md, etc.)
+- [ ] Committed with meaningful message
+- [ ] Pushed if changes should be shared (with approval)
+
+---
+
+## CURRENT_STATE.md Maintenance
+
+**This file must be updated after every meaningful change.**  
+If you modify code, config, or architecture, update this file before finishing.  
+If no changes were made, confirm CURRENT_STATE.md is still accurate.

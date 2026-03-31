@@ -147,13 +147,53 @@ These skills provide specialized instructions for backend server development tas
 
 ---
 
+### git-review
+
+**Description:** Review git status in both workspace root and project/ before or after work.
+
+**Use when:**
+- Before starting any meaningful task
+- After completing a task
+- When asked about current state
+
+**Steps:**
+1. Run `git status` in workspace root
+2. Run `git status` in project/
+3. Report: branch, tracking, uncommitted files, untracked files
+4. Warn if uncommitted changes exist before unrelated work
+5. Suggest next action (commit, push, or continue)
+
+---
+
+### update-current-state
+
+**Description:** Update CURRENT_STATE.md after meaningful changes.
+
+**Use when:**
+- After any code change
+- After any architecture documentation update
+- When known gaps change
+- After fixing a gap identified in this file
+
+**Steps:**
+1. Review what changed (code, config, endpoints)
+2. Update "What Exists" section if relevant
+3. Update "Known Gaps" section if gaps changed
+4. Update "Next Steps" section if priorities shifted
+5. Add date stamp: **Last updated:** [today's date]
+6. Confirm: "Definition of Done" items are still met
+
+---
+
 ## General Guidelines
 
 - **Read before you write** — Always examine existing code before making changes
+- **Check CURRENT_STATE.md first** — Know what exists and what gaps remain
 - **Small commits** — Keep changes focused and testable
-- **Document as you go** — Update README and CURRENT_STATE.md regularly
+- **Document as you go** — Update README and CURRENT_STATE.md after changes
 - **Test incrementally** — Don't refactor everything at once
 - **Think CLI-first** — Design endpoints with future CLI wrappers in mind
+- **CLI wrappers do NOT exist yet** — they are future work, not current
 
 ---
 

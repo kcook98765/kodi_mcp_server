@@ -67,6 +67,19 @@ Every endpoint should return:
 - Document what you changed and why
 - Don't refactor everything at once
 
+### Definition of Done for Server Changes
+
+For any backend server modification:
+
+- [ ] No existing endpoints broken
+- [ ] Responses follow standard JSON structure (`result` or `error`)
+- [ ] Error handling is consistent across all tools
+- [ ] Config validation added if new config values introduced
+- [ ] CURRENT_STATE.md updated
+- [ ] Documentation updated if needed (README, SKILLS.md)
+- [ ] Committed with meaningful message
+- [ ] Pushed if changes should be shared (with approval first)
+
 ---
 
 _This file is yours to evolve. As you learn who you are, update it._

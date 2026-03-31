@@ -144,6 +144,19 @@ Kodi runtime
 4. **Document architecture clearly** — so future work has context
 5. **Safe incremental changes** — commit often, keep things working
 
+### Git Workflow Enforcement
+
+- **Before any task:** check `git status` in workspace root AND project/
+- **Implementation rules:**
+  - All implementation code lives **only in `project/`**
+  - **Do not** create implementation files at workspace root
+  - **Do not** invent or assume local CLI wrappers already exist
+  - CLI wrappers are a **future phase** — current work is backend server only
+- **After any task:** report changes by repo (workspace root vs project/)
+- **Never commit or push automatically** — always ask for approval
+- **If uncommitted changes exist:** warn before making unrelated changes
+- **Maintain clean history:** small commits, meaningful messages
+
 ### What This Is NOT
 
 - Not built-in OpenClaw MCP support
@@ -198,12 +211,13 @@ You are free to edit `HEARTBEAT.md` with a short checklist or reminders. Keep it
 
 **Tip:** Batch similar periodic checks into `HEARTBEAT.md` instead of creating multiple cron jobs. Use cron for precise schedules and standalone tasks.
 
-**Things to check (rotate through these, 2-4 times per day):**
+**Things to check (rotate through these, 2-4 times per day for backend work):**
 
-- **Emails** - Any urgent unread messages?
-- **Calendar** - Upcoming events in next 24-48h?
-- **Mentions** - Twitter/social notifications?
-- **Weather** - Relevant if your human might go out?
+- **Server health:** curl localhost:8000/health
+- **Config validity:** .env values present (KODI_JSONRPC_URL, KODI_BRIDGE_BASE_URL)
+- **Git status:** any uncommitted changes?
+- **Remote Kodi:** can we reach bridge/JSON-RPC endpoints?
+- **CURRENT_STATE.md:** any gaps needing attention?
 
 **Track your checks** in `memory/heartbeat-state.json`:
 
@@ -234,9 +248,10 @@ You are free to edit `HEARTBEAT.md` with a short checklist or reminders. Keep it
 **Proactive work you can do without asking:**
 
 - Read and organize memory files
-- Check on projects (git status, etc.)
-- Update documentation
-- Commit and push your own changes
+- Check on projects (git status in both workspace root AND project/)
+- Update documentation (README, CURRENT_STATE.md, SKILLS.md)
+- **Backend health:** check server status, verify config, review CURRENT_STATE.md gaps
+- Commit and push your own changes (with approval first)
 - **Review and update MEMORY.md** (see below)
 
 ### 🔄 Memory Maintenance (During Heartbeats)
