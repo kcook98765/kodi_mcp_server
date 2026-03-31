@@ -18,8 +18,8 @@ from .paths import AUTHORITATIVE_REPO_ROOT, PROJECT_ROOT, assert_not_legacy_repo
 
 
 def _load_dotenv_if_present() -> None:
-    """Load simple KEY=VALUE pairs from the canonical mcp_repo_server/.env file."""
-    env_path = PROJECT_ROOT / "mcp_repo_server" / ".env"
+    """Load simple KEY=VALUE pairs from project root `.env` file."""
+    env_path = PROJECT_ROOT / "project" / ".env"
     if not env_path.exists():
         return
 
@@ -32,12 +32,40 @@ def _load_dotenv_if_present() -> None:
         value = value.strip()
         if not key:
             continue
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'", "`"}:
             value = value[1:-1]
         os.environ.setdefault(key, value)
 
 
 _load_dotenv_if_present()
+
+
+class ConfigError(Exception):
+    """Raised when required configuration is missing or invalid."""
+
+    pass
+
+
+def validate_config() -> None:
+    """Validate that required configuration is present.
+
+    Raises:
+        ConfigError: If required configuration is missing.
+    """
+    missing = []
+
+    if not KODI_JSONRPC_URL:
+        missing.append("KODI_JSONRPC_URL")
+    if not KODI_BRIDGE_BASE_URL:
+        missing.append("KODI_BRIDGE_BASE_URL")
+
+    if missing:
+        raise ConfigError(
+            f"Missing required configuration: {', '.join(missing)}\n"
+            "Set these in .env file or as environment variables.\n"
+            "See .env.example for required values."
+        )
+
 
 DEFAULT_KODI_JSONRPC_URL = ""
 DEFAULT_KODI_JSONRPC_USERNAME = ""

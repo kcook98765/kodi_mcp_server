@@ -19,6 +19,64 @@ def configure_mcp_app(app):
     async def health_check():
         return {"status": "ok", "service": "kodi_mcp_server"}
 
+    @app.get("/status")
+    async def full_status():
+        """Check server health and connectivity to all downstream services."""
+        from kodi_mcp_server.config import KODI_JSONRPC_URL, KODI_BRIDGE_BASE_URL
+
+        result = {
+            "server": {"status": "running"},
+            "config": {"loaded": bool(KODI_JSONRPC_URL and KODI_BRIDGE_BASE_URL)},
+            "jsonrpc": {"status": "unknown", "url": KODI_JSONRPC_URL},
+            "bridge": {"status": "unknown", "url": KODI_BRIDGE_BASE_URL},
+        }
+
+        # Test JSON-RPC connectivity (simple ping)
+        if KODI_JSONRPC_URL:
+            try:
+                from kodi_mcp_server.transport.http_jsonrpc import HttpJsonRpcTransport
+                from kodi_mcp_server.models.messages import RequestMessage
+                import uuid
+
+                transport = HttpJsonRpcTransport(
+                    url=KODI_JSONRPC_URL,
+                    username="",
+                    password="",
+                    timeout=5,
+                )
+                request = RequestMessage(
+                    request_id=str(uuid.uuid4()),
+                    command="execute_jsonrpc",
+                    args={"method": "JSONRPC.Version", "params": {}},
+                )
+                response = await transport.send_request(request)
+                if response.error:
+                    result["jsonrpc"]["status"] = "error"
+                    result["jsonrpc"]["error"] = response.error
+                else:
+                    result["jsonrpc"]["status"] = "ok"
+            except Exception as e:
+                result["jsonrpc"]["status"] = "error"
+                result["jsonrpc"]["error"] = str(e)
+
+        # Test bridge connectivity
+        if KODI_BRIDGE_BASE_URL:
+            try:
+                from kodi_mcp_server.transport.http_bridge import HttpBridgeClient
+
+                client = HttpBridgeClient(base_url=KODI_BRIDGE_BASE_URL, timeout=5)
+                response = await client.get_health()
+                if response.error:
+                    result["bridge"]["status"] = "error"
+                    result["bridge"]["error"] = response.error
+                else:
+                    result["bridge"]["status"] = "ok"
+            except Exception as e:
+                result["bridge"]["status"] = "error"
+                result["bridge"]["error"] = str(e)
+
+        return result
+
     @app.get("/")
     async def root():
         return {"message": "Kodi MCP Server running"}
