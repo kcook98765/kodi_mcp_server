@@ -1,0 +1,17 @@
+[project]
+name = "kodi_mcp_server"
+version = "0.1.0"
+description = "MCP server for Kodi integration"
+authors = [{name = "kodi_mcp"}]
+dependencies = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.20.0",
+    "websockets>=15.0.0",
+]
+
+[project.scripts]
+kodi-mcp-server = "kodi_mcp_server.main:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
