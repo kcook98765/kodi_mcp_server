@@ -15,6 +15,33 @@ from ..models.messages import ErrorType, RequestMessage, ResponseMessage
 from ..transport.base import Transport
 
 
+# Whitelist of Kodi JSON-RPC methods that are safe to retry automatically
+# Only pure read operations with no side effects
+SAFE_READ_METHODS = frozenset([
+    # Get operations
+    "Application.GetProperties",
+    "Files.GetDirectory",
+    "Files.GetSources",
+    "Player.GetActivePlayers",
+    "Player.GetItem",
+    "VideoLibrary.GetMovies",
+    "VideoLibrary.GetTVShows",
+    "VideoLibrary.GetRecentlyAddedMovies",
+    "Addons.GetAddons",
+    "Addons.GetAddonDetails",
+    "Settings.GetSettingValue",
+    "System.GetProperties",
+    # Introspection
+    "JSONRPC.Version",
+    "JSONRPC.Introspect",
+])
+
+
+def is_safe_to_retry(method: str) -> bool:
+    """Check if a Kodi method is safe to retry automatically."""
+    return method in SAFE_READ_METHODS
+
+
 class HttpJsonRpcTransport(Transport):
     """Minimal HTTP transport for Kodi JSON-RPC execution."""
 
@@ -50,16 +77,52 @@ class HttpJsonRpcTransport(Transport):
             latency_ms=latency_ms,
         )
 
-    async def send_request(self, request: RequestMessage) -> ResponseMessage:
-        """Send supported requests to Kodi over HTTP JSON-RPC."""
-        if request.command != "execute_jsonrpc":
-            return self._error_response(
-                request.request_id,
-                "unsupported command for http transport",
-                ErrorType.UNKNOWN_ERROR,
-                latency_ms=0,
-            )
+    async def _retry_wrapper(self, request: RequestMessage, start_time: float, max_retries: int = 1) -> ResponseMessage:
+        """Wrapper that retries on network errors (max 1 retry) for safe methods only."""
+        method = request.args.get("method", "")
+        if not is_safe_to_retry(method):
+            # Not a safe method, don't retry
+            return await self._send_once(request, start_time)
 
+        last_error = None
+        for attempt in range(max_retries + 1):
+            try:
+                return await self._send_once(request, start_time)
+            except socket.timeout as exc:
+                last_error = exc
+                latency_ms = int((time.time() - start_time) * 1000)
+                if attempt == max_retries:
+                    # Final attempt failed
+                    return self._error_response(
+                        request.request_id,
+                        "request timeout",
+                        ErrorType.TIMEOUT,
+                        latency_ms=latency_ms,
+                    )
+                # Retry: loop again
+            except URLError as exc:
+                last_error = exc
+                latency_ms = int((time.time() - start_time) * 1000)
+                if attempt == max_retries:
+                    # Final attempt failed
+                    if isinstance(exc.reason, socket.timeout):
+                        return self._error_response(
+                            request.request_id,
+                            "request timeout",
+                            ErrorType.TIMEOUT,
+                            latency_ms=latency_ms,
+                        )
+                    else:
+                        return self._error_response(
+                            request.request_id,
+                            f"connection error: {exc.reason}",
+                            ErrorType.NETWORK_ERROR,
+                            latency_ms=latency_ms,
+                        )
+                # Retry: loop again
+
+    async def _send_once(self, request: RequestMessage, start_time: float) -> ResponseMessage:
+        """Send a single request without retry logic."""
         payload = json.dumps(
             {
                 "jsonrpc": "2.0",
@@ -81,10 +144,6 @@ class HttpJsonRpcTransport(Transport):
             },
             method="POST",
         )
-
-        import time
-
-        start_time = time.time()
 
         try:
             with urllib_request.urlopen(http_request, timeout=self.timeout) as response:
@@ -175,3 +234,18 @@ class HttpJsonRpcTransport(Transport):
             error_code=None,
             latency_ms=latency_ms,
         )
+
+    async def send_request(self, request: RequestMessage) -> ResponseMessage:
+        """Send supported requests to Kodi over HTTP JSON-RPC."""
+        if request.command != "execute_jsonrpc":
+            return self._error_response(
+                request.request_id,
+                "unsupported command for http transport",
+                ErrorType.UNKNOWN_ERROR,
+                latency_ms=0,
+            )
+
+        start_time = time.time()
+
+        # Use retry wrapper for safe methods
+        return await self._retry_wrapper(request, start_time)

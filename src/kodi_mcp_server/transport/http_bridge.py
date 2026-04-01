@@ -17,6 +17,32 @@ class HttpBridgeClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
+    async def _retry_wrapper(self, method, *args, request_id: str, max_retries: int = 1, **kwargs) -> ResponseMessage:
+        """Wrapper that retries on network errors (max 1 retry)."""
+        last_error = None
+        for attempt in range(max_retries + 1):
+            try:
+                return await method(*args, **kwargs)
+            except (URLError, socket.timeout) as exc:
+                last_error = exc
+                if attempt == max_retries:
+                    # Final attempt failed, return error response
+                    if isinstance(exc.reason, socket.timeout):
+                        return self._response(
+                            request_id=request_id,
+                            result=None,
+                            error="request timeout",
+                            error_type=ErrorType.TIMEOUT,
+                        )
+                    else:
+                        return self._response(
+                            request_id=request_id,
+                            result=None,
+                            error=f"connection error: {exc.reason}",
+                            error_type=ErrorType.NETWORK_ERROR,
+                        )
+                # Retry: loop again
+
     def _response(
         self,
         request_id: str,
@@ -78,78 +104,21 @@ class HttpBridgeClient:
 
     async def get_health(self) -> ResponseMessage:
         request_id = "bridge-health"
-        try:
-            payload = self._get_json("/health")
-            return self._response(request_id=request_id, result=payload, error=None)
-        except HTTPError as exc:
-            if exc.code in (401, 403):
-                error_type = ErrorType.AUTH_ERROR
-            elif exc.code == 404:
-                error_type = ErrorType.NOT_FOUND
-            elif 500 <= exc.code < 600:
-                error_type = ErrorType.SERVER_ERROR
-            else:
-                error_type = ErrorType.UNKNOWN_ERROR
-            return self._response(
-                request_id=request_id,
-                result=None,
-                error=f"http error {exc.code}: {exc.reason}",
-                error_type=error_type,
-                error_code=exc.code,
-            )
-        except URLError as exc:
-            if isinstance(exc.reason, socket.timeout):
-                error_type = ErrorType.TIMEOUT
-            else:
-                error_type = ErrorType.NETWORK_ERROR
-            return self._response(
-                request_id=request_id,
-                result=None,
-                error=f"connection error: {exc.reason}",
-                error_type=error_type,
-            )
-        except socket.timeout:
-            return self._response(
-                request_id=request_id,
-                result=None,
-                error="request timeout",
-                error_type=ErrorType.TIMEOUT,
-            )
-        except Exception as exc:
-            return self._response(
-                request_id=request_id,
-                result=None,
-                error=f"request failed: {exc}",
-                error_type=ErrorType.UNKNOWN_ERROR,
-            )
+        return await self._retry_wrapper(
+            self._get_json, "/health", request_id=request_id, max_retries=1
+        )
 
     async def get_status(self) -> ResponseMessage:
         request_id = "bridge-status"
-        try:
-            payload = self._get_json("/status")
-            return self._response(request_id=request_id, result=payload, error=None)
-        except HTTPError as exc:
-            return self._handle_http_error(request_id, exc)
-        except URLError as exc:
-            return self._handle_url_error(request_id, exc)
-        except socket.timeout:
-            return self._response(request_id=request_id, result=None, error="request timeout", error_type=ErrorType.TIMEOUT)
-        except Exception as exc:
-            return self._response(request_id=request_id, result=None, error=f"request failed: {exc}", error_type=ErrorType.UNKNOWN_ERROR)
+        return await self._retry_wrapper(
+            self._get_json, "/status", request_id=request_id, max_retries=1
+        )
 
     async def get_runtime_info(self) -> ResponseMessage:
         request_id = "bridge-runtime-info"
-        try:
-            payload = self._get_json("/runtime/info")
-            return self._response(request_id=request_id, result=payload, error=None)
-        except HTTPError as exc:
-            return self._handle_http_error(request_id, exc)
-        except URLError as exc:
-            return self._handle_url_error(request_id, exc)
-        except socket.timeout:
-            return self._response(request_id=request_id, result=None, error="request timeout", error_type=ErrorType.TIMEOUT)
-        except Exception as exc:
-            return self._response(request_id=request_id, result=None, error=f"request failed: {exc}", error_type=ErrorType.UNKNOWN_ERROR)
+        return await self._retry_wrapper(
+            self._get_json, "/runtime/info", request_id=request_id, max_retries=1
+        )
 
     async def get_file(self, path: str) -> ResponseMessage:
         request_id = "bridge-file-read"
@@ -167,31 +136,15 @@ class HttpBridgeClient:
 
     async def get_addon_info(self, addonid: str) -> ResponseMessage:
         request_id = "bridge-addon-info"
-        try:
-            payload = self._get_json("/addon/info", query={"addonid": addonid})
-            return self._response(request_id=request_id, result=payload, error=None)
-        except HTTPError as exc:
-            return self._handle_http_error(request_id, exc)
-        except URLError as exc:
-            return self._handle_url_error(request_id, exc)
-        except socket.timeout:
-            return self._response(request_id=request_id, result=None, error="request timeout", error_type=ErrorType.TIMEOUT)
-        except Exception as exc:
-            return self._response(request_id=request_id, result=None, error=f"request failed: {exc}", error_type=ErrorType.UNKNOWN_ERROR)
+        return await self._retry_wrapper(
+            self._get_json, "/addon/info", query={"addonid": addonid}, request_id=request_id, max_retries=1
+        )
 
     async def get_log_tail(self, lines: int = 20) -> ResponseMessage:
         request_id = "bridge-log-tail"
-        try:
-            payload = self._get_json("/log/tail", query={"lines": lines})
-            return self._response(request_id=request_id, result=payload, error=None)
-        except HTTPError as exc:
-            return self._handle_http_error(request_id, exc)
-        except URLError as exc:
-            return self._handle_url_error(request_id, exc)
-        except socket.timeout:
-            return self._response(request_id=request_id, result=None, error="request timeout", error_type=ErrorType.TIMEOUT)
-        except Exception as exc:
-            return self._response(request_id=request_id, result=None, error=f"request failed: {exc}", error_type=ErrorType.UNKNOWN_ERROR)
+        return await self._retry_wrapper(
+            self._get_json, "/log/tail", query={"lines": lines}, request_id=request_id, max_retries=1
+        )
 
     def _handle_http_error(self, request_id: str, exc: HTTPError) -> ResponseMessage:
         """Map HTTP errors to typed responses."""
@@ -226,17 +179,9 @@ class HttpBridgeClient:
 
     async def get_log_markers(self, lines: int = 100) -> ResponseMessage:
         request_id = "bridge-log-markers"
-        try:
-            payload = self._get_json("/log/markers", query={"lines": lines})
-            return self._response(request_id=request_id, result=payload, error=None)
-        except HTTPError as exc:
-            return self._handle_http_error(request_id, exc)
-        except URLError as exc:
-            return self._handle_url_error(request_id, exc)
-        except socket.timeout:
-            return self._response(request_id=request_id, result=None, error="request timeout", error_type=ErrorType.TIMEOUT)
-        except Exception as exc:
-            return self._response(request_id=request_id, result=None, error=f"request failed: {exc}", error_type=ErrorType.UNKNOWN_ERROR)
+        return await self._retry_wrapper(
+            self._get_json, "/log/markers", query={"lines": lines}, request_id=request_id, max_retries=1
+        )
 
     async def write_log_marker(self, message: str) -> ResponseMessage:
         request_id = "bridge-log-marker"
@@ -254,17 +199,9 @@ class HttpBridgeClient:
 
     async def debug_ping(self) -> ResponseMessage:
         request_id = "bridge-debug-ping"
-        try:
-            payload = self._post_json("/debug/ping", payload={})
-            return self._response(request_id=request_id, result=payload, error=None)
-        except HTTPError as exc:
-            return self._handle_http_error(request_id, exc)
-        except URLError as exc:
-            return self._handle_url_error(request_id, exc)
-        except socket.timeout:
-            return self._response(request_id=request_id, result=None, error="request timeout", error_type=ErrorType.TIMEOUT)
-        except Exception as exc:
-            return self._response(request_id=request_id, result=None, error=f"request failed: {exc}", error_type=ErrorType.UNKNOWN_ERROR)
+        return await self._retry_wrapper(
+            self._post_json, "/debug/ping", payload={}, request_id=request_id, max_retries=1
+        )
 
     async def ensure_addon_enabled(self, addonid: str) -> ResponseMessage:
         request_id = "bridge-ensure-addon-enabled"
