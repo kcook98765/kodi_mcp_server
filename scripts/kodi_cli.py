@@ -120,8 +120,11 @@ def cmd_jsonrpc(args: argparse.Namespace) -> int:
         print(format_output(output, args.compact))
         return exit_code
     
+    # ok represents transport success only: no error/error_type fields
+    ok = result.get("error") is None and result.get("error_type") is None
+    
     output = {
-        "ok": True,
+        "ok": ok,
         "command": "jsonrpc call",
         "data": {
             "method": args.method,
@@ -135,7 +138,7 @@ def cmd_jsonrpc(args: argparse.Namespace) -> int:
     }
     
     print(format_output(output, args.compact))
-    return EXIT_SUCCESS if "result" in result else EXIT_SERVER_ERROR
+    return EXIT_SUCCESS
 
 
 def cmd_addon_info(args: argparse.Namespace) -> int:
@@ -203,8 +206,11 @@ def cmd_addon_execute(args: argparse.Namespace) -> int:
         print(format_output(output, args.compact))
         return exit_code
     
+    # ok represents transport success only: no error/error_type fields
+    ok = result.get("error") is None and result.get("error_type") is None
+    
     output = {
-        "ok": True if result.get("executed") else False,
+        "ok": ok,
         "command": "addon execute",
         "data": {
             "addonid": args.addonid,
@@ -213,7 +219,7 @@ def cmd_addon_execute(args: argparse.Namespace) -> int:
     }
     
     print(format_output(output, args.compact))
-    return EXIT_SUCCESS if result.get("executed") else EXIT_SERVER_ERROR
+    return EXIT_SUCCESS
 
 
 def cmd_builtin_exec(args: argparse.Namespace) -> int:
@@ -246,8 +252,11 @@ def cmd_builtin_exec(args: argparse.Namespace) -> int:
         print(format_output(output, args.compact))
         return exit_code
     
+    # ok represents transport success only: no error/error_type fields
+    ok = result.get("error") is None and result.get("error_type") is None
+    
     output = {
-        "ok": True,
+        "ok": ok,
         "command": "builtin exec",
         "data": {
             "command": args.kodi_cmd,
@@ -276,8 +285,11 @@ def cmd_log_tail(args: argparse.Namespace) -> int:
         print(format_output(output, args.compact))
         return exit_code
     
+    # ok represents transport success only: no error/error_type fields
+    ok = result.get("error") is None and result.get("error_type") is None
+    
     output = {
-        "ok": True,
+        "ok": ok,
         "command": "log tail",
         "data": {
             "lines": args.lines,

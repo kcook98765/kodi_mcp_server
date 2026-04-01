@@ -355,6 +355,196 @@ class TestPOSTRequestHandling:
             assert call_kwargs[1]["params"] is None
 
 
+class TestResponseEnvelopeInterpretation:
+    """Test that CLI correctly interprets backend response envelopes.
+    
+    ok represents transport success only: error is None and error_type is None.
+    Does not depend on nested business outcome fields.
+    """
+
+    def test_addon_execute_success_with_executed_true(self, monkeypatch, capsys):
+        """Success response with error=None produces ok: true."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "request_id": "bridge-execute-addon",
+            "result": {"executed": True, "addon_id": "test"},
+            "error": None,
+            "error_type": None,
+        }
+        
+        with patch("kodi_cli.requests.request", return_value=mock_response) as mock_req:
+            result = kodi_cli.cmd_addon_execute(
+                argparse.Namespace(
+                    command="addon",
+                    subcommand="execute",
+                    addonid="test.addon",
+                    compact=True,
+                )
+            )
+            
+            output = capsys.readouterr().out
+            assert '"ok": true' in output or '"ok":true' in output
+            assert result == kodi_cli.EXIT_SUCCESS
+
+    def test_addon_execute_business_failure_still_transport_success(self, monkeypatch, capsys):
+        """Response with error=None and executed=false still ok: true (transport success)."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "request_id": "bridge-execute-addon",
+            "result": {"executed": False, "addon_id": "unknown"},
+            "error": None,
+            "error_type": None,
+        }
+        
+        with patch("kodi_cli.requests.request", return_value=mock_response) as mock_req:
+            result = kodi_cli.cmd_addon_execute(
+                argparse.Namespace(
+                    command="addon",
+                    subcommand="execute",
+                    addonid="test.addon",
+                    compact=True,
+                )
+            )
+            
+            output = capsys.readouterr().out
+            # Business failure (executed=false) should not affect ok
+            assert '"ok": true' in output or '"ok":true' in output, f"Expected ok: true for transport success, got: {output}"
+            assert result == kodi_cli.EXIT_SUCCESS
+
+    def test_addon_execute_with_error_field(self, monkeypatch, capsys):
+        """Response with error field produces ok: false."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "request_id": "bridge-execute-addon",
+            "result": None,
+            "error": "addon not found",
+            "error_type": "not_found",
+            "error_code": 404,
+        }
+        
+        with patch("kodi_cli.requests.request", return_value=mock_response) as mock_req:
+            result = kodi_cli.cmd_addon_execute(
+                argparse.Namespace(
+                    command="addon",
+                    subcommand="execute",
+                    addonid="unknown.addon",
+                    compact=True,
+                )
+            )
+            
+            output = capsys.readouterr().out
+            assert '"ok": false' in output or '"ok":false' in output
+            assert result == kodi_cli.EXIT_SUCCESS
+
+    def test_builtin_exec_success(self, monkeypatch, capsys):
+        """builtin exec with no error produces ok: true."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "request_id": "bridge-execute-builtin",
+            "result": None,
+            "error": None,
+            "error_type": None,
+        }
+        
+        with patch("kodi_cli.requests.request", return_value=mock_response) as mock_req:
+            result = kodi_cli.cmd_builtin_exec(
+                argparse.Namespace(
+                    command="builtin",
+                    subcommand="exec",
+                    kodi_cmd="PlayerControl(Play)",
+                    addonid=None,
+                    compact=True,
+                )
+            )
+            
+            output = capsys.readouterr().out
+            assert '"ok": true' in output or '"ok":true' in output
+            assert result == kodi_cli.EXIT_SUCCESS
+
+    def test_builtin_exec_with_auth_error(self, monkeypatch, capsys):
+        """builtin exec with error produces ok: false."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "request_id": "bridge-execute-builtin",
+            "result": None,
+            "error": "http error 403: Forbidden",
+            "error_type": "auth_error",
+            "error_code": 403,
+        }
+        
+        with patch("kodi_cli.requests.request", return_value=mock_response) as mock_req:
+            result = kodi_cli.cmd_builtin_exec(
+                argparse.Namespace(
+                    command="builtin",
+                    subcommand="exec",
+                    kodi_cmd="PlayerControl(Play)",
+                    addonid=None,
+                    compact=True,
+                )
+            )
+            
+            output = capsys.readouterr().out
+            assert '"ok": false' in output or '"ok":false' in output
+            assert result == kodi_cli.EXIT_SUCCESS
+
+    def test_log_tail_success(self, monkeypatch, capsys):
+        """log tail with no error produces ok: true."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "request_id": "bridge-log-tail",
+            "result": {"lines": ["test"]},
+            "error": None,
+            "error_type": None,
+        }
+        
+        with patch("kodi_cli.requests.request", return_value=mock_response) as mock_req:
+            result = kodi_cli.cmd_log_tail(
+                argparse.Namespace(
+                    command="log",
+                    subcommand="tail",
+                    lines=20,
+                    compact=True,
+                )
+            )
+            
+            output = capsys.readouterr().out
+            assert '"ok": true' in output or '"ok":true' in output
+            assert result == kodi_cli.EXIT_SUCCESS
+
+    def test_jsonrpc_with_error_field(self, monkeypatch, capsys):
+        """jsonrpc call with error produces ok: false."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "request_id": "jsonrpc-execute",
+            "result": None,
+            "error": "Method not found",
+            "error_type": "method_not_found",
+            "error_code": -32601,
+        }
+        
+        with patch("kodi_cli.requests.request", return_value=mock_response) as mock_req:
+            result = kodi_cli.cmd_jsonrpc(
+                argparse.Namespace(
+                    command="jsonrpc",
+                    subcommand="call",
+                    method="NonExistent.Method",
+                    params=None,
+                    compact=True,
+                )
+            )
+            
+            output = capsys.readouterr().out
+            assert '"ok": false' in output or '"ok":false' in output
+            assert result == kodi_cli.EXIT_SUCCESS
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 
