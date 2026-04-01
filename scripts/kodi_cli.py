@@ -434,6 +434,42 @@ def cmd_service_ping(args: argparse.Namespace) -> int:
     return EXIT_SUCCESS
 
 
+def cmd_service_version(args: argparse.Namespace) -> int:
+    """Get addon version for deployment verification."""
+    # Direct call to /version endpoint
+    version_result, version_code, version_error = make_request(
+        "/tools/get_bridge_version",
+        method="GET",
+    )
+    
+    if version_code != EXIT_SUCCESS:
+        output = {
+            "ok": False,
+            "command": "service version",
+            "error": version_error or "Failed to call /tools/get_bridge_version",
+        }
+        print(format_output(output, args.compact))
+        return EXIT_SERVER_ERROR
+    
+    version = version_result.get("result", {})
+    
+    result = {
+        "addon_id": version.get("addon_id"),
+        "version": version.get("version"),
+    }
+    
+    output = {
+        "ok": True,
+        "command": "service version",
+        "data": {
+            "result": result,
+        },
+    }
+    
+    print(format_output(output, args.compact))
+    return EXIT_SUCCESS
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="kodi-cli",
@@ -591,6 +627,13 @@ def main():
         help="Ping addon for liveness verification",
     )
     ping_parser.set_defaults(func=cmd_service_ping)
+    
+    # Service version
+    version_parser = service_subparsers.add_parser(
+        "version",
+        help="Get addon version for deployment verification",
+    )
+    version_parser.set_defaults(func=cmd_service_version)
     
     args = parser.parse_args()
     
