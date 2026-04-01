@@ -16,6 +16,7 @@ Implemented thin CLI wrapper `kodi-cli` that provides deterministic, machine-fri
 - `kodi-cli addon execute --addonid <id>` — Execute addon via bridge
 - `kodi-cli builtin exec --command <cmd>` — Execute Kodi builtin
 - `kodi-cli log tail --lines <n>` — Get log tail from bridge
+- `kodi-cli service status --addonid <id>` — Get service metadata (Phase 7.1a)
 
 ### Response Envelope (Unified)
 **Success:**
@@ -72,6 +73,68 @@ agent → kodi-cli → backend server (localhost:8000) → remote Kodi
 - JSON-only output: all output is structured JSON
 - Deterministic: same inputs = same outputs
 - No state: pure HTTP passthrough with envelope wrapping
+
+---
+
+## Completed Tasks (Phase 7.1a: Service Detection + Live Validation)
+
+**Date:** 2026-03-31
+
+### Summary
+Implemented service addon detection in `addon execute` and added `service status` command for metadata inspection.
+
+### Changes Made
+
+#### `tools/addon_ops.py`
+- Added service detection in `addon_execute` — returns `invalid_operation` error if target is a service addon
+- Behavior: `addon execute` now correctly rejects service addons with semantic error
+
+#### `tools/service_ops.py` (new file)
+- Added `service_status` command — returns metadata-based status (not runtime liveness)
+- Provides info about service addon without executing it
+
+#### CLI Wrapper Updates
+- New command: `kodi-cli service status --addonid <id>`
+- Returns service metadata from Kodi JSON-RPC
+
+### Live Validation Complete
+
+#### Test 1: Addon Execute Rejection
+- **Scenario:** Execute service addon via `kodi-cli addon execute`
+- **Result:** Returns `invalid_operation` error ✓
+- **Wording:** Semantic error (not connection/timeout error)
+
+#### Test 2: Service Status
+- **Scenario:** Query service via `kodi-cli service status`
+- **Result:** Returns metadata-based status ✓
+- **Clarification:** Shows addon metadata (version, path, enabled state) — not runtime liveness
+
+### Key Clarifications
+
+**Add-on execute:**
+- Returns semantic `invalid_operation` for service addons
+- This is a validation error, not a runtime failure
+
+**Service status:**
+- Returns metadata (version, enabled state, etc.)
+- Does NOT indicate if service is currently running (no control surface on addon side yet)
+- Next step: Add ping/health/version endpoints to bridge addon for runtime introspection
+
+### Files Changed in project/
+1. `src/kodi_mcp_server/tools/addon_ops.py` — Service detection logic
+2. `src/kodi_mcp_server/tools/service_ops.py` — New file, service status command
+3. `scripts/kodi_cli.py` — Added `service status` command
+
+---
+
+### Command Structure (Hierarchical)
+- `kodi-cli system status` — Get server/system status
+- `kodi-cli jsonrpc call --method <name>` — Execute JSON-RPC command
+- `kodi-cli addon info --addonid <id>` — Get bridge addon info
+- `kodi-cli addon execute --addonid <id>` — Execute addon via bridge
+- `kodi-cli builtin exec --command <cmd>` — Execute Kodi builtin
+- `kodi-cli log tail --lines <n>` — Get log tail from bridge
+- `kodi-cli service status --addonid <id>` — Get service metadata (Phase 7.1a)
 
 ---
 
@@ -328,7 +391,7 @@ SAFE_READ_METHODS = frozenset([
 
 ## Next Steps
 
-1. **Integration testing** — Test CLI wrapper against live remote Kodi instance to verify end-to-end flow
+1. **Addon control surface** — Add ping/health/version endpoints to bridge addon for runtime introspection
 2. **Connection reuse** — Defer to Phase 8 or later. New transport instance created per request (performance optimization).
 3. **README/API docs** — Document `/status` response format, error types, CLI usage patterns.
 4. **Production validation** — Verify CLI works reliably across network conditions and Kodi states.
