@@ -397,6 +397,43 @@ def cmd_service_probe(args: argparse.Namespace) -> int:
     return EXIT_SUCCESS
 
 
+def cmd_service_ping(args: argparse.Namespace) -> int:
+    """Ping addon for liveness verification."""
+    # Direct call to /ping endpoint
+    ping_result, ping_code, ping_error = make_request(
+        "/tools/get_bridge_ping",
+        method="GET",
+    )
+    
+    if ping_code != EXIT_SUCCESS:
+        output = {
+            "ok": False,
+            "command": "service ping",
+            "error": ping_error or "Failed to call /tools/get_bridge_ping",
+        }
+        print(format_output(output, args.compact))
+        return EXIT_SERVER_ERROR
+    
+    ping = ping_result.get("result", {})
+    
+    result = {
+        "addon_id": ping.get("addon_id"),
+        "addon_version": ping.get("addon_version"),
+        "timestamp": ping.get("timestamp"),
+    }
+    
+    output = {
+        "ok": True,
+        "command": "service ping",
+        "data": {
+            "result": result,
+        },
+    }
+    
+    print(format_output(output, args.compact))
+    return EXIT_SUCCESS
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="kodi-cli",
@@ -547,6 +584,13 @@ def main():
         help="Probe addon control surface for discovery",
     )
     probe_parser.set_defaults(func=cmd_service_probe)
+    
+    # Service ping
+    ping_parser = service_subparsers.add_parser(
+        "ping",
+        help="Ping addon for liveness verification",
+    )
+    ping_parser.set_defaults(func=cmd_service_ping)
     
     args = parser.parse_args()
     

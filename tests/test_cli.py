@@ -758,6 +758,53 @@ class TestHierarchicalCommands:
             assert output["command"] == "service probe"
             assert "error" in output
 
+    def test_service_ping_success(self, capsys, monkeypatch):
+        """service ping success path returns correct envelope."""
+        with patch("kodi_cli.make_request", return_value=({
+            "request_id": "bridge-ping",
+            "result": {
+                "addon_id": "service.kodi_mcp",
+                "addon_version": "0.2.16",
+                "timestamp": 1775074549,
+            },
+            "error": None,
+            "error_type": None,
+        }, kodi_cli.EXIT_SUCCESS, "")):
+            with patch("kodi_cli.argparse.ArgumentParser.parse_args") as mock_parse:
+                mock_parse.return_value = argparse.Namespace(
+                    command="service",
+                    subcommand="ping",
+                    compact=False,
+                )
+                result = kodi_cli.cmd_service_ping(mock_parse.return_value)
+                assert result == kodi_cli.EXIT_SUCCESS
+                captured = capsys.readouterr()
+                output = json.loads(captured.out)
+                assert output["ok"] is True
+                assert output["command"] == "service ping"
+                assert "data" in output
+                assert output["data"]["result"]["addon_id"] == "service.kodi_mcp"
+                assert output["data"]["result"]["addon_version"] == "0.2.16"
+                assert output["data"]["result"]["timestamp"] == 1775074549
+
+    def test_service_ping_failure(self, capsys, monkeypatch):
+        """service ping failure path returns error envelope."""
+        monkeypatch.setattr(kodi_cli.requests, "request", lambda *a, **k: (None, kodi_cli.EXIT_SERVER_ERROR, "connection refused"))
+        
+        with patch("kodi_cli.argparse.ArgumentParser.parse_args") as mock_parse:
+            mock_parse.return_value = argparse.Namespace(
+                command="service",
+                subcommand="ping",
+                compact=False,
+            )
+            result = kodi_cli.cmd_service_ping(mock_parse.return_value)
+            assert result == kodi_cli.EXIT_SERVER_ERROR
+            captured = capsys.readouterr()
+            output = json.loads(captured.out)
+            assert output["ok"] is False
+            assert output["command"] == "service ping"
+            assert "error" in output
+
     def test_unified_envelope_success(self, capsys, monkeypatch):
         """All successful commands return unified envelope with ok=true."""
         import requests
