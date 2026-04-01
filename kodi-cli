@@ -1,0 +1,28 @@
+#!/usr/bin/env python3
+"""
+Kodi CLI Wrapper Entry Point
+
+This script provides a workspace-root entry point for the kodi-cli CLI tool.
+Usage: ./kodi-cli <command> [args...]
+
+See cli/README.md for full documentation.
+"""
+
+import sys
+from pathlib import Path
+
+# Re-execute using the workspace venv's Python if available
+venv_python = Path(__file__).parent / ".venv" / "bin" / "python"
+if venv_python.exists() and sys.executable != str(venv_python):
+    import os
+    os.execv(str(venv_python), [str(venv_python)] + sys.argv)
+
+# Add cli directory to path so kodi_cli can be imported
+cli_dir = Path(__file__).parent / "cli"
+sys.path.insert(0, str(cli_dir))
+
+# Import and run main
+from kodi_cli import main
+
+if __name__ == "__main__":
+    sys.exit(main())

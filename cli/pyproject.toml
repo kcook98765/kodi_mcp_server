@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kodi_cli"
+version = "0.1.0"
+description = "CLI wrapper for Kodi MCP Server"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.31.0",
+]
+
+[project.scripts]
+kodi-cli = "kodi_cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["kodi_cli*"]
+
+[tool.setuptools.package-data]
+kodi_cli = ["*.txt", "*.ini"]
