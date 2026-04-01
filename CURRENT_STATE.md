@@ -284,3 +284,40 @@ For any backend server change, verify all of the following:
 **This file must be updated after every meaningful change.**  
 If you modify code, config, or architecture, update this file before finishing.  
 If no changes were made, confirm CURRENT_STATE.md is still accurate.
+---
+
+## Completed Tasks (Phase 6: Transport Cleanup)
+
+**Date:** 2026-03-31
+
+### Summary
+Unified error handling across transport layer, reduced code duplication, added latency_ms tracking.
+
+### Key Changes
+
+#### HttpBridgeClient (`transport/http_bridge.py`)
+- Added `_make_request()` — unified HTTP request with error handling and latency tracking
+- Added `_http_code_to_error()` helper — consistent HTTP error type mapping  
+- Added `_url_error_to_response()` helper — consistent URL error handling
+- Removed: `_get_json()`, `_post_json()`, `_post_bytes()` (replaced by `_make_request()`)
+- Removed: `_handle_http_error()`, `_handle_url_error()` (replaced by helpers)
+- Updated: All methods now use unified error handling with latency_ms tracking
+- Refactored: 170 lines → 139 lines (net -31 lines)
+
+#### HttpJsonRpcTransport (`transport/http_jsonrpc.py`)
+- No changes needed — already well-structured
+- Retry logic preserved as-is
+- Error handling aligned with Phase 5
+
+### Implementation Approach
+- No new shared modules (per Phase 6 constraint)
+- Helpers kept local to transport files
+- Maintained ResponseMessage contract unchanged
+- Preserved retry behavior exactly
+
+### Test Results
+- **Total:** 17 tests (unchanged)
+- **Passed:** 17
+- **Failed:** 0
+
+---
