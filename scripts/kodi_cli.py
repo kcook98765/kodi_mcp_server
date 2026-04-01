@@ -347,6 +347,56 @@ def cmd_service_status(args: argparse.Namespace) -> int:
     return EXIT_SUCCESS
 
 
+def cmd_service_probe(args: argparse.Namespace) -> int:
+    """Probe addon control surface for discovery."""
+    # Primary source: /control/capabilities
+    caps_result, caps_code, caps_error = make_request(
+        "/tools/get_bridge_control_capabilities",
+        method="GET",
+    )
+    
+    if caps_code != EXIT_SUCCESS:
+        output = {
+            "ok": False,
+            "command": "service probe",
+            "error": caps_error or "Failed to call /tools/get_bridge_control_capabilities",
+        }
+        print(format_output(output, args.compact))
+        return EXIT_SERVER_ERROR
+    
+    caps = caps_result.get("result", {})
+    
+    # Supplement: /version to get addon version if not in capabilities
+    addon_version = caps.get("addon_version")
+    if not addon_version:
+        version_result, version_code, _ = make_request(
+            "/tools/get_bridge_version",
+            method="GET",
+        )
+        if version_code == EXIT_SUCCESS and version_result:
+            addon_version = version_result.get("result", {}).get("version")
+    
+    result = {
+        "bridge_reachable": True,
+        "addon_id": caps.get("addon_id"),
+        "addon_version": addon_version,
+        "control_api_version": caps.get("control_api_version"),
+        "supported_endpoints": caps.get("endpoints", {}),
+        "features": caps.get("features", {}),
+    }
+    
+    output = {
+        "ok": True,
+        "command": "service probe",
+        "data": {
+            "result": result,
+        },
+    }
+    
+    print(format_output(output, args.compact))
+    return EXIT_SUCCESS
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="kodi-cli",
@@ -490,6 +540,13 @@ def main():
         help="Service addon ID",
     )
     status_parser.set_defaults(func=cmd_service_status)
+    
+    # Service probe
+    probe_parser = service_subparsers.add_parser(
+        "probe",
+        help="Probe addon control surface for discovery",
+    )
+    probe_parser.set_defaults(func=cmd_service_probe)
     
     args = parser.parse_args()
     

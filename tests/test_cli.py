@@ -696,6 +696,68 @@ class TestHierarchicalCommands:
             assert "lines" in output["data"]
             assert "log1" in str(output["data"])
 
+    def test_service_probe_success(self, capsys, monkeypatch):
+        """service probe success path returns correct envelope."""
+        with patch("kodi_cli.make_request", return_value=({
+            "request_id": "bridge-control-capabilities",
+            "result": {
+                "addon_id": "service.kodi_mcp",
+                "addon_version": "0.2.16",
+                "control_api_version": 1,
+                "endpoints": {
+                    "health": {"method": "GET", "path": "/health"},
+                    "ping": {"method": "GET", "path": "/ping"},
+                    "version": {"method": "GET", "path": "/version"},
+                    "debug_ping": {"method": "POST", "path": "/debug/ping"},
+                },
+                "features": {
+                    "liveness_probe": True,
+                    "version_probe": True,
+                    "debug_ping": True,
+                    "lifecycle_control": False,
+                },
+            },
+            "error": None,
+            "error_type": None,
+        }, kodi_cli.EXIT_SUCCESS, "")):
+            with patch("kodi_cli.argparse.ArgumentParser.parse_args") as mock_parse:
+                mock_parse.return_value = argparse.Namespace(
+                    command="service",
+                    subcommand="probe",
+                    compact=False,
+                )
+                result = kodi_cli.cmd_service_probe(mock_parse.return_value)
+                assert result == kodi_cli.EXIT_SUCCESS
+                captured = capsys.readouterr()
+                output = json.loads(captured.out)
+                assert output["ok"] is True
+                assert output["command"] == "service probe"
+                assert "data" in output
+                assert output["data"]["result"]["addon_id"] == "service.kodi_mcp"
+                assert output["data"]["result"]["addon_version"] == "0.2.16"
+                assert isinstance(output["data"]["result"]["supported_endpoints"], dict)
+                assert "health" in output["data"]["result"]["supported_endpoints"]
+                assert "liveness_probe" in output["data"]["result"]["features"]
+                assert output["data"]["result"]["features"]["liveness_probe"] is True
+
+    def test_service_probe_failure(self, capsys, monkeypatch):
+        """service probe failure path returns error envelope."""
+        monkeypatch.setattr(kodi_cli.requests, "request", lambda *a, **k: (None, kodi_cli.EXIT_SERVER_ERROR, "connection refused"))
+        
+        with patch("kodi_cli.argparse.ArgumentParser.parse_args") as mock_parse:
+            mock_parse.return_value = argparse.Namespace(
+                command="service",
+                subcommand="probe",
+                compact=False,
+            )
+            result = kodi_cli.cmd_service_probe(mock_parse.return_value)
+            assert result == kodi_cli.EXIT_SERVER_ERROR
+            captured = capsys.readouterr()
+            output = json.loads(captured.out)
+            assert output["ok"] is False
+            assert output["command"] == "service probe"
+            assert "error" in output
+
     def test_unified_envelope_success(self, capsys, monkeypatch):
         """All successful commands return unified envelope with ok=true."""
         import requests
