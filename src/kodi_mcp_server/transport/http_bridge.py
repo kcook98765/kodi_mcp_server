@@ -54,12 +54,14 @@ class HttpBridgeClient:
         last_error = None
         for attempt in range(max_retries + 1):
             try:
-                result = await method(*args, **kwargs)
+                result = method(*args, **kwargs)  # method is sync, don't await
                 return self._response(
                     request_id=request_id,
-                    result=result,
-                    error=None,
-                    latency_ms=int((time.time() - start_time) * 1000),
+                    result=result.result,  # result is already ResponseMessage
+                    error=result.error,
+                    error_type=result.error_type,
+                    error_code=result.error_code,
+                    latency_ms=result.latency_ms,
                 )
             except (URLError, socket.timeout) as exc:
                 last_error = exc
