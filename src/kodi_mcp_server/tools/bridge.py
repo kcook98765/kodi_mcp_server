@@ -18,6 +18,12 @@ class BridgeTool:
     async def get_bridge_health(self) -> ResponseMessage:
         return await self.client.get_health()
 
+    async def get_bridge_ping(self) -> ResponseMessage:
+        return await self.client.get_ping()
+
+    async def get_bridge_version(self) -> ResponseMessage:
+        return await self.client.get_version()
+
     async def get_bridge_status(self) -> ResponseMessage:
         return await self.client.get_status()
 
@@ -41,6 +47,9 @@ class BridgeTool:
 
     async def bridge_debug_ping(self) -> ResponseMessage:
         return await self.client.debug_ping()
+
+    async def get_bridge_control_capabilities(self) -> ResponseMessage:
+        return await self.client.get_control_capabilities()
 
     async def ensure_bridge_addon_enabled(self, addonid: str) -> ResponseMessage:
         return await self.client.ensure_addon_enabled(addonid=addonid)

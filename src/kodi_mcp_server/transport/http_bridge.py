@@ -143,6 +143,18 @@ class HttpBridgeClient:
             self._make_request, "GET", "/health", request_id=request_id, max_retries=1
         )
 
+    async def get_ping(self) -> ResponseMessage:
+        request_id = "bridge-ping"
+        return await self._retry_wrapper(
+            self._make_request, "GET", "/ping", request_id=request_id, max_retries=1
+        )
+
+    async def get_version(self) -> ResponseMessage:
+        request_id = "bridge-version"
+        return await self._retry_wrapper(
+            self._make_request, "GET", "/version", request_id=request_id, max_retries=1
+        )
+
     async def get_status(self) -> ResponseMessage:
         request_id = "bridge-status"
         return await self._retry_wrapper(
@@ -187,6 +199,12 @@ class HttpBridgeClient:
         request_id = "bridge-debug-ping"
         return await self._retry_wrapper(
             self._make_request, "POST", "/debug/ping", payload={}, request_id=request_id, max_retries=1
+        )
+
+    async def get_control_capabilities(self) -> ResponseMessage:
+        request_id = "bridge-control-capabilities"
+        return await self._retry_wrapper(
+            self._make_request, "GET", "/control/capabilities", request_id=request_id, max_retries=1
         )
 
     async def ensure_addon_enabled(self, addonid: str) -> ResponseMessage:

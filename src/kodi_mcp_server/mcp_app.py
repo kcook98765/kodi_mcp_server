@@ -100,13 +100,21 @@ def configure_mcp_app(app):
 
     @app.get("/tools/get_bridge_health")
     async def get_bridge_health_endpoint():
-
         result = await build_bridge_tool().get_bridge_health()
+        return result.to_dict()
+
+    @app.get("/tools/get_bridge_ping")
+    async def get_bridge_ping_endpoint():
+        result = await build_bridge_tool().get_bridge_ping()
+        return result.to_dict()
+
+    @app.get("/tools/get_bridge_version")
+    async def get_bridge_version_endpoint():
+        result = await build_bridge_tool().get_bridge_version()
         return result.to_dict()
 
     @app.get("/tools/get_bridge_status")
     async def get_bridge_status_endpoint():
-
         result = await build_bridge_tool().get_bridge_status()
         return result.to_dict()
 
@@ -144,6 +152,11 @@ def configure_mcp_app(app):
     @app.post("/tools/bridge_debug_ping")
     async def bridge_debug_ping_endpoint():
         result = await build_bridge_tool().bridge_debug_ping()
+        return result.to_dict()
+
+    @app.get("/tools/get_bridge_control_capabilities")
+    async def get_bridge_control_capabilities_endpoint():
+        result = await build_bridge_tool().get_bridge_control_capabilities()
         return result.to_dict()
 
     @app.post("/tools/execute_bridge_builtin")
@@ -294,6 +307,7 @@ def configure_mcp_app(app):
     async def service_status_endpoint(request: ExecuteAddonRequest):
         result = await build_service_ops_tool().get_service_status(addonid=request.addonid)
         return result.to_dict()
+
 
     @app.get("/tools/get_addons")
     async def get_addons_endpoint():
