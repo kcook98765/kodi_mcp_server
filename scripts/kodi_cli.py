@@ -470,6 +470,44 @@ def cmd_service_version(args: argparse.Namespace) -> int:
     return EXIT_SUCCESS
 
 
+def cmd_service_health(args: argparse.Namespace) -> int:
+    """Get addon health for direct verification."""
+    # Direct call to /health endpoint
+    health_result, health_code, health_error = make_request(
+        "/tools/get_bridge_health",
+        method="GET",
+    )
+    
+    if health_code != EXIT_SUCCESS:
+        output = {
+            "ok": False,
+            "command": "service health",
+            "error": health_error or "Failed to call /tools/get_bridge_health",
+        }
+        print(format_output(output, args.compact))
+        return EXIT_SERVER_ERROR
+    
+    health = health_result.get("result", {})
+    
+    result = {
+        "status": health.get("status"),
+        "service": health.get("service"),
+        "addon_id": health.get("addon_id"),
+        "version": health.get("version"),
+    }
+    
+    output = {
+        "ok": True,
+        "command": "service health",
+        "data": {
+            "result": result,
+        },
+    }
+    
+    print(format_output(output, args.compact))
+    return EXIT_SUCCESS
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="kodi-cli",
@@ -634,6 +672,13 @@ def main():
         help="Get addon version for deployment verification",
     )
     version_parser.set_defaults(func=cmd_service_version)
+    
+    # Service health
+    health_parser = service_subparsers.add_parser(
+        "health",
+        help="Get addon health for direct verification",
+    )
+    health_parser.set_defaults(func=cmd_service_health)
     
     args = parser.parse_args()
     
