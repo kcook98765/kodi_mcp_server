@@ -2,6 +2,79 @@
 
 **Last updated:** 2026-03-31
 
+## Completed Tasks (Phase 7: CLI Wrapper)
+
+**Date:** 2026-03-31
+
+### Summary
+Implemented thin CLI wrapper `kodi-cli` that provides deterministic, machine-friendly interface to the backend server.
+
+### Command Structure (Hierarchical)
+- `kodi-cli system status` — Get server/system status
+- `kodi-cli jsonrpc call --method <name>` — Execute JSON-RPC command
+- `kodi-cli addon info --addonid <id>` — Get bridge addon info
+- `kodi-cli addon execute --addonid <id>` — Execute addon via bridge
+- `kodi-cli builtin exec --command <cmd>` — Execute Kodi builtin
+- `kodi-cli log tail --lines <n>` — Get log tail from bridge
+
+### Response Envelope (Unified)
+**Success:**
+```json
+{
+  "ok": true,
+  "command": "<domain action>",
+  "data": { ... },
+  "latency_ms": <number if available>
+}
+```
+
+**Error:**
+```json
+{
+  "ok": false,
+  "command": "<domain action>",
+  "error": "<message>",
+  "error_type": "<type if known>",
+  "error_code": "<code if known>",
+  "latency_ms": <number if available>
+}
+```
+
+### Exit Codes
+- 0: Success
+- 1: Invalid arguments
+- 2: Connection error (server unreachable)
+- 3: Server error (HTTP error or invalid response)
+- 4: Request timeout
+
+### Test Coverage
+- 24 tests all passing
+- Validates input validation, output envelope, exit codes, error handling
+- No server dependency (all mocked)
+
+### Files Added
+- `kodi-cli` — Workspace entry point (executable)
+- `cli/kodi_cli.py` — Main CLI implementation
+- `cli/test_cli.py` — Test suite
+- `cli/pyproject.toml` — Python packaging
+- `cli/requirements.txt` — Dependencies
+- `cli/pytest.ini` — Test config
+- `cli/README.md` — Usage documentation
+- `.gitignore` — Workspace exclusions
+
+### Architecture
+```
+agent → kodi-cli → backend server (localhost:8000) → remote Kodi
+```
+
+**Key principles:**
+- Thin wrapper: no retry logic, no business logic duplication
+- JSON-only output: all output is structured JSON
+- Deterministic: same inputs = same outputs
+- No state: pure HTTP passthrough with envelope wrapping
+
+---
+
 ## Architecture Summary
 
 ### Entry Points
@@ -88,11 +161,9 @@
 
 ## Known Gaps
 
-1. **CLI wrappers** — Not yet implemented. Future work — do not assume they exist.
+1. **Connection reuse** — New transport instance created per request (performance optimization for later)
 
-2. **Connection reuse** — New transport instance created per request (performance optimization for later)
-
-3. **README/API docs** — Could be more aligned with current implementation (document `/status` response format, error types, etc.)
+2. **README/API docs** — Could be more aligned with current implementation (document `/status` response format, error types, etc.)
 
 ## Completed Tasks (Phase 5: Connection Lifecycle and Retry Boundaries)
 
@@ -257,10 +328,10 @@ SAFE_READ_METHODS = frozenset([
 
 ## Next Steps
 
-1. **CLI wrappers** — Not yet implemented. Future work — do not assume they exist.
-2. **Connection reuse** — Defer to Phase 6 or later. New transport instance created per request (performance optimization).
-3. **README/API docs** — Could be more aligned with current implementation (document `/status` response format, error types, etc.).
-4. **Phase 6** — Consider connection pooling/reuse if latency becomes an issue.
+1. **Integration testing** — Test CLI wrapper against live remote Kodi instance to verify end-to-end flow
+2. **Connection reuse** — Defer to Phase 8 or later. New transport instance created per request (performance optimization).
+3. **README/API docs** — Document `/status` response format, error types, CLI usage patterns.
+4. **Production validation** — Verify CLI works reliably across network conditions and Kodi states.
 
 ---
 
