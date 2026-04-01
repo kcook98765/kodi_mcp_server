@@ -46,6 +46,29 @@ class BridgeTool:
         return await self.client.ensure_addon_enabled(addonid=addonid)
 
     async def execute_bridge_addon(self, addonid: str) -> ResponseMessage:
+        request_id = "bridge-execute-addon"
+        
+        # Check addon type before executing
+        addon_info = await self.get_bridge_addon_info(addonid)
+        if addon_info.error:
+            return addon_info
+        
+        addon_type = addon_info.result.get("addon_type", "unknown")
+        if addon_type == "service":
+            from ..models.messages import ErrorType
+            
+            return ResponseMessage(
+                request_id=request_id,
+                result={
+                    "addon_id": addonid,
+                    "addon_type": "service",
+                    "suggestion": "Use 'kodi-cli service status' to check status or 'kodi-cli service restart' to restart.",
+                },
+                error=f"Addon '{addonid}' is a service-type addon and cannot be manually executed. Service addons auto-start on install.",
+                error_type=ErrorType.INVALID_OPERATION,
+                error_code=400,
+            )
+        
         return await self.client.execute_addon(addonid=addonid)
 
     async def check_bridge_addon_version(self, addonid: str, expected_version: str) -> ResponseMessage:

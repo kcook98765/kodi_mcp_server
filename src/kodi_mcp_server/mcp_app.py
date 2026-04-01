@@ -19,6 +19,7 @@ from kodi_mcp_server.models.requests import (
     UploadAddonZipRequest,
     WriteLogMarkerRequest,
 )
+from kodi_mcp_server.tools.service_ops import ServiceOpsTool
 
 
 def configure_mcp_app(app):
@@ -286,6 +287,12 @@ def configure_mcp_app(app):
     @app.post("/tools/restart_bridge_addon")
     async def restart_bridge_addon_endpoint(request: RestartBridgeAddonRequest):
         result = await build_addon_ops_tool().restart_bridge_addon(timeout_seconds=request.timeout_seconds)
+        return result.to_dict()
+
+    # Service addon operations (Slice 1a)
+    @app.post("/tools/service/status")
+    async def service_status_endpoint(request: ExecuteAddonRequest):
+        result = await build_service_ops_tool().get_service_status(addonid=request.addonid)
         return result.to_dict()
 
     @app.get("/tools/get_addons")

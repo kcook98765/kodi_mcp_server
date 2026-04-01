@@ -16,6 +16,7 @@ from kodi_mcp_server.tools.addon_ops import AddonOpsTool
 from kodi_mcp_server.tools.bridge import BridgeTool
 from kodi_mcp_server.tools.jsonrpc import JsonRpcTool
 from kodi_mcp_server.tools.repo import RepoTool
+from kodi_mcp_server.tools.service_ops import ServiceOpsTool
 from kodi_mcp_server.transport.http_bridge import HttpBridgeClient
 from kodi_mcp_server.transport.http_jsonrpc import HttpJsonRpcTransport
 from kodi_mcp_server.transport.websocket_notifications import WebSocketNotificationProbe
@@ -55,6 +56,11 @@ def build_addon_ops_tool() -> AddonOpsTool:
         bridge_tool=build_bridge_tool(),
         jsonrpc_tool=build_jsonrpc_tool(),
     )
+
+
+def build_service_ops_tool() -> ServiceOpsTool:
+    """Build the service-addon operations helper."""
+    return ServiceOpsTool(bridge_client=build_bridge_tool())
 
 
 def build_notification_probe() -> WebSocketNotificationProbe:

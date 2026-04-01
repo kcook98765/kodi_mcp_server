@@ -301,6 +301,52 @@ def cmd_log_tail(args: argparse.Namespace) -> int:
     return EXIT_SUCCESS
 
 
+def cmd_service_status(args: argparse.Namespace) -> int:
+    """Get service addon status."""
+    result, exit_code, error = make_request(
+        "/tools/service/status",
+        method="POST",
+        data={"addonid": args.addonid},
+    )
+    
+    if exit_code != EXIT_SUCCESS:
+        output = {
+            "ok": False,
+            "command": "service status",
+            "error": error,
+        }
+        print(format_output(output, args.compact))
+        return exit_code
+    
+    # ok represents transport success only: no error/error_type fields
+    ok = result.get("error") is None and result.get("error_type") is None
+    
+    # Build output with error fields at top level if present
+    if ok:
+        output = {
+            "ok": True,
+            "command": "service status",
+            "data": {
+                "addonid": args.addonid,
+                **result,
+            },
+        }
+    else:
+        output = {
+            "ok": False,
+            "command": "service status",
+            "error": result.get("error"),
+            "error_type": result.get("error_type"),
+            "error_code": result.get("error_code"),
+            "data": {
+                "addonid": args.addonid,
+            },
+        }
+    
+    print(format_output(output, args.compact))
+    return EXIT_SUCCESS
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="kodi-cli",
@@ -427,6 +473,23 @@ def main():
         help="Number of log lines to retrieve (default: 20)",
     )
     tail_parser.set_defaults(func=cmd_log_tail)
+    
+    # Service addon operations (Slice 1a)
+    service_parser = subparsers.add_parser(
+        "service",
+        help="Service addon operations",
+    )
+    service_subparsers = service_parser.add_subparsers(dest="subcommand", help="Service subcommands")
+    status_parser = service_subparsers.add_parser(
+        "status",
+        help="Get service addon status",
+    )
+    status_parser.add_argument(
+        "--addonid",
+        required=True,
+        help="Service addon ID",
+    )
+    status_parser.set_defaults(func=cmd_service_status)
     
     args = parser.parse_args()
     
