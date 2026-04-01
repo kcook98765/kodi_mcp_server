@@ -283,6 +283,78 @@ class TestInvalidJSONResponse:
         assert "invalid json" in error.lower()
 
 
+class TestPOSTRequestHandling:
+    """Test that POST commands correctly send JSON body and backend handles it."""
+
+    def test_addon_execute_sends_structured_json(self, monkeypatch):
+        """addon execute sends JSON object with addonid."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"executed": True}
+        
+        with patch("kodi_cli.requests.request", return_value=mock_response) as mock_req:
+            kodi_cli.cmd_addon_execute(
+                argparse.Namespace(
+                    command="addon",
+                    subcommand="execute",
+                    addonid="test.addon",
+                    compact=False,
+                )
+            )
+            
+            mock_req.assert_called_once()
+            call_kwargs = mock_req.call_args
+            assert call_kwargs[1]["method"] == "POST"
+            assert call_kwargs[1]["json"] == {"addonid": "test.addon"}
+            assert call_kwargs[1]["params"] is None
+
+    def test_builtin_exec_sends_structured_json(self, monkeypatch):
+        """builtin exec sends JSON object with command."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"executed": True}
+        
+        with patch("kodi_cli.requests.request", return_value=mock_response) as mock_req:
+            kodi_cli.cmd_builtin_exec(
+                argparse.Namespace(
+                    command="builtin",
+                    subcommand="exec",
+                    kodi_cmd="PlayerControl(Play)",
+                    addonid=None,
+                    compact=False,
+                )
+            )
+            
+            mock_req.assert_called_once()
+            call_kwargs = mock_req.call_args
+            assert call_kwargs[1]["method"] == "POST"
+            assert call_kwargs[1]["json"] == {"command": "PlayerControl(Play)"}
+            assert call_kwargs[1]["params"] is None
+
+    def test_builtin_exec_with_addonid_sends_both(self, monkeypatch):
+        """builtin exec with addonid sends both in JSON object."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"executed": True}
+        
+        with patch("kodi_cli.requests.request", return_value=mock_response) as mock_req:
+            kodi_cli.cmd_builtin_exec(
+                argparse.Namespace(
+                    command="builtin",
+                    subcommand="exec",
+                    kodi_cmd="ReloadSkin",
+                    addonid="plugin.video.test",
+                    compact=False,
+                )
+            )
+            
+            mock_req.assert_called_once()
+            call_kwargs = mock_req.call_args
+            assert call_kwargs[1]["method"] == "POST"
+            assert call_kwargs[1]["json"] == {"command": "ReloadSkin", "addonid": "plugin.video.test"}
+            assert call_kwargs[1]["params"] is None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 

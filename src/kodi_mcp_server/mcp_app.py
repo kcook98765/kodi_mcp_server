@@ -9,6 +9,16 @@ from kodi_mcp_server.app_shared import (
     build_notification_probe,
     build_repo_tool,
 )
+from kodi_mcp_server.models.requests import (
+    ExecuteAddonRequest,
+    ExecuteBuiltinRequest,
+    EnsureAddonEnabledRequest,
+    PublishAddonRequest,
+    RestartBridgeAddonRequest,
+    UpdateAddonRequest,
+    UploadAddonZipRequest,
+    WriteLogMarkerRequest,
+)
 
 
 def configure_mcp_app(app):
@@ -126,8 +136,8 @@ def configure_mcp_app(app):
         return result.to_dict()
 
     @app.post("/tools/write_bridge_log_marker")
-    async def write_bridge_log_marker_endpoint(message: str):
-        result = await build_bridge_tool().write_bridge_log_marker(message=message)
+    async def write_bridge_log_marker_endpoint(request: WriteLogMarkerRequest):
+        result = await build_bridge_tool().write_bridge_log_marker(message=request.message)
         return result.to_dict()
 
     @app.post("/tools/bridge_debug_ping")
@@ -136,18 +146,21 @@ def configure_mcp_app(app):
         return result.to_dict()
 
     @app.post("/tools/execute_bridge_builtin")
-    async def execute_bridge_builtin_endpoint(command: str, addonid: str | None = None):
-        result = await build_bridge_tool().execute_bridge_builtin(command=command, addonid=addonid)
+    async def execute_bridge_builtin_endpoint(request: ExecuteBuiltinRequest):
+        result = await build_bridge_tool().execute_bridge_builtin(
+            command=request.command,
+            addonid=request.addonid,
+        )
         return result.to_dict()
 
     @app.post("/tools/ensure_bridge_addon_enabled")
-    async def ensure_bridge_addon_enabled_endpoint(addonid: str):
-        result = await build_bridge_tool().ensure_bridge_addon_enabled(addonid=addonid)
+    async def ensure_bridge_addon_enabled_endpoint(request: EnsureAddonEnabledRequest):
+        result = await build_bridge_tool().ensure_bridge_addon_enabled(addonid=request.addonid)
         return result.to_dict()
 
     @app.post("/tools/execute_bridge_addon")
-    async def execute_bridge_addon_endpoint(addonid: str):
-        result = await build_bridge_tool().execute_bridge_addon(addonid=addonid)
+    async def execute_bridge_addon_endpoint(request: ExecuteAddonRequest):
+        result = await build_bridge_tool().execute_bridge_addon(addonid=request.addonid)
         return result.to_dict()
 
     @app.get("/tools/check_bridge_addon_version")
@@ -167,8 +180,8 @@ def configure_mcp_app(app):
         return result.to_dict()
 
     @app.post("/tools/upload_bridge_addon_zip")
-    async def upload_bridge_addon_zip_endpoint(local_zip_path: str):
-        result = await build_bridge_tool().upload_bridge_addon_zip(local_zip_path=local_zip_path)
+    async def upload_bridge_addon_zip_endpoint(request: UploadAddonZipRequest):
+        result = await build_bridge_tool().upload_bridge_addon_zip(local_zip_path=request.local_zip_path)
         return result.to_dict()
 
     @app.get("/tools/listen_kodi_notifications")
@@ -236,19 +249,13 @@ def configure_mcp_app(app):
         return result.to_dict()
 
     @app.post("/tools/publish_addon_to_repo")
-    async def publish_addon_to_repo_endpoint(
-        addon_zip_path: str,
-        addon_id: str,
-        addon_name: str,
-        addon_version: str,
-        provider_name: str = "kodi_mcp",
-    ):
+    async def publish_addon_to_repo_endpoint(request: PublishAddonRequest):
         result = await build_repo_tool().publish_addon_to_repo(
-            addon_zip_path=addon_zip_path,
-            addon_id=addon_id,
-            addon_name=addon_name,
-            addon_version=addon_version,
-            provider_name=provider_name,
+            addon_zip_path=request.addon_zip_path,
+            addon_id=request.addon_id,
+            addon_name=request.addon_name,
+            addon_version=request.addon_version,
+            provider_name=request.provider_name,
         )
         return result.to_dict()
 
@@ -268,23 +275,17 @@ def configure_mcp_app(app):
         return result.to_dict()
 
     @app.post("/tools/update_addon")
-    async def update_addon_endpoint(
-        addonid: str,
-        timeout_seconds: int = Query(default=30, ge=1),
-        poll_interval_seconds: int = Query(default=4, ge=1),
-    ):
+    async def update_addon_endpoint(request: UpdateAddonRequest):
         result = await build_addon_ops_tool().update_addon(
-            addonid=addonid,
-            timeout_seconds=timeout_seconds,
-            poll_interval_seconds=poll_interval_seconds,
+            addonid=request.addonid,
+            timeout_seconds=request.timeout_seconds,
+            poll_interval_seconds=request.poll_interval_seconds,
         )
         return result.to_dict()
 
     @app.post("/tools/restart_bridge_addon")
-    async def restart_bridge_addon_endpoint(
-        timeout_seconds: int = Query(default=30, ge=1),
-    ):
-        result = await build_addon_ops_tool().restart_bridge_addon(timeout_seconds=timeout_seconds)
+    async def restart_bridge_addon_endpoint(request: RestartBridgeAddonRequest):
+        result = await build_addon_ops_tool().restart_bridge_addon(timeout_seconds=request.timeout_seconds)
         return result.to_dict()
 
     @app.get("/tools/get_addons")
