@@ -94,6 +94,94 @@
 
 3. **README/API docs** — Could be more aligned with current implementation (document `/status` response format, error types, etc.)
 
+## Completed Tasks (Phase 5: Connection Lifecycle and Retry Boundaries)
+
+**Date:** 2026-03-31
+
+### Summary
+Added retry logic for connection resilience with strict boundaries to improve reliability of remote Kodi communication.
+
+### Retry Configuration
+- **Max retries:** 1 (2 total attempts)
+- **Retry triggers:** NETWORK_ERROR, TIMEOUT only
+- **No retry:** AUTH_ERROR, NOT_FOUND, SERVER_ERROR, PARSE_ERROR, INVALID_RESPONSE, any non-whitelisted method
+- **Config:** Intentionally hard-coded (no retry config values added)
+- **Logging:** No retry logging (kept minimal as per Phase 5 constraints)
+
+### Safe Retry Lists
+
+#### HttpBridgeClient (`transport/http_bridge.py`)
+**Safe methods that auto-retry on NETWORK_ERROR/TIMEOUT:**
+- `get_health()`
+- `get_status()`
+- `get_runtime_info()`
+- `get_addon_info()`
+- `get_log_tail()`
+- `get_log_markers()`
+- `debug_ping()`
+
+**Unsafe methods (no retry):**
+- `get_file()` (explicitly excluded per Phase 5 decision)
+- `write_log_marker()` — POST with side effects
+- `ensure_addon_enabled()` — POST with side effects
+- `execute_addon()` — POST with side effects
+- `execute_builtin()` — POST with side effects
+- `upload_addon_zip()` — POST with side effects
+- `check_addon_version()` — read but part of deploy verification, kept manual
+
+#### HttpJsonRpcTransport (`transport/http_jsonrpc.py`)
+**Safe methods (whitelist-based, 14 methods):**
+```python
+SAFE_READ_METHODS = frozenset([
+    "Application.GetProperties",
+    "Files.GetDirectory",
+    "Files.GetSources",
+    "Player.GetActivePlayers",
+    "Player.GetItem",
+    "VideoLibrary.GetMovies",
+    "VideoLibrary.GetTVShows",
+    "VideoLibrary.GetRecentlyAddedMovies",
+    "Addons.GetAddons",
+    "Addons.GetAddonDetails",
+    "Settings.GetSettingValue",
+    "System.GetProperties",
+    "JSONRPC.Version",
+    "JSONRPC.Introspect",
+])
+```
+
+**Unsafe methods (anything not in whitelist):**
+- `Addons.SetAddonEnabled` — SET operation
+- `Addons.ExecuteAddon` — EXECUTE operation
+- `System.Reboot`, `System.Shutdown` — mutating operations
+
+### Implementation Details
+- Added `_retry_wrapper()` helper method to both transports
+- HttpJsonRpcTransport: whitelist-based detection via `is_safe_to_retry()` function
+- Added `_send_once()` for non-retry request execution (separation of concerns)
+- Added `_error_response()` method to HttpJsonRpcTransport (was missing)
+
+### Test Coverage Added
+- **test_http_errors.py** — 6 new retry behavior tests:
+  - `test_safe_method_retries_on_timeout` — Verify retry on timeout for safe methods
+  - `test_mutating_method_does_not_retry_on_timeout` — Verify no retry for mutating methods
+  - `test_auth_error_does_not_retry` — Verify no retry on AUTH_ERROR
+  - `test_network_error_retries_once` — Verify retry on network errors
+  - `test_max_one_retry` — Verify exactly 1 retry (2 total attempts)
+  - `test_is_safe_to_retry` — Verify whitelist detection
+
+### Test Results
+- **Total:** 17 tests (up from 14)
+- **Passed:** 17
+- **Failed:** 0
+
+### Files Changed in project/
+1. `src/kodi_mcp_server/transport/http_bridge.py` (~90 lines changed)
+2. `src/kodi_mcp_server/transport/http_jsonrpc.py` (~130 lines changed)
+3. `tests/test_http_errors.py` (~160 lines changed)
+
+---
+
 ## Completed Tasks (Phase 4: Diagnostics + Test Coverage)
 
 **Date:** 2026-03-31
@@ -162,17 +250,17 @@
 
 ## Recent Changes
 
+- Phase 5: Connection lifecycle and retry boundaries completed
 - Repository restructured to make `project/` the canonical codebase
 - Config loading updated to use `project/repo/` as authoritative repo root
 - Transport layers standardized around `RequestMessage`/`ResponseMessage`
 
 ## Next Steps
 
-1. Stabilize config loading
-2. Standardize error handling
-3. Define CLI wrapper contract
-4. Add integration tests for transports
-5. Define error codes/types
+1. **CLI wrappers** — Not yet implemented. Future work — do not assume they exist.
+2. **Connection reuse** — Defer to Phase 6 or later. New transport instance created per request (performance optimization).
+3. **README/API docs** — Could be more aligned with current implementation (document `/status` response format, error types, etc.).
+4. **Phase 6** — Consider connection pooling/reuse if latency becomes an issue.
 
 ---
 
