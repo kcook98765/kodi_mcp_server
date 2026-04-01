@@ -54,12 +54,12 @@ Implemented thin CLI wrapper `kodi-cli` that provides deterministic, machine-fri
 
 ### Files Added
 - `kodi-cli` — Workspace entry point (executable)
-- `cli/kodi_cli.py` — Main CLI implementation
-- `cli/test_cli.py` — Test suite
-- `cli/pyproject.toml` — Python packaging
-- `cli/requirements.txt` — Dependencies
-- `cli/pytest.ini` — Test config
-- `cli/README.md` — Usage documentation
+- `project/scripts/kodi_cli.py` — Main CLI implementation
+- `project/tests/test_cli.py` — Test suite
+- `project/scripts/pyproject.toml` — Python packaging
+- `project/requirements-cli.txt` — Dependencies
+- `project/pytest.ini` — Test config (merged)
+- `cli/README.md` — Merged into `project/README.md`
 - `.gitignore` — Workspace exclusions
 
 ### Architecture
