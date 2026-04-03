@@ -186,23 +186,25 @@ async def install_dir_index():
 
 @router.get("/repo/install/latest.zip")
 async def latest_zip_redirect():
-    """Redirect latest.zip to the current versioned zip."""
+    """Serve latest.zip - finds the latest versioned zip or follows symlink."""
     repo_addon_path = REPO_ROOT.parent / "repo-addon"
     
     # First check for explicit latest symlink
     latest_symlink = repo_addon_path / "repository.kodi-mcp-latest.zip"
-    if latest_symlink.exists():
-        # Follow symlink to get actual file
-        actual_zip = latest_symlink.resolve()
-        return FileResponse(
-            actual_zip,
-            media_type="application/zip",
-            filename="repository.kodi-mcp-latest.zip"
-        )
+    if latest_symlink.exists() and latest_symlink.is_symlink():
+        try:
+            actual_zip = latest_symlink.resolve()
+            return FileResponse(
+                actual_zip,
+                media_type="application/zip",
+                filename="repository.kodi-mcp-latest.zip"
+            )
+        except Exception:
+            pass
     
     # Fallback: find latest versioned zip (not -latest.zip itself)
     versioned_zips = [f for f in repo_addon_path.glob("repository.kodi-mcp-*.zip") 
-                      if not f.name.endswith("-latest.zip")]
+                      if not f.name.endswith("-latest.zip") and f.is_file()]
     
     if not versioned_zips:
         raise HTTPException(status_code=404, detail="No repository addon found")
@@ -220,34 +222,7 @@ async def latest_zip_redirect():
 @router.get("/repo/install/repository.kodi-mcp-latest.zip")
 async def latest_versioned_alias():
     """Alias repository.kodi-mcp-latest.zip -> current versioned zip."""
-    repo_addon_path = REPO_ROOT.parent / "repo-addon"
-    
-    # First check for explicit latest symlink
-    latest_symlink = repo_addon_path / "repository.kodi-mcp-latest.zip"
-    if latest_symlink.exists():
-        # Follow symlink to get actual file
-        actual_zip = latest_symlink.resolve()
-        return FileResponse(
-            actual_zip,
-            media_type="application/zip",
-            filename="repository.kodi-mcp-latest.zip"
-        )
-    
-    # Fallback: find latest versioned zip (not -latest.zip itself)
-    versioned_zips = [f for f in repo_addon_path.glob("repository.kodi-mcp-*.zip") 
-                      if not f.name.endswith("-latest.zip")]
-    
-    if not versioned_zips:
-        raise HTTPException(status_code=404, detail="No repository addon found")
-    
-    latest = max(versioned_zips, key=os.path.getmtime)
-    
-    # Serve directly with latest alias name
-    return FileResponse(
-        latest,
-        media_type="application/zip",
-        filename="repository.kodi-mcp-latest.zip"
-    )
+    return await latest_zip_redirect()
 
 
 @router.get("/repo/install/{filename:path}")
@@ -274,7 +249,10 @@ def mount_repo_static(app):
     """
     dev_repo = REPO_ROOT / "dev-repo"
     if dev_repo.exists():
-        app.mount("/repo/content", StaticFiles(directory=str(dev_repo), html=False), name="repo")
+        # Mount with strict_mode=False to allow serving files even if some don't exist
+        app.mount("/repo/content", StaticFiles(directory=str(dev_repo), html=False, check_dir=True), name="repo")
     else:
         # Fallback: mount the repo root itself
-        app.mount("/repo/content", StaticFiles(directory=str(REPO_ROOT), html=False), name="repo")
+        repo_dir = REPO_ROOT
+        if repo_dir.exists():
+            app.mount("/repo/content", StaticFiles(directory=str(repo_dir), html=False, check_dir=True), name="repo")
