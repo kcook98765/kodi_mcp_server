@@ -249,10 +249,49 @@ def mount_repo_static(app):
     """
     dev_repo = REPO_ROOT / "dev-repo"
     if dev_repo.exists():
-        # Mount with strict_mode=False to allow serving files even if some don't exist
-        app.mount("/repo/content", StaticFiles(directory=str(dev_repo), html=False, check_dir=True), name="repo")
+        # Mount at /repo/content to serve dev-repo files
+        # Use html=False to prevent directory listing, check_dir=True for validation
+        from starlette.requests import Request
+        from starlette.responses import FileResponse, PlainTextResponse
+        from fastapi.responses import RedirectResponse
+        
+        @app.get("/repo/content/", include_in_schema=False)
+        async def repo_content_root(request: Request):
+            """Redirect /repo/content/ to /repo/content/addons.xml.gz for Kodi."""
+            addons_gz = dev_repo / "addons.xml.gz"
+            if addons_gz.exists():
+                return RedirectResponse(url="/repo/content/addons.xml.gz")
+            return PlainTextResponse("Kodi MCP Repository", status_code=200)
+        
+        @app.get("/repo/content/{path:path}", include_in_schema=False)
+        async def repo_content_file(path: str, request: Request):
+            """Serve files from dev-repo directory."""
+            file_path = dev_repo / path
+            if not file_path.exists():
+                from fastapi import HTTPException
+                raise HTTPException(status_code=404, detail="File not found")
+            if file_path.is_dir():
+                return PlainTextResponse("Directory listing not available", status_code=404)
+            return FileResponse(file_path)
     else:
         # Fallback: mount the repo root itself
         repo_dir = REPO_ROOT
         if repo_dir.exists():
-            app.mount("/repo/content", StaticFiles(directory=str(repo_dir), html=False, check_dir=True), name="repo")
+            from fastapi import Request
+            from fastapi.responses import FileResponse, RedirectResponse, PlainTextResponse
+            
+            @app.get("/repo/content/", include_in_schema=False)
+            async def repo_content_root_fallback(request: Request):
+                """Fallback redirect for /repo/content/."""
+                return PlainTextResponse("Kodi MCP Repository", status_code=200)
+            
+            @app.get("/repo/content/{path:path}", include_in_schema=False)
+            async def repo_content_file_fallback(path: str, request: Request):
+                """Fallback: serve files from repo root."""
+                file_path = repo_dir / path
+                if not file_path.exists():
+                    from fastapi import HTTPException
+                    raise HTTPException(status_code=404, detail="File not found")
+                if file_path.is_dir():
+                    return PlainTextResponse("Directory listing not available", status_code=404)
+                return FileResponse(file_path)
