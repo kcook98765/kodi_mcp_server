@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resources>
+    <addons>
+        <addon id="repository.kodi-mcp" version="{{repo_version}}" name="Kodi MCP Repository">
+            <requires>
+                <import addon="xbmc.metadata.addons" version="1.0.0"/>
+            </requires>
+            <extension point="xbmc.addon.repository" name="Kodi MCP Repository">
+                <directory>{{repo_base_url}}/repo/</directory>
+                <checksum>{{repo_base_url}}/repo/addons.xml.gz</checksum>
+                <datadir>jar://{{repo_base_url}}/repo/</datadir>
+            </extension>
+            <extension point="xbmc.service" name="Kodi MCP Repository Service">
+                <library>{{repo_base_url}}/</library>
+                <start>boot</start>
+                <stop>startup</stop>
+            </extension>
+            <provides>
+                <addon>{{repo_version}}</addon>
+            </provides>
+        </addon>
+    </addons>
+</resources>
