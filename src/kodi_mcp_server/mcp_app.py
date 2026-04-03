@@ -32,7 +32,12 @@ def configure_mcp_app(app):
     @app.get("/status")
     async def full_status():
         """Check server health and connectivity to all downstream services."""
-        from kodi_mcp_server.config import KODI_JSONRPC_URL, KODI_BRIDGE_BASE_URL
+        from kodi_mcp_server.config import (
+            KODI_BRIDGE_BASE_URL,
+            KODI_JSONRPC_PASSWORD,
+            KODI_JSONRPC_URL,
+            KODI_JSONRPC_USERNAME,
+        )
 
         result = {
             "server": {"status": "running"},
@@ -50,8 +55,8 @@ def configure_mcp_app(app):
 
                 transport = HttpJsonRpcTransport(
                     url=KODI_JSONRPC_URL,
-                    username="",
-                    password="",
+                    username=KODI_JSONRPC_USERNAME,
+                    password=KODI_JSONRPC_PASSWORD,
                     timeout=5,
                 )
                 request = RequestMessage(
