@@ -34,6 +34,9 @@ class ErrorType(str, Enum):
     # Configuration
     CONFIG_ERROR = "config_error"    # Missing required config
 
+    # Operation issues
+    INVALID_OPERATION = "invalid_operation"  # Action not allowed for this type
+
     # Fallback
     UNKNOWN_ERROR = "unknown_error"  # Unexpected errors
 

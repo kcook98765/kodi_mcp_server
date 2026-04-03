@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<addon id="service.kodi_mcp" name="Kodi MCP Service" version="0.0.6" provider-name="kodi_mcp">
+  <requires>
+    <import addon="python3" version="3.9.0"/>
+  </requires>
+  <extension point="xbmc.service" library="start.py"/>
+  <extension point="xbmc.addon.repository" name="Kodi MCP Server" directory="http://localhost:8001/dev-repo/zips/"/>
+  <assets>
+    <icon>icon.png</icon>
+  </assets>
+</addon>

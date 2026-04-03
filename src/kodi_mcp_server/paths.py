@@ -1,7 +1,7 @@
 """Authoritative project path helpers for kodi_mcp_server.
 
 These helpers make ownership explicit:
-- source addon packages live under `kodi_addon/packages/`
+- source addon packages live under `project/` (dev-loop packaging source of truth)
 - legacy compatibility build artifacts live under `addon/`
 - authoritative served/published repo content lives under project-root `repo/`
 - `server/repo*` paths are legacy and must not be used for runtime serving or publishing
@@ -10,7 +10,8 @@ These helpers make ownership explicit:
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-KODI_ADDON_PACKAGES_ROOT = PROJECT_ROOT / "kodi_addon" / "packages"
+PROJECT_DIR = PROJECT_ROOT / "project"
+KODI_ADDON_PACKAGES_ROOT = PROJECT_DIR
 LEGACY_ADDON_ARTIFACTS_ROOT = PROJECT_ROOT / "addon"
 AUTHORITATIVE_REPO_ROOT = PROJECT_ROOT / "repo"
 LEGACY_SERVER_REPO_ROOT = PROJECT_ROOT / "server" / "repo"

@@ -94,13 +94,13 @@ class TestBridgeAddonExecute:
         
         client.execute_addon = AsyncMock(side_effect=get_execute_addon_side_effect)
         
-        return BridgeTool(bridge_client=client)
+        return BridgeTool(client=client)
     
     @pytest.mark.asyncio
     async def test_execute_service_addon_returns_error(self, bridge_tool):
         """addon execute on service type returns INVALID_OPERATION error."""
         # Setup: addon info returns service type
-        bridge_tool.client.get_bridge_addon_info = AsyncMock(return_value=ResponseMessage(
+        bridge_tool.client.get_addon_info = AsyncMock(return_value=ResponseMessage(
             request_id="bridge-addon-info",
             result={
                 "addon_type": "service",
@@ -133,7 +133,7 @@ class TestBridgeAddonExecute:
     async def test_execute_script_addon_proceeds(self, bridge_tool):
         """addon execute on script type proceeds normally."""
         # Setup: addon info returns script type
-        bridge_tool.client.get_bridge_addon_info = AsyncMock(return_value=ResponseMessage(
+        bridge_tool.client.get_addon_info = AsyncMock(return_value=ResponseMessage(
             request_id="bridge-addon-info",
             result={
                 "addon_type": "script",
@@ -157,7 +157,7 @@ class TestBridgeAddonExecute:
     async def test_execute_with_info_error_returns_error(self, bridge_tool):
         """addon execute returns error when addon_info fails."""
         # Setup: addon info returns error
-        bridge_tool.client.get_bridge_addon_info = AsyncMock(return_value=ResponseMessage(
+        bridge_tool.client.get_addon_info = AsyncMock(return_value=ResponseMessage(
             request_id="bridge-addon-info",
             result=None,
             error="addon not found",
