@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<addon id="repository.kodi-mcp"
+       name="Kodi MCP Server Repository"
+       version="0.1.0"
+       provider_name="Kodi MCP Team">
+  <requires>
+    <import addon="python.compiler" version="4.0.0"/>
+    <import addon="script.module.requests" version="2.32.3"/>
+  </requires>
+  <extension point="xbmc.python.repo">
+    <directory>repository.xml</directory>
+    <checksum>checksum</checksum>
+  </extension>
+  <extension point="xbmc.addon.metadata">
+    <summary lang="en_US">Repository for Kodi MCP Server backend tools and addons</summary>
+    <description lang="en_US">Official repository for the Kodi MCP Server middle-layer backend and related tools. Provides structured, machine-friendly interfaces for remote Kodi operations.</description>
+    <disclaimer lang="en_US">This repository provides development tools and backend infrastructure. Use at your own risk.</disclaimer>
+    <platform>all</platform>
+    <license>MIT</license>
+    <source>https://github.com/openclaw/kodi_mcp_server</source>
+    <forum>https://forum.kodi.tv</forum>
+    <email>kodi-mcp@openclaw.ai</email>
+    <summary lang="es_ES">Repositorio para herramientas del servidor backend Kodi MCP</summary>
+    <summary lang="de_DE">Repository für Kodi MCP Server Backend-Tools</summary>
+    <summary lang="fr_FR">Dépôt pour les outils backend Kodi MCP</summary>
+  </extension>
+</addon>
