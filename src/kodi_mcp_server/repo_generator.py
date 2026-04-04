@@ -117,7 +117,6 @@ def build_repo_addon(
         context = {
             "repo_version": repo_version,
             "repo_base_url": repo_base_url,
-            "repo_base_path": f"jar://file://{repo_root}/repo/",
         }
 
         # Copy addon.xml

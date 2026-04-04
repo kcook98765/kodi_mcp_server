@@ -3,25 +3,14 @@
        name="Kodi MCP Repository"
        version="{{repo_version}}"
        provider_name="Kodi MCP">
-    <requires>
-        <import addon="xbmc.python" version="3.0.0"/>
-        <import addon="script.module.requests" version="2.0.0"/>
-    </requires>
     <extension point="xbmc.addon.repository" name="Kodi MCP Repository">
-        <directory>{{repo_base_path}}</directory>
-        <checksum>{{repo_base_url}}/addons.xml.gz</checksum>
-        <datadir>jar://{{repo_base_url}}/repo/</datadir>
+        <dir>
+            <info>{{repo_base_url}}/addons.xml.gz</info>
+            <checksum>{{repo_base_url}}/addons.xml.md5</checksum>
+            <datadir>{{repo_base_url}}/zips/</datadir>
+        </dir>
     </extension>
-    <extension point="xbmc.service" name="Kodi MCP Repository Service"
-               start="boot" stop="shutdown">
-        <provides>repository.kodi-mcp</provides>
-    </extension>
-    <extension point="xbmc.python.pluginsource" name="Kodi MCP Repository"
-               provider_name="Kodi MCP" provider_url="https://openclaw.ai">
-        <library>service.py</library>
-        <provides>executable</provides>
-    </extension>
-    <news>
-        Kodi MCP Repository - Serves packaged addons for remote Kodi integration.
-    </news>
+    <asset>
+        <icon>icon.png</icon>
+    </asset>
 </addon>
