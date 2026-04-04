@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <repositories>
   <repo name="Kodi MCP Server Repository"
-        href="http://claw.home.arpa:8000/repo/content/"
+        href="http://claw.home.arpa:8000/repo/dev-repo/"
         enabled="yes"
         private="no">
   </repo>
