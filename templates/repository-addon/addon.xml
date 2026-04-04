@@ -2,13 +2,19 @@
 <addon id="repository.kodi-mcp"
        name="Kodi MCP Repository"
        version="{{repo_version}}"
-       provider_name="Kodi MCP">
+       provider-name="Kodi MCP">
     <extension point="xbmc.addon.repository" name="Kodi MCP Repository">
         <dir>
-            <info>{{repo_base_url}}/repo/dev-repo/addons.xml.gz</info>
-            <checksum>{{repo_base_url}}/repo/dev-repo/addons.xml.md5</checksum>
-            <datadir>{{repo_base_url}}/repo/dev-repo/zips/</datadir>
+            <info compressed="false">{{repo_base_url}}/repo/content/addons.xml</info>
+            <checksum>{{repo_base_url}}/repo/content/addons.xml.md5</checksum>
+            <datadir zip="true">{{repo_base_url}}/repo/content/zips/</datadir>
         </dir>
+    </extension>
+    <extension point="xbmc.addon.metadata">
+        <summary>Kodi MCP Repository</summary>
+        <description>Repository for Kodi MCP server addons and packages</description>
+        <platform>all</platform>
+        <license>MIT</license>
     </extension>
     <asset>
         <icon>icon.png</icon>
