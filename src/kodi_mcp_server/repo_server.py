@@ -168,7 +168,9 @@ async def install_dir_index():
         else:
             lines.append('</li>')
 
-    lines.append('</ul>', '</body>', '</html>')
+    lines.append('</ul>')
+    lines.append('</body>')
+    lines.append('</html>')
 
     return HTMLResponse(content='\n'.join(lines), media_type="text/html")
 
