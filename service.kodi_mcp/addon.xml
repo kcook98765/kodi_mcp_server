@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<addon id="service.kodi_mcp" name="Kodi MCP Service" version="0.0.6" provider-name="kodi_mcp">
+<addon id="service.kodi_mcp" name="Kodi MCP Service" version="0.0.7" provider-name="kodi_mcp">
   <requires>
     <import addon="python3" version="3.9.0"/>
   </requires>

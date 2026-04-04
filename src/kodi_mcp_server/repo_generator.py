@@ -119,36 +119,24 @@ def build_repo_addon(
             "repo_base_url": repo_base_url,
         }
 
-        # Copy addon.xml
-        addon_xml_template = Path(__file__).parent.parent.parent / "templates" / "addon.xml"
+        # Copy addon.xml from repository-addon template
+        addon_xml_template = (
+            Path(__file__).parent.parent.parent / "templates" / "repository-addon" / "addon.xml"
+        )
         addon_xml_output = staging_path / "addon.xml"
         render_template(addon_xml_template, addon_xml_output, context)
 
-        # Copy repository.xml (metadata)
-        repository_xml_template = (
-            Path(__file__).parent.parent.parent / "templates" / "repository.xml"
+        # Copy service.py stub (Kodi repo addons need this)
+        service_py_template = (
+            Path(__file__).parent.parent.parent / "templates" / "repository-addon" / "service.py"
         )
-        repository_xml_output = staging_path / "repository.xml"
-        render_template(repository_xml_template, repository_xml_output, context)
+        shutil.copy2(service_py_template, staging_path / "service.py")
 
-        # Create service.py stub (Kodi repo addons need this)
-        service_py = staging_path / "service.py"
-        service_py.write_text(
-            '#!/usr/bin/env python3\n# Kodi repository service stub\n# Required for valid addon structure\nprint("Kodi MCP Repository Service")\n',
-            encoding="utf-8",
+        # Copy metadata/addons.xml from template
+        metadata_addons_template = (
+            Path(__file__).parent.parent.parent / "templates" / "repository-addon" / "metadata" / "addons.xml"
         )
-
-        # Create metadata/addons.xml for the repo addon itself
-        metadata_dir = staging_path / "metadata" / "addons"
-        metadata_dir.mkdir(parents=True, exist_ok=True)
-
-        # Create basic addons.xml for repo's own metadata
-        addons_xml = '<addons>\n'
-        for addon in addons_data.get("addons", []):
-            addons_xml += f'    <addon id="{addon.get("id")}" version="{addon.get("version")}" name="{addon.get("name")}"/>\n'
-        addons_xml += "</addons>"
-
-        (staging_path / "addons.xml").write_text(addons_xml, encoding="utf-8")
+        shutil.copy2(metadata_addons_template, staging_path / "addons.xml")
 
         # Create ZIP
         output_zip.parent.mkdir(parents=True, exist_ok=True)

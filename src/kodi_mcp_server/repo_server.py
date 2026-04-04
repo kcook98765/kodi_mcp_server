@@ -79,9 +79,8 @@ async def repo_info():
 
     Returns canonical install URLs and metadata for Kodi repository addons.
     """
-    # Source repo addon from dev-repo/zips/repository.kodi-mcp (actual published location)
-    repo_addon_zips_dir = REPO_ROOT / "dev-repo" / "zips" / "repository.kodi-mcp"
-    repo_addon_path = repo_addon_zips_dir if repo_addon_zips_dir.exists() else REPO_ROOT.parent / "repo-addon"
+    # Source repo addon from workspace/repo-addon/ (authoritative published location)
+    repo_addon_path = REPO_ROOT.parent / "repo-addon"
 
     latest_zip = repo_addon_path / "repository.kodi-mcp-latest.zip"
     versioned_zips = [f for f in repo_addon_path.glob("repository.kodi-mcp-*.zip")
@@ -120,7 +119,7 @@ async def repo_info():
                 "zip_url": f"{REPO_BASE_URL}/repo/install/latest.zip" if latest_zip else None,
                 "version": latest_versioned.stem.split("-")[-1] if latest_versioned else None,
                 "size_bytes": latest_versioned.stat().st_size if latest_versioned else None,
-                "published_location": str(repo_addon_zips_dir) if repo_addon_zips_dir.exists() else "fallback: repo-addon",
+                "published_location": str(repo_addon_path),
             },
         }
     )
@@ -138,12 +137,12 @@ async def install_dir_index():
 
     Returns a simple HTML page with direct links to repository addon zips.
     Kodi can parse this for source browsing.
+    Only exposes the canonical repository.kodi-mcp package from repo-addon/.
     """
-    # Source repo addon from dev-repo/zips/repository.kodi-mcp (actual published location)
-    repo_addon_zips_dir = REPO_ROOT / "dev-repo" / "zips" / "repository.kodi-mcp"
-    repo_addon_path = repo_addon_zips_dir if repo_addon_zips_dir.exists() else REPO_ROOT.parent / "repo-addon"
+    # Source repo addon from workspace/repo-addon/ (authoritative published location)
+    repo_addon_path = REPO_ROOT.parent / "repo-addon"
 
-    # Get all repo addon zips
+    # Get all repo addon zips - only show repository.kodi-mcp packages
     zips = [f for f in repo_addon_path.glob("repository.kodi-mcp-*.zip")]
     zips.sort(key=lambda x: x.name, reverse=True)  # Newest first
 
@@ -177,10 +176,13 @@ async def install_dir_index():
 
 @router.get("/repo/install/latest.zip")
 async def latest_zip_redirect():
-    """Serve latest.zip - finds the latest versioned zip from published location."""
-    # Source repo addon from dev-repo/zips/repository.kodi-mcp (actual published location)
-    repo_addon_zips_dir = REPO_ROOT / "dev-repo" / "zips" / "repository.kodi-mcp"
-    repo_addon_path = repo_addon_zips_dir if repo_addon_zips_dir.exists() else REPO_ROOT.parent / "repo-addon"
+    """Serve latest.zip - finds the latest versioned zip from published location.
+
+    Only exposes the canonical repository.kodi-mcp package from workspace/repo-addon/.
+    This prevents stale repo addon versions from being served.
+    """
+    # Source repo addon from workspace/repo-addon/ (authoritative published location)
+    repo_addon_path = REPO_ROOT.parent / "repo-addon"
 
     # First check for explicit latest symlink
     latest_symlink = repo_addon_path / "repository.kodi-mcp-latest.zip"
@@ -220,10 +222,13 @@ async def latest_versioned_alias():
 
 @router.get("/repo/install/{filename:path}")
 async def install_file(filename: str):
-    """Serve individual install files from the published repo addon location."""
-    # Source repo addon from dev-repo/zips/repository.kodi-mcp (actual published location)
-    repo_addon_zips_dir = REPO_ROOT / "dev-repo" / "zips" / "repository.kodi-mcp"
-    repo_addon_path = repo_addon_zips_dir if repo_addon_zips_dir.exists() else REPO_ROOT.parent / "repo-addon"
+    """Serve individual install files from the published repo addon location.
+
+    Only serves repository.kodi-mcp-* packages from workspace/repo-addon/.
+    This prevents exposure of stale or unintended addon versions.
+    """
+    # Source repo addon from workspace/repo-addon/ (authoritative published location)
+    repo_addon_path = REPO_ROOT.parent / "repo-addon"
     file_path = repo_addon_path / filename
 
     if not file_path.exists():
