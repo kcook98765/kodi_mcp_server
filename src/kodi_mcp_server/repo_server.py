@@ -79,11 +79,13 @@ async def repo_info():
 
     Returns canonical install URLs and metadata for Kodi repository addons.
     """
-    # Find the latest repo addon zip
-    repo_addon_path = REPO_ROOT.parent / "repo-addon"
+    # Find the latest repo addon zip - look in the install directory first (where files are published)
+    install_dir = REPO_ROOT / "install"
+    repo_addon_path = install_dir if install_dir.exists() else REPO_ROOT.parent / "repo-addon"
+    
     latest_zip = repo_addon_path / "repository.kodi-mcp-latest.zip"
     versioned_zips = [f for f in repo_addon_path.glob("repository.kodi-mcp-*.zip") 
-                      if not f.name.endswith("-latest.zip")]
+                      if not f.name.endswith("-latest.zip") and f.is_file()]
     
     # Get latest versioned zip
     latest_versioned = max(versioned_zips, key=os.path.getmtime) if versioned_zips else None
@@ -132,11 +134,17 @@ async def repo_root_redirect():
 @router.get("/repo/install/")
 async def install_dir_index():
     """Browsable install directory index."""
-    repo_addon_path = REPO_ROOT.parent / "repo-addon"
+    # Use install directory as primary, fallback to repo-addon if needed
+    install_dir = REPO_ROOT / "install"
+    repo_addon_path = install_dir if install_dir.exists() else REPO_ROOT.parent / "repo-addon"
     
-    # Get all repo addon zips
-    zips = list(repo_addon_path.glob("repository.kodi-mcp-*.zip"))
+    # Get all repo addon zips (excluding symlinks to -latest.zip)
+    zips = [f for f in repo_addon_path.glob("repository.kodi-mcp-*.zip") if f.is_file()]
     zips.sort(key=lambda x: x.name, reverse=True)  # Newest first
+    
+    if not zips:
+        from fastapi.responses import PlainTextResponse
+        return PlainTextResponse("No repository addons found", status_code=404)
     
     html = """<!DOCTYPE html>
 <html>
@@ -187,7 +195,9 @@ async def install_dir_index():
 @router.get("/repo/install/latest.zip")
 async def latest_zip_redirect():
     """Serve latest.zip - finds the latest versioned zip or follows symlink."""
-    repo_addon_path = REPO_ROOT.parent / "repo-addon"
+    # Use install directory as primary, fallback to repo-addon if needed
+    install_dir = REPO_ROOT / "install"
+    repo_addon_path = install_dir if install_dir.exists() else REPO_ROOT.parent / "repo-addon"
     
     # First check for explicit latest symlink
     latest_symlink = repo_addon_path / "repository.kodi-mcp-latest.zip"
@@ -228,7 +238,9 @@ async def latest_versioned_alias():
 @router.get("/repo/install/{filename:path}")
 async def install_file(filename: str):
     """Serve individual install files from the install directory."""
-    repo_addon_path = REPO_ROOT.parent / "repo-addon"
+    # Use install directory as primary, fallback to repo-addon if needed
+    install_dir = REPO_ROOT / "install"
+    repo_addon_path = install_dir if install_dir.exists() else REPO_ROOT.parent / "repo-addon"
     file_path = repo_addon_path / filename
     
     if not file_path.exists():
