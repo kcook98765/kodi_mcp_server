@@ -12,8 +12,9 @@ from datetime import datetime, timezone
 from typing import Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]  # Project repo root (not workspace root)
-CANONICAL_ADDON_XML = PROJECT_ROOT / "kodi_addon" / "packages" / "repository.kodi_mcp_dev" / "addon.xml"
-PUBLISHED_ADDON_XML = PROJECT_ROOT / "repo" / "repository.kodi_mcp_dev" / "addon.xml"
+# Canonical source: templates/repository-addon/addon.xml (used by build_repo_addon)
+CANONICAL_ADDON_XML = PROJECT_ROOT / "templates" / "repository-addon" / "addon.xml"
+PUBLISHED_ADDON_XML = PROJECT_ROOT / "repo" / "repository.kodi-mcp" / "addon.xml"
 
 # Default artifact location matching repo_generator.py's build_repo_addon output path
 # build_repo_addon outputs to REPO_ROOT.parent / "repo-addon" = PROJECT_ROOT / "repo-addon"
