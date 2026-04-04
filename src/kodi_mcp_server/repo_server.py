@@ -82,21 +82,21 @@ async def repo_info():
     # Source repo addon from dev-repo/zips/repository.kodi-mcp (actual published location)
     repo_addon_zips_dir = REPO_ROOT / "dev-repo" / "zips" / "repository.kodi-mcp"
     repo_addon_path = repo_addon_zips_dir if repo_addon_zips_dir.exists() else REPO_ROOT.parent / "repo-addon"
-    
+
     latest_zip = repo_addon_path / "repository.kodi-mcp-latest.zip"
-    versioned_zips = [f for f in repo_addon_path.glob("repository.kodi-mcp-*.zip") 
+    versioned_zips = [f for f in repo_addon_path.glob("repository.kodi-mcp-*.zip")
                       if not f.name.endswith("-latest.zip") and f.is_file()]
-    
+
     # Get latest versioned zip
     latest_versioned = max(versioned_zips, key=os.path.getmtime) if versioned_zips else None
-    
+
     # Generate checksum if zip exists
     zip_checksum = None
     if latest_versioned and latest_versioned.exists():
         import hashlib
         with open(latest_versioned, 'rb') as f:
             zip_checksum = hashlib.sha256(f.read()).hexdigest()
-    
+
     return JSONResponse(
         {
             "status": "ok",
@@ -134,63 +134,43 @@ async def repo_root_redirect():
 
 @router.get("/repo/install/")
 async def install_dir_index():
-    """Browsable install directory index."""
+    """Plain directory listing for Kodi-compatible enumeration.
+
+    Returns a simple HTML page with direct links to repository addon zips.
+    Kodi can parse this for source browsing.
+    """
     # Source repo addon from dev-repo/zips/repository.kodi-mcp (actual published location)
     repo_addon_zips_dir = REPO_ROOT / "dev-repo" / "zips" / "repository.kodi-mcp"
     repo_addon_path = repo_addon_zips_dir if repo_addon_zips_dir.exists() else REPO_ROOT.parent / "repo-addon"
-    
-    # Get all repo addon zips (excluding symlinks to -latest.zip)
-    zips = [f for f in repo_addon_path.glob("repository.kodi-mcp-*.zip") if f.is_file()]
+
+    # Get all repo addon zips
+    zips = [f for f in repo_addon_path.glob("repository.kodi-mcp-*.zip")]
     zips.sort(key=lambda x: x.name, reverse=True)  # Newest first
-    
+
     if not zips:
         from fastapi.responses import PlainTextResponse
         return PlainTextResponse("No repository addons found", status_code=404)
-    
-    html = """<!DOCTYPE html>
-<html>
-<head>
-    <title>Kodi MCP Install Directory</title>
-    <style>
-        body { font-family: sans-serif; margin: 20px; }
-        h1 { color: #333; }
-        .zip-item { margin: 10px 0; padding: 10px; background: #f5f5f5; border-radius: 4px; }
-        .zip-name { font-weight: bold; }
-        .zip-size { color: #666; font-size: 0.9em; }
-        .download-link { color: #0066cc; text-decoration: none; }
-        .download-link:hover { text-decoration: underline; }
-        .latest-badge { background: #4CAF50; color: white; padding: 2px 8px; border-radius: 3px; font-size: 0.8em; }
-    </style>
-</head>
-<body>
-    <h1>Kodi MCP Repository Addons</h1>
-    <p>Download and install Kodi repository addons:</p>
-"""
-    
+
+    # Build a simple HTML directory listing with direct links
+    # Kodi's source browser can parse basic HTML <a> tags
+    lines = ['<!DOCTYPE html>', '<html><head><title>Repository Addons</title></head>', '<body>', '<h1>Repository Addons</h1>', '<ul>']
+
     for zip_path in zips:
         size = zip_path.stat().st_size
         size_kb = size / 1024
         is_latest = zip_path.name.endswith("-latest.zip")
-        
-        html += f"""
-    <div class="zip-item">
-        <div class="zip-name">
-            {zip_path.name}
-            {' <span class="latest-badge">LATEST</span>' if is_latest else ''}
-        </div>
-        <div class="zip-size">{size_kb:.1f} KB</div>
-        <div>
-            <a href="{zip_path.name}" class="download-link" download>Download</a> |
-            <a href="/repo/install/{zip_path.name}" class="download-link">Direct</a>
-        </div>
-    </div>
-"""
-    
-    html += """
-</body>
-</html>
-"""
-    return HTMLResponse(html)
+        size_str = f"{size_kb:.1f} KB"
+
+        # Simple list item with link
+        lines.append(f'<li><a href="{zip_path.name}">{zip_path.name}</a> ({size_str})')
+        if is_latest:
+            lines.append(f'<small>[LATEST]</small></li>')
+        else:
+            lines.append('</li>')
+
+    lines.append('</ul>', '</body>', '</html>')
+
+    return HTMLResponse(content='\n'.join(lines), media_type="text/html")
 
 
 @router.get("/repo/install/latest.zip")
@@ -199,7 +179,7 @@ async def latest_zip_redirect():
     # Source repo addon from dev-repo/zips/repository.kodi-mcp (actual published location)
     repo_addon_zips_dir = REPO_ROOT / "dev-repo" / "zips" / "repository.kodi-mcp"
     repo_addon_path = repo_addon_zips_dir if repo_addon_zips_dir.exists() else REPO_ROOT.parent / "repo-addon"
-    
+
     # First check for explicit latest symlink
     latest_symlink = repo_addon_path / "repository.kodi-mcp-latest.zip"
     if latest_symlink.exists() and latest_symlink.is_symlink():
@@ -212,16 +192,16 @@ async def latest_zip_redirect():
             )
         except Exception:
             pass
-    
+
     # Fallback: find latest versioned zip (not -latest.zip itself)
-    versioned_zips = [f for f in repo_addon_path.glob("repository.kodi-mcp-*.zip") 
+    versioned_zips = [f for f in repo_addon_path.glob("repository.kodi-mcp-*.zip")
                       if not f.name.endswith("-latest.zip") and f.is_file()]
-    
+
     if not versioned_zips:
         raise HTTPException(status_code=404, detail="No repository addon found")
-    
+
     latest = max(versioned_zips, key=os.path.getmtime)
-    
+
     # Serve directly without redirect (better for Kodi)
     return FileResponse(
         latest,
@@ -243,10 +223,10 @@ async def install_file(filename: str):
     repo_addon_zips_dir = REPO_ROOT / "dev-repo" / "zips" / "repository.kodi-mcp"
     repo_addon_path = repo_addon_zips_dir if repo_addon_zips_dir.exists() else REPO_ROOT.parent / "repo-addon"
     file_path = repo_addon_path / filename
-    
+
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
-    
+
     return FileResponse(
         file_path,
         media_type="application/zip",
@@ -267,7 +247,7 @@ def mount_repo_static(app):
         from starlette.requests import Request
         from starlette.responses import FileResponse, PlainTextResponse
         from fastapi.responses import RedirectResponse
-        
+
         @app.get("/repo/content/", include_in_schema=False)
         async def repo_content_root(request: Request):
             """Redirect /repo/content/ to /repo/content/addons.xml.gz for Kodi."""
@@ -275,7 +255,7 @@ def mount_repo_static(app):
             if addons_gz.exists():
                 return RedirectResponse(url="/repo/content/addons.xml.gz")
             return PlainTextResponse("Kodi MCP Repository", status_code=200)
-        
+
         @app.get("/repo/content/{path:path}", include_in_schema=False)
         async def repo_content_file(path: str, request: Request):
             """Serve files from dev-repo directory."""
@@ -292,12 +272,12 @@ def mount_repo_static(app):
         if repo_dir.exists():
             from fastapi import Request
             from fastapi.responses import FileResponse, RedirectResponse, PlainTextResponse
-            
+
             @app.get("/repo/content/", include_in_schema=False)
             async def repo_content_root_fallback(request: Request):
                 """Fallback redirect for /repo/content/."""
                 return PlainTextResponse("Kodi MCP Repository", status_code=200)
-            
+
             @app.get("/repo/content/{path:path}", include_in_schema=False)
             async def repo_content_file_fallback(path: str, request: Request):
                 """Fallback: serve files from repo root."""
