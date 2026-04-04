@@ -2,12 +2,116 @@
 
 **Last updated:** 2026-03-31
 
+## Architecture Overview
+
+### Three-Surface Design
+
+The kodi_mcp_server exposes three distinct operational surfaces:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ kodi_mcp_server (localhost:8000)                                │
+│                                                                 │
+│  /runtime/*     ← Runtime surface (execute, status, logs)       │
+│  /diagnostic/*  ← Advisory surface (read-only metadata)         │
+│  /dev-loop/*    ← Dev-loop surface (build, publish, verify)    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key principle:** Runtime surface operates ONLY on already-installed addons. Dev-loop surface operates on build artifacts and repo server. Manual install checkpoint required between stages 2 and 4.
+
+### Runtime vs Dev-Loop Boundary
+
+- **Runtime surface** — Execute, status, logs, enable/disable of installed addons. All tools assume addon is already present on remote Kodi.
+- **Dev-loop surface** — Build addon ZIP, publish to local repo server, verify deployed version. Requires HUMAN MANUAL INSTALL step on remote Kodi after publish.
+- **Advisory/diagnostic surface** — Read-only metadata. No side effects.
+
+**Critical constraint:** Repo state ≠ Installed addon state. Repo may have newer version, but installed addon only changes via human manual install on remote Kodi.
+
+### Dev-Loop Workflow (Stages 1-5)
+
+```
+Stage 1: build/package → build_addon_package (automated)
+  ↓
+Stage 2: publish to repo server → publish_addon_to_repo (automated)
+  ↓
+[HUMAN MANUAL INSTALL CHECKPOINT]
+  ↓
+Stage 3: Kodi repo refresh → trigger_repo_refresh (human-gated, no bridge endpoint)
+  ↓
+Stage 4: addon update/install → update_addon (human-gated, manual ZIP install)
+  ↓
+Stage 5: runtime verification → verify_bridge_addon_deploy (automated)
+```
+
+**Automated stages:** 1, 2, 5
+**Human-gated stages:** 3, 4 (requires manual action on remote Kodi)
+
+---
+
+## Tool Surface Classification
+
+### Runtime Surface (Core Operations)
+
+All runtime tools operate on already-installed addons. Assumes addon exists on remote Kodi.
+
+**Core runtime tools:**
+- `execute_bridge_addon` — Execute addon via bridge
+- `execute_addon` — Execute addon via JSON-RPC
+- `ensure_bridge_addon_enabled` — Enable addon (conditional: requires addon installed)
+- `ensure_addon_enabled` — Enable addon via JSON-RPC (conditional)
+- `get_bridge_log_tail` — Read logs
+- `write_bridge_log_marker` — Write trace marker
+- `execute_bridge_builtin` — Execute Kodi builtin
+- `get_addons` — List all addons
+- `get_addon_details` — Get addon metadata
+- `list_addons` — Filtered addon listing
+- `service_status` — Service addon metadata
+
+**Classification:** Runtime-safe. All these tools have side effects on installed addons but assume addon already present.
+
+### Advisory/Diagnostic Surface (Read-Only)
+
+No side effects. Pure metadata queries.
+
+**Advisory tools:**
+- `get_bridge_version` — Read bridge version (cannot enforce)
+- `get_bridge_runtime_info` — Runtime metadata
+- `get_bridge_file` — Read file from Kodi
+- `get_bridge_addon_info` — Addon metadata via bridge
+- `get_bridge_log_markers` — Log markers
+- `get_bridge_control_capabilities` — Capabilities list
+- `check_bridge_addon_version` — Check version (cannot enforce update)
+- `is_addon_installed` — Read-only check
+- `is_addon_enabled` — Read-only check
+- `run_addon_and_report` — Execute and report events (cannot force)
+
+**Classification:** Advisory-only. These tools can report state but cannot change it.
+
+### Dev-Loop Surface (Lifecycle Management)
+
+Dev-loop operates on build artifacts and repo server. Requires human manual install step.
+
+**Dev-loop tools:**
+- `build_addon_package` — Build addon ZIP (automated)
+- `publish_addon_to_repo` — Publish ZIP to local repo (automated)
+- `upload_bridge_addon_zip` — Serve ZIP from local repo (human-gated: remote install required)
+- `update_addon` — Check repo for updates, report availability (hybrid: can detect but not force install)
+- `restart_bridge_addon` — Restart via JSON-RPC Disable/Enable (hybrid)
+- `verify_bridge_addon_deploy` — Verify installed vs expected version (human-gated: validation only)
+
+**Classification:** Dev-loop with human checkpoint. Stages 1-2 automated; stages 3-4 human-gated; stage 5 automated.
+
+### Tools Removed/Deprecated
+
+- `tools/verify_bridge_addon_deploy` — Removed from runtime surface, moved to dev-loop (human-gated)
+- `tools/upload_bridge_addon_zip` — Removed from runtime surface, moved to dev-loop (human-gated)
+- `tools/update_addon` — Removed from runtime surface, moved to dev-loop (human-gated)
+- `tools/wait_for_addon_version` — Removed (assumes version enforcement not possible)
+
+---
+
 ## Completed Tasks (Phase 7: CLI Wrapper)
-
-**Date:** 2026-03-31
-
-### Summary
-Implemented thin CLI wrapper `kodi-cli` that provides deterministic, machine-friendly interface to the backend server.
 
 ### Command Structure (Hierarchical)
 - `kodi-cli system status` — Get server/system status
@@ -73,6 +177,72 @@ agent → kodi-cli → backend server (localhost:8000) → remote Kodi
 - JSON-only output: all output is structured JSON
 - Deterministic: same inputs = same outputs
 - No state: pure HTTP passthrough with envelope wrapping
+
+---
+
+## Completed Tasks (Phase 7.2: Repo Generator + Repository Addon Support)
+
+**Date:** 2026-04-03
+
+### Summary
+Added infrastructure to build and package Kodi repository addons that point at the server-served repository. Enables Kodi to discover and install addons from the local repo server.
+
+### New Files Added
+
+#### `project/src/kodi_mcp_server/repo_generator.py` (~250 lines)
+Repository addon packaging utilities with:
+- **`load_addons_xml()`** — Parse addons.xml from repo root
+- **`render_template()`** — Jinja2 template rendering for addon.xml
+- **`build_repo_addon()`** — Build installable repository addon ZIP
+- **`generate_addons_xml_gz()`** — Create addons.xml.gz for repository serving
+- **`RepoGeneratorError`** — Exception class for build failures
+
+#### `project/templates/` (new directory)
+- **`addon.xml`** — Template for repository.kodi-mcp addon
+- **`repository.xml`** — Template for repository metadata
+
+### Config Changes
+
+#### `project/src/kodi_mcp_server/config.py`
+- Added `DEFAULT_REPO_BASE_URL = "http://localhost:8001"`
+- Added `REPO_BASE_URL` environment variable support
+
+### Endpoint Changes
+
+#### `project/src/kodi_mcp_server/repo_server.py`
+- Added `/repo/health` detailed endpoint showing:
+  - Repo base URL and root path
+  - Addon count and first 20 addon IDs
+  - addons.xml.gz existence check
+
+### New Capabilities
+
+1. **Repository addon generation** — Build installable `repository.kodi-mcp` addon
+2. **Template-based configuration** — Jinja2 templates for repo URL injection
+3. **Repository health inspection** — Debug repo visibility for Kodi
+4. **Checksum generation** — SHA256 checksums for addon integrity
+
+### Dev-Loop Integration
+
+Repository addon is used in **Stage 6** (not yet automated):
+```
+Stage 1-5: Build, publish, manual install (existing workflow)
+  ↓
+Stage 6: Build repository.kodi-mcp addon
+  ↓
+Stage 7: Human installs repository.kodi-mcp on Kodi
+  ↓
+Stage 8: Kodi discovers repo, addons appear in browser
+```
+
+**Note:** Repository addon integration is conceptual. Requires human manual install similar to addon update workflow.
+
+### Current State
+
+- **Server:** Running, responding to health checks
+- **Config:** Updated with REPO_BASE_URL
+- **Git:** project/ has uncommitted changes (config.py, repo_server.py, repo_generator.py, templates/)
+- **CURRENT_STATE.md:** Updated for Phase 7.2
 
 ---
 
@@ -418,6 +588,58 @@ For any backend server change, verify all of the following:
 **This file must be updated after every meaningful change.**  
 If you modify code, config, or architecture, update this file before finishing.  
 If no changes were made, confirm CURRENT_STATE.md is still accurate.
+
+## Documentation Index
+
+- **CURRENT_STATE.md** — This file, project state and task tracking
+- **PROJECT.md** — Architecture overview, OpenClaw TOP roles and rules
+- **dev_loop_workflow.md** — Dev-loop stages 1-5, human-gated workflow
+- **README.md** — Quick start and testing instructions
+
+## Key Documents
+
+### Three-Surface Design
+
+- **Runtime surface** (`/runtime/*`): Execute, status, logs, enable/disable
+- **Advisory surface** (`/diagnostic/*`): Read-only metadata, version checks
+- **Dev-loop surface** (`/dev-loop/*`): Build, publish, verify
+
+### Dev-Loop Workflow
+
+See **dev_loop_workflow.md** for detailed 5-stage workflow:
+1. Build package (automated)
+2. Publish to repo (automated)
+3. Kodi repo refresh (human-gated)
+4. Addon update/install (human-gated)
+5. Runtime verification (automated)
+
+### OpenClaw TOP Rules
+
+See **PROJECT.md** for:
+- When to use each surface
+- When to require git commit/push
+- When to require addon.xml version bump
+- When to stop for manual install
+- Worker handoff rules
+
+### Server-Only Dev-Loop Model (Frozen)
+
+**IMPORTANT:** kodi_mcp_server packages an **internal test addon** for repo/update workflow validation. It does NOT package the real Kodi addon (kodi_mcp_addon).
+
+**Authoritative paths for server dev-loop:**
+- **Test addon source:** `/home/node/.openclaw/workspace/project/service.kodi_mcp/`
+- **Version source:** `/home/node/.openclaw/workspace/project/service.kodi_mcp/addon.xml`
+- **Build output:** `/home/node/.openclaw/workspace/addon/service.kodi_mcp-*.zip`
+- **Repo publish:** `/home/node/.openclaw/workspace/repo/dev-repo/zips/service.kodi_mcp/`
+- **External (IGNORE):** `/home/node/.openclaw/workspace/kodi_addon/packages/service.kodi_mcp/` — real addon project, out of server's packaging scope
+
+**Dev-loop sequence:**
+1. Read version from `project/service.kodi_mcp/addon.xml`
+2. Build/package from `project/service.kodi_mcp/` source
+3. Publish ZIP to `repo/dev-repo/zips/service.kodi_mcp/`
+4. **STOP** — human manual install on remote Kodi required before proceeding
+
+**Critical constraint:** kodi_mcp_server must NOT package kodi_addon. The server's dev-loop is for internal validation only. Real Kodi addon (kodi_mcp_addon) is a separate project.
 ---
 
 ## Completed Tasks (Phase 6: Transport Cleanup)
