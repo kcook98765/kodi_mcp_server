@@ -230,6 +230,19 @@ class HttpBridgeClient:
         result = self._make_request("POST", "/execute_builtin", query=query, payload={})
         return self._response(request_id=request_id, result=result.result, error=result.error, error_type=result.error_type, error_code=result.error_code, latency_ms=result.latency_ms)
 
+    async def refresh_repo(self) -> ResponseMessage:
+        """Trigger a Kodi repository refresh via the bridge addon."""
+        request_id = "bridge-repo-refresh"
+        result = self._make_request("POST", "/repo/refresh", payload={})
+        return self._response(
+            request_id=request_id,
+            result=result.result,
+            error=result.error,
+            error_type=result.error_type,
+            error_code=result.error_code,
+            latency_ms=result.latency_ms,
+        )
+
     async def upload_addon_zip(self, local_zip_path: str) -> ResponseMessage:
         request_id = "bridge-addon-upload"
         try:
