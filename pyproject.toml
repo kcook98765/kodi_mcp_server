@@ -7,10 +7,20 @@ dependencies = [
     "fastapi>=0.100.0",
     "uvicorn>=0.20.0",
     "websockets>=15.0.0",
+    "mcp>=1.27.0",
 ]
 
 [project.scripts]
 kodi-mcp-server = "kodi_mcp_server.main:main"
+kodi-mcp-wrapper = "kodi_mcp_wrapper.server:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+namespaces = true
+include = ["kodi_mcp_server*", "kodi_mcp_wrapper*"]
 
 [build-system]
 requires = ["setuptools>=61.0"]

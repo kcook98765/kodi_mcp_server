@@ -222,6 +222,87 @@ agent → kodi-cli → backend server (localhost:8000) → remote Kodi
 
 No business logic is duplicated here. All operations delegate to the server's tool endpoints.
 
+## MCP Wrapper (VS Code / Cline)
+
+This repo also contains a **stdio-based MCP server wrapper** that exposes a curated subset of the HTTP `/tools/*` endpoints to VS Code/Cline via the Model Context Protocol.
+
+### Prerequisites
+
+1. Run the backend HTTP server (this project) on a reachable URL (default `http://localhost:8000`).
+2. Install this project so the console scripts are available.
+
+### Environment
+
+- `KODI_MCP_BASE_URL` (optional)
+  - Default: `http://localhost:8000`
+  - Purpose: Base URL of the running `kodi_mcp_server` FastAPI backend.
+
+### Run the MCP wrapper manually
+
+With the backend already running:
+
+```bash
+# Windows PowerShell
+$env:KODI_MCP_BASE_URL = "http://localhost:8000"
+kodi-mcp-wrapper
+```
+
+```bash
+# macOS/Linux
+export KODI_MCP_BASE_URL="http://localhost:8000"
+kodi-mcp-wrapper
+```
+
+The wrapper speaks MCP over **stdin/stdout**, so it will appear to “hang” when run directly. That’s expected; VS Code/Cline will manage the process.
+
+### Configure in Cline (stdio)
+
+Add an entry to your `cline_mcp_settings.json` `mcpServers` section.
+
+**Example (local backend):**
+
+```json
+{
+  "mcpServers": {
+    "kodi-mcp": {
+      "command": "kodi-mcp-wrapper",
+      "args": [],
+      "env": {
+        "KODI_MCP_BASE_URL": "http://localhost:8000"
+      }
+    }
+  }
+}
+```
+
+**Example (remote backend):**
+
+```json
+{
+  "mcpServers": {
+    "kodi-mcp": {
+      "command": "kodi-mcp-wrapper",
+      "args": [],
+      "env": {
+        "KODI_MCP_BASE_URL": "http://<your-server-host>:8000"
+      }
+    }
+  }
+}
+```
+
+### First connection test
+
+After Cline connects, try these tools first:
+
+1. `kodi_status`
+2. `bridge_health`
+3. `bridge_runtime_info`
+
+Notes:
+- If you’re developing locally without installing the package, you can set `command` to `python` and point `args` at `src/kodi_mcp_wrapper/server.py`.
+- The wrapper currently implements only a subset of tools and uses the backend for execution.
+
 ## Next Steps
 
 1. **Live integration testing** — Validate CLI + server against real remote Kodi
