@@ -86,6 +86,9 @@ class BridgeTool:
     async def execute_bridge_builtin(self, command: str, addonid: str | None = None) -> ResponseMessage:
         return await self.client.execute_builtin(command=command, addonid=addonid)
 
+    async def trigger_repo_refresh(self) -> ResponseMessage:
+        return await self.client.refresh_repo()
+
     async def upload_bridge_addon_zip(self, local_zip_path: str) -> ResponseMessage:
         return await self.client.upload_addon_zip(local_zip_path=local_zip_path)
 
