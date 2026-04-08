@@ -14,6 +14,13 @@ Success = `verification.apply_verified == true`
 Retry only if `verification.can_retry == true`
 Manual: first-time repo install once in Kodi (Developer setup → Install from zip)
 
+## Kodi addon requirement
+
+- This MCP server requires the Kodi bridge addon to be installed and enabled in Kodi:
+  https://github.com/kcook98765/kodi_mcp_addon
+- The addon exposes the HTTP bridge used by this server and provides the Developer setup flow for first-time repo installation.
+- Without the addon, the MCP server cannot talk to Kodi.
+
 ## Connection modes
 
 ### 1) MCP over stdio (default / most compatible)
