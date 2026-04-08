@@ -2,7 +2,7 @@
 
 from fastapi import Query
 
-from kodi_mcp_server.app_shared import (
+from kodi_mcp_server.composition import (
     build_addon_ops_tool,
     build_bridge_tool,
     build_jsonrpc_tool,

@@ -1,6 +1,10 @@
-"""Shared app initialization and tool-builder helpers for kodi_mcp_server."""
+"""Core composition helpers for kodi_mcp_server.
 
-from fastapi import FastAPI
+This module intentionally contains *no HTTP/web framework imports*.
+
+It builds tool instances and their underlying transports from the configuration
+layer so that MCP / CLI / other adapters can call tool logic directly.
+"""
 
 from kodi_mcp_server.config import (
     KODI_BRIDGE_BASE_URL,
@@ -19,12 +23,6 @@ from kodi_mcp_server.tools.repo import RepoTool
 from kodi_mcp_server.tools.service_ops import ServiceOpsTool
 from kodi_mcp_server.transport.http_bridge import HttpBridgeClient
 from kodi_mcp_server.transport.http_jsonrpc import HttpJsonRpcTransport
-from kodi_mcp_server.transport.websocket_notifications import WebSocketNotificationProbe
-
-
-def create_base_app() -> FastAPI:
-    """Create the shared FastAPI app shell."""
-    return FastAPI(title="Kodi MCP Server", version="0.1.0")
 
 
 def build_jsonrpc_tool() -> JsonRpcTool:
@@ -63,8 +61,14 @@ def build_service_ops_tool() -> ServiceOpsTool:
     return ServiceOpsTool(bridge_client=build_bridge_tool())
 
 
-def build_notification_probe() -> WebSocketNotificationProbe:
-    """Build the Kodi WebSocket notification probe."""
+def build_notification_probe():
+    """Build the Kodi WebSocket notification probe.
+
+    NOTE: Imported lazily so core composition can be imported without the
+    optional `websockets` dependency unless this probe is actually used.
+    """
+    from kodi_mcp_server.transport.websocket_notifications import WebSocketNotificationProbe
+
     return WebSocketNotificationProbe(
         tcp_host=KODI_TCP_HOST,
         tcp_port=KODI_TCP_PORT,

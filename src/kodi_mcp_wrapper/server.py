@@ -14,13 +14,9 @@ normalization.
 from __future__ import annotations
 
 import json
-import os
 import socket
 import time
 from typing import Any
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 
 import anyio
 
@@ -43,9 +39,68 @@ from mcp.types import (
     ToolsCapability,
 )
 
+from kodi_mcp_server.composition import build_bridge_tool, build_jsonrpc_tool, build_notification_probe
+from kodi_mcp_server.config import KODI_BRIDGE_BASE_URL, KODI_JSONRPC_URL
+
 
 SERVER_NAME = "kodi-mcp"
 SERVER_VERSION = "0.0.0"
+
+
+_RUNTIME: dict[str, Any] | None = None
+
+
+def _as_dict(value: Any) -> Any:
+    """Best-effort conversion for tool results.
+
+    - ResponseMessage exposes `to_dict()`.
+    - Plain dict results are passed through.
+    """
+    if hasattr(value, "to_dict") and callable(getattr(value, "to_dict")):
+        return value.to_dict()
+    return value
+
+
+async def _kodi_status(runtime: dict[str, Any]) -> dict[str, Any]:
+    """Direct-call implementation for `kodi_status`.
+
+    Returns a dict matching the FastAPI `/status` endpoint shape.
+    """
+
+    result: dict[str, Any] = {
+        "server": {"status": "running"},
+        "config": {"loaded": bool(KODI_JSONRPC_URL and KODI_BRIDGE_BASE_URL)},
+        "jsonrpc": {"status": "unknown", "url": KODI_JSONRPC_URL},
+        "bridge": {"status": "unknown", "url": KODI_BRIDGE_BASE_URL},
+    }
+
+    # Test JSON-RPC connectivity (simple ping)
+    if KODI_JSONRPC_URL:
+        try:
+            jsonrpc_response = await runtime["jsonrpc"].get_jsonrpc_version()
+            if getattr(jsonrpc_response, "error", None):
+                result["jsonrpc"]["status"] = "error"
+                result["jsonrpc"]["error"] = getattr(jsonrpc_response, "error", None)
+            else:
+                result["jsonrpc"]["status"] = "ok"
+        except Exception as exc:
+            result["jsonrpc"]["status"] = "error"
+            result["jsonrpc"]["error"] = str(exc)
+
+    # Test bridge connectivity
+    if KODI_BRIDGE_BASE_URL:
+        try:
+            bridge_response = await runtime["bridge"].get_bridge_health()
+            if getattr(bridge_response, "error", None):
+                result["bridge"]["status"] = "error"
+                result["bridge"]["error"] = getattr(bridge_response, "error", None)
+            else:
+                result["bridge"]["status"] = "ok"
+        except Exception as exc:
+            result["bridge"]["status"] = "error"
+            result["bridge"]["error"] = str(exc)
+
+    return result
 
 
 async def _handle_initialize(_: InitializeRequest) -> ServerResult:
@@ -248,13 +303,12 @@ async def _handle_call_tool(request: CallToolRequest) -> ServerResult:
     """Dispatch a tool call.
 
     Minimal behavior:
-    - Implement two read-only tools via HTTP GET to the existing FastAPI server
-      (kodi_status, bridge_health)
+    - Implement two tools via direct core calls (kodi_status, bridge_health)
     - All other tools return not-implemented.
     """
     tool_name = request.params.name
 
-    # Implemented subset (read-only first)
+    # Phase 2 (direct-call slices): direct calls (no HTTP)
     if tool_name in {
         "kodi_status",
         "bridge_health",
@@ -262,66 +316,16 @@ async def _handle_call_tool(request: CallToolRequest) -> ServerResult:
         "bridge_runtime_info",
         "bridge_log_tail",
         "bridge_log_markers",
-        "bridge_write_log_marker",
         "addon_list",
         "addon_details",
         "jsonrpc_introspect",
         "kodi_notifications_sample",
+        "bridge_write_log_marker",
     }:
-        base_url = os.environ.get("KODI_MCP_BASE_URL", "http://localhost:8000").rstrip("/")
+        global _RUNTIME
+        runtime = _RUNTIME or {}
 
-        # Tool -> HTTP mapping
-        method = "POST" if tool_name == "bridge_write_log_marker" else "GET"
-        path = {
-            "kodi_status": "/status",
-            "bridge_health": "/tools/get_bridge_health",
-            "bridge_status": "/tools/get_bridge_status",
-            "bridge_runtime_info": "/tools/get_bridge_runtime_info",
-            "bridge_log_tail": "/tools/get_bridge_log_tail",
-            "bridge_log_markers": "/tools/get_bridge_log_markers",
-            "bridge_write_log_marker": "/tools/write_bridge_log_marker",
-            "addon_list": "/tools/list_addons",
-            "addon_details": "/tools/get_addon_details",
-            "jsonrpc_introspect": "/tools/introspect_jsonrpc",
-            "kodi_notifications_sample": "/tools/listen_kodi_notifications",
-        }[tool_name]
-
-        query: dict[str, Any] | None = None
-        body: dict[str, Any] | None = None
-
-        # Argument handling for log tools
-        if tool_name in {"bridge_log_tail", "bridge_log_markers"}:
-            args = request.params.arguments or {}
-            if not isinstance(args, dict):
-                args = {}
-
-            default_lines = 50 if tool_name == "bridge_log_tail" else 200
-            lines = args.get("lines", default_lines)
-            if not isinstance(lines, int):
-                lines = default_lines
-            if lines < 1:
-                lines = 1
-
-            query = {"lines": lines}
-
-        # Argument handling for addon listing
-        if tool_name == "addon_list":
-            args = request.params.arguments or {}
-            if not isinstance(args, dict):
-                args = {}
-
-            q: dict[str, Any] = {}
-            addon_type = args.get("type")
-            if isinstance(addon_type, str) and addon_type:
-                q["type"] = addon_type
-            enabled = args.get("enabled")
-            if isinstance(enabled, bool):
-                # FastAPI will parse "true"/"false" strings. urlencode will emit True/False.
-                q["enabled"] = str(enabled).lower()
-
-            query = q or None
-
-        # Argument handling for addon details (required addonid)
+        # Preserve exact normalized missing-arg behavior for addon_details.
         if tool_name == "addon_details":
             args = request.params.arguments or {}
             if not isinstance(args, dict):
@@ -348,54 +352,7 @@ async def _handle_call_tool(request: CallToolRequest) -> ServerResult:
                     )
                 )
 
-            query = {"addonid": addonid}
-
-        # Argument handling for JSON-RPC introspection
-        if tool_name == "jsonrpc_introspect":
-            args = request.params.arguments or {}
-            if not isinstance(args, dict):
-                args = {}
-
-            # Apply MCP defaults defined in tools/list
-            summary = args.get("summary", True)
-            getdescriptions = args.get("getdescriptions", False)
-            getmetadata = args.get("getmetadata", False)
-            filterbytransport = args.get("filterbytransport", False)
-
-            def _as_bool(v: Any, default: bool) -> bool:
-                return v if isinstance(v, bool) else default
-
-            query = {
-                "summary": str(_as_bool(summary, True)).lower(),
-                "getdescriptions": str(_as_bool(getdescriptions, False)).lower(),
-                "getmetadata": str(_as_bool(getmetadata, False)).lower(),
-                "filterbytransport": str(_as_bool(filterbytransport, False)).lower(),
-            }
-
-        # Argument handling for Kodi notifications sampling
-        if tool_name == "kodi_notifications_sample":
-            args = request.params.arguments or {}
-            if not isinstance(args, dict):
-                args = {}
-
-            sample_size = args.get("sample_size", 3)
-            if not isinstance(sample_size, int):
-                sample_size = 3
-            if sample_size < 1:
-                sample_size = 1
-
-            listen_seconds = args.get("listen_seconds", 5)
-            if not isinstance(listen_seconds, int):
-                listen_seconds = 5
-            if listen_seconds < 1:
-                listen_seconds = 1
-
-            query = {
-                "sample_size": sample_size,
-                "listen_seconds": listen_seconds,
-            }
-
-        # Argument handling for log marker writing (mutating)
+        # Preserve exact normalized missing-arg behavior for bridge_write_log_marker.
         if tool_name == "bridge_write_log_marker":
             args = request.params.arguments or {}
             if not isinstance(args, dict):
@@ -422,114 +379,136 @@ async def _handle_call_tool(request: CallToolRequest) -> ServerResult:
                     )
                 )
 
-            body = {"message": message}
-
-        url = f"{base_url}{path}" + (f"?{urlencode(query)}" if query else "")
-
         start = time.time()
-
         envelope: dict[str, Any]
         try:
-            data = None
-            headers: dict[str, str] = {}
-            if body is not None:
-                data = json.dumps(body).encode("utf-8")
-                headers["Content-Type"] = "application/json"
+            if tool_name == "bridge_health":
+                raw_result = await runtime["bridge"].get_bridge_health()
+            elif tool_name == "bridge_status":
+                raw_result = await runtime["bridge"].get_bridge_status()
+            elif tool_name == "bridge_runtime_info":
+                raw_result = await runtime["bridge"].get_bridge_runtime_info()
+            elif tool_name in {"bridge_log_tail", "bridge_log_markers"}:
+                # Keep argument handling for `lines` exactly aligned with the
+                # existing HTTP-forwarding logic.
+                args = request.params.arguments or {}
+                if not isinstance(args, dict):
+                    args = {}
 
-            http_request = Request(url, method=method, data=data, headers=headers)
-            with urlopen(http_request, timeout=10) as resp:
-                raw_text = resp.read().decode("utf-8")
+                default_lines = 50 if tool_name == "bridge_log_tail" else 200
+                lines = args.get("lines", default_lines)
+                if not isinstance(lines, int):
+                    lines = default_lines
+                if lines < 1:
+                    lines = 1
 
-            try:
-                raw_json: Any = json.loads(raw_text) if raw_text else None
-            except Exception as exc:  # JSON parse error
-                latency_ms = int((time.time() - start) * 1000)
+                if tool_name == "bridge_log_tail":
+                    raw_result = await runtime["bridge"].get_bridge_log_tail(lines=lines)
+                else:
+                    raw_result = await runtime["bridge"].get_bridge_log_markers(lines=lines)
+            elif tool_name == "addon_list":
+                # Keep argument handling aligned with the existing HTTP-forwarding logic:
+                # optional `type` and optional boolean `enabled`.
+                args = request.params.arguments or {}
+                if not isinstance(args, dict):
+                    args = {}
+
+                addon_type = args.get("type")
+                enabled = args.get("enabled")
+
+                raw_result = await runtime["jsonrpc"].list_addons(
+                    type=addon_type if isinstance(addon_type, str) and addon_type else None,
+                    enabled=enabled if isinstance(enabled, bool) else None,
+                )
+            elif tool_name == "addon_details":
+                # `addonid` validation is handled above to preserve the exact
+                # normalized error envelope.
+                args = request.params.arguments or {}
+                if not isinstance(args, dict):
+                    args = {}
+                addonid = args.get("addonid")
+                raw_result = await runtime["jsonrpc"].get_addon_details(addonid=addonid)
+            elif tool_name == "jsonrpc_introspect":
+                # Keep boolean defaults and parsing behavior aligned with the
+                # existing HTTP-forwarding logic.
+                args = request.params.arguments or {}
+                if not isinstance(args, dict):
+                    args = {}
+
+                summary = args.get("summary", True)
+                getdescriptions = args.get("getdescriptions", False)
+                getmetadata = args.get("getmetadata", False)
+                filterbytransport = args.get("filterbytransport", False)
+
+                def _as_bool(v: Any, default: bool) -> bool:
+                    return v if isinstance(v, bool) else default
+
+                raw_result = await runtime["jsonrpc"].introspect_jsonrpc(
+                    summary=_as_bool(summary, True),
+                    getdescriptions=_as_bool(getdescriptions, False),
+                    getmetadata=_as_bool(getmetadata, False),
+                    filterbytransport=_as_bool(filterbytransport, False),
+                )
+            elif tool_name == "kodi_notifications_sample":
+                # Keep argument handling exactly aligned with the previous HTTP-forwarding logic.
+                args = request.params.arguments or {}
+                if not isinstance(args, dict):
+                    args = {}
+
+                sample_size = args.get("sample_size", 3)
+                if not isinstance(sample_size, int):
+                    sample_size = 3
+                if sample_size < 1:
+                    sample_size = 1
+
+                listen_seconds = args.get("listen_seconds", 5)
+                if not isinstance(listen_seconds, int):
+                    listen_seconds = 5
+                if listen_seconds < 1:
+                    listen_seconds = 1
+
+                raw_result = await runtime["notifications"].listen(
+                    sample_size=sample_size,
+                    listen_seconds=listen_seconds,
+                )
+            elif tool_name == "bridge_write_log_marker":
+                args = request.params.arguments or {}
+                if not isinstance(args, dict):
+                    args = {}
+                message = args.get("message")
+                raw_result = await runtime["bridge"].write_bridge_log_marker(message=message)
+            else:
+                raw_result = await _kodi_status(runtime)
+
+            raw_value = _as_dict(raw_result)
+            latency_ms = int((time.time() - start) * 1000)
+
+            # Normalize: ResponseMessage dict vs plain dict
+            if isinstance(raw_value, dict) and "result" in raw_value and "error" in raw_value:
+                ok = raw_value.get("error") is None
                 envelope = {
-                    "ok": False,
+                    "ok": ok,
                     "tool": tool_name,
-                    "data": None,
-                    "error": f"invalid JSON response: {exc}",
-                    "error_type": "parse_error",
+                    "data": raw_value.get("result"),
+                    "error": raw_value.get("error"),
+                    "error_type": raw_value.get("error_type"),
+                    "error_code": raw_value.get("error_code"),
+                    "latency_ms": raw_value.get("latency_ms") or latency_ms,
+                    "request_id": raw_value.get("request_id"),
+                    "raw": raw_value,
+                }
+            else:
+                envelope = {
+                    "ok": True,
+                    "tool": tool_name,
+                    "data": raw_value,
+                    "error": None,
+                    "error_type": None,
                     "error_code": None,
                     "latency_ms": latency_ms,
                     "request_id": None,
-                    "raw": {"text": raw_text},
+                    "raw": raw_value,
                 }
-            else:
-                latency_ms = int((time.time() - start) * 1000)
-
-                # Normalize: ResponseMessage vs plain dict
-                if isinstance(raw_json, dict) and "result" in raw_json and "error" in raw_json:
-                    ok = raw_json.get("error") is None
-                    envelope = {
-                        "ok": ok,
-                        "tool": tool_name,
-                        "data": raw_json.get("result"),
-                        "error": raw_json.get("error"),
-                        "error_type": raw_json.get("error_type"),
-                        "error_code": raw_json.get("error_code"),
-                        "latency_ms": raw_json.get("latency_ms") or latency_ms,
-                        "request_id": raw_json.get("request_id"),
-                        "raw": raw_json,
-                    }
-                else:
-                    envelope = {
-                        "ok": True,
-                        "tool": tool_name,
-                        "data": raw_json,
-                        "error": None,
-                        "error_type": None,
-                        "error_code": None,
-                        "latency_ms": latency_ms,
-                        "request_id": None,
-                        "raw": raw_json,
-                    }
-
-        except HTTPError as exc:
-            latency_ms = int((time.time() - start) * 1000)
-            body_text = ""
-            try:
-                body_text = exc.read().decode("utf-8")
-            except Exception:
-                body_text = ""
-
-            envelope = {
-                "ok": False,
-                "tool": tool_name,
-                "data": None,
-                "error": f"http error {exc.code}: {exc.reason}",
-                "error_type": "server_error",
-                "error_code": exc.code,
-                "latency_ms": latency_ms,
-                "request_id": None,
-                "raw": {"text": body_text},
-            }
-        except URLError as exc:
-            latency_ms = int((time.time() - start) * 1000)
-            envelope = {
-                "ok": False,
-                "tool": tool_name,
-                "data": None,
-                "error": f"network error: {exc.reason}",
-                "error_type": "network_error",
-                "error_code": None,
-                "latency_ms": latency_ms,
-                "request_id": None,
-                "raw": None,
-            }
-        except (TimeoutError, socket.timeout) as exc:
-            latency_ms = int((time.time() - start) * 1000)
-            envelope = {
-                "ok": False,
-                "tool": tool_name,
-                "data": None,
-                "error": f"timeout: {exc}",
-                "error_type": "timeout",
-                "error_code": None,
-                "latency_ms": latency_ms,
-                "request_id": None,
-                "raw": None,
-            }
         except Exception as exc:
             latency_ms = int((time.time() - start) * 1000)
             envelope = {
@@ -564,6 +543,14 @@ async def _handle_call_tool(request: CallToolRequest) -> ServerResult:
 
 async def run_server() -> None:
     """Run the MCP server over stdio."""
+
+    # Build shared runtime once at startup.
+    global _RUNTIME
+    _RUNTIME = {
+        "bridge": build_bridge_tool(),
+        "jsonrpc": build_jsonrpc_tool(),
+        "notifications": build_notification_probe(),
+    }
 
     server = Server(SERVER_NAME, version=SERVER_VERSION)
     server.request_handlers[InitializeRequest] = _handle_initialize
