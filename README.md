@@ -1,267 +1,19 @@
-# kodi_mcp_server
+# Kodi MCP Server
 
-Custom Python middle-layer server for remote Kodi integration.
+This repository provides an **MCP (Model Context Protocol) server for Kodi**.
 
-## Purpose
+It exposes a curated set of Kodi operations (Kodi JSON-RPC + the Kodi MCP bridge addon) as MCP tools, so agent clients (like VS Code/Cline) can control and inspect Kodi in a structured way.
 
-This project provides a HTTP backend server that exposes Kodi-related operations as structured JSON-RPC and bridge endpoints. It sits between local CLI tools and remote Kodi, normalizing remote Kodi/bridge interactions into deterministic, machine-friendly responses.
+## Connection modes
 
-## Architecture
+### 1) MCP over stdio (default / most compatible)
 
-```
-agent → kodi-cli → kodi_mcp_server (localhost:8000) → remote Kodi
-```
+Run by your MCP client (Cline) as a local process:
 
-**Layering:**
-- `kodi-cli` (Phase 7) — Thin CLI wrapper with unified JSON envelope
-- `kodi_mcp_server` (this repo) — HTTP endpoints, transport layers, tools
-- Remote Kodi — Bridge addon endpoints + JSON-RPC
+- Command: `kodi-mcp`
+- Transport: stdin/stdout
 
-## Quick Start
-
-**Server setup:**
-```bash
-cd /home/node/.openclaw/workspace/project
-# Configure in .env:
-#   KODI_JSONRPC_URL=http://kodi.local:8080/jsonrpc
-#   KODI_BRIDGE_BASE_URL=http://kodi.local:8765
-#   KODI_JSONRPC_USERNAME=kodi
-#   KODI_JSONRPC_PASSWORD=kodi
-uvicorn kodi_mcp_server.main:app --port 8000 --host 0.0.0.0
-```
-
-**CLI wrapper:**
-```bash
-# From workspace root:
-./kodi-cli system status
-./kodi-cli jsonrpc call --method JSONRPC.Version
-./kodi-cli addon info --addonid plugin.video.example
-./kodi-cli addon execute --addonid plugin.video.example
-./kodi-cli builtin exec --command PlayerControl(Play)
-./kodi-cli log tail --lines 20
-```
-
-## CLI Command Structure
-
-**Hierarchical commands:**
-- `kodi-cli system status` — Get server/system status
-- `kodi-cli jsonrpc call --method <name>` — Execute JSON-RPC command
-- `kodi-cli addon info --addonid <id>` — Get bridge addon info
-- `kodi-cli addon execute --addonid <id>` — Execute addon via bridge
-- `kodi-cli builtin exec --command <cmd>` — Execute Kodi builtin
-- `kodi-cli log tail --lines <n>` — Get log tail from bridge
-
-**Unified JSON response envelope:**
-- Success: `{"ok": true, "command": "...", "data": {...}, "latency_ms": ...}`
-- Error: `{"ok": false, "command": "...", "error": "...", "error_type": ..., "error_code": ...}`
-
-**Exit codes:** 0=success, 1=invalid args, 2=connection, 3=server, 4=timeout
-
-**Full CLI code:** Located in `scripts/kodi_cli.py` (this repo).
-
-## Server Endpoints
-
-**Health & Status:**
-- `GET /health` — Basic health check
-- `GET /status` — Full system status (server, config, JSON-RPC, bridge connectivity)
-
-**Tools (all return structured JSON):**
-- `GET /tools/execute_jsonrpc?method=<name>` — Execute JSON-RPC method
-- `GET /tools/get_bridge_addon_info?addonid=<id>` — Get addon info
-- `POST /tools/execute_bridge_addon` — Execute addon
-- `POST /tools/execute_bridge_builtin` — Execute builtin command
-- `GET /tools/get_bridge_log_tail?lines=<n>` — Get log tail
-- `GET /tools/get_bridge_health` — Check bridge health
-- `GET /tools/get_bridge_status` — Get bridge status
-- `GET /tools/get_addons` — List all addons
-- `GET /tools/get_addon_details?addonid=<id>` — Get addon details
-- `GET /tools/list_addons` — List addons with filters
-- `GET /tools/execute_addon?addonid=<id>&wait=<bool>` — Execute addon
-- `GET /tools/is_addon_installed?addonid=<id>` — Check installation
-- `GET /tools/is_addon_enabled?addonid=<id>` — Check enabled state
-- `GET /tools/ensure_addon_enabled?addonid=<id>` — Ensure enabled
-- `POST /tools/publish_addon_to_repo` — Publish addon to repo
-- `GET /tools/get_recent_movies?limit=<n>` — Get recent movies
-- `GET /tools/get_tvshows_sample?limit=<n>` — Get TV shows sample
-- `GET /tools/get_application_properties` — Get application properties
-- `GET /tools/get_active_players` — Get active players
-- `GET /tools/get_player_item` — Get current player item
-- `GET /tools/get_system_properties` — Get system properties
-- `GET /tools/get_setting_value?setting=<name>` — Get setting value
-- `GET /tools/get_jsonrpc_version` — Get JSON-RPC version
-- `GET /tools/introspect_jsonrpc` — Introspect JSON-RPC interface
-- `POST /tools/ensure_bridge_addon_enabled` — Ensure bridge addon enabled
-- `POST /tools/restart_bridge_addon` — Restart bridge addon
-- `POST /tools/update_addon` — Update addon
-- `GET /tools/wait_for_addon_version` — Wait for specific version
-
-## Configuration
-
-Environment variables (in `project/.env`):
-
-**Required:**
-- `KODI_JSONRPC_URL` — Kodi JSON-RPC endpoint (e.g., `http://kodi.local:8080/jsonrpc`)
-- `KODI_BRIDGE_BASE_URL` — Remote Kodi bridge endpoint (e.g., `http://kodi.local:8765`)
-
-**Optional:**
-- `KODI_JSONRPC_USERNAME` — Basic auth username for JSON-RPC
-- `KODI_JSONRPC_PASSWORD` — Basic auth password for JSON-RPC
-- `KODI_TIMEOUT` — Request timeout in seconds (default: 10)
-
-## Testing
-
-**Backend unit tests (mocked, no Kodi dependency):**
-```bash
-cd project
-python -m pytest tests/ -v
-```
-
-**Test coverage:**
-- `test_config.py` — Configuration validation (1 test)
-- `test_http_errors.py` — HTTP error handling and mapping (12 tests)
-- `test_http_jsonrpc.py` — JSON-RPC transport error handling (3 tests)
-- `test_models.py` — RequestMessage/ResponseMessage serialization (6 tests)
-- Total: 23 tests, all passing
-
-**CLI wrapper tests:**
-```bash
-cd project
-python -m pytest tests/test_cli.py -v
-```
-
-- `test_cli.py` — CLI input validation, output envelope, exit codes (24 tests)
-
-**Live integration testing (future):**
-- End-to-end testing against real remote Kodi instance
-- Network resilience validation
-- Performance profiling under load
-
-## Development Notes
-
-**Key principles:**
-- **Remote-only:** All Kodi communication goes through remote bridge/JSON-RPC
-- **Structured responses:** All output is deterministic JSON
-- **No business logic in CLI:** CLI is thin wrapper only
-- **Thin transport layer:** HTTP clients with standardized error handling
-- **Retry boundaries:** Strict retry rules for safe vs unsafe operations
-
-**File structure:**
-```
-project/
-├── src/kodi_mcp_server/
-│   ├── main.py            — Server entry point
-│   ├── mcp_app.py         — MCP-style endpoints
-│   ├── repo_app.py        — Repo server endpoints
-│   ├── composition.py      — Tool/transport builders (framework-free)
-│   ├── http_app.py         — FastAPI app factory
-│   ├── config.py          — Configuration loading
-│   ├── paths.py           — Path constants
-│   ├── models/
-│   │   └── messages.py    — Request/ResponseMessage, ErrorType
-│   ├── transport/
-│   │   ├── base.py        — Base transport class
-│   │   ├── http_jsonrpc.py — HTTP JSON-RPC transport
-│   │   └── http_bridge.py  — HTTP bridge client
-│   └── tools/
-│       ├── jsonrpc.py     — JSON-RPC tool implementation
-│       ├── bridge.py      — Bridge tool implementation
-│       ├── addon_ops.py   — Addon lifecycle operations
-│       └── repo.py        — Repo server operations
-├── tests/                 — Unit tests (mocked)
-├── scripts/               — Build/deploy scripts
-│   └── kodi_cli.py        — CLI wrapper (Phase 7)
-└── repo/                  — Authoritative Kodi addon repo
-```
-
-## CLI Wrapper
-
-The CLI wrapper provides a thin, deterministic interface to the backend server.
-
-**Location:** `scripts/kodi_cli.py` (this repo)
-
-**Usage:**
-```bash
-# From workspace root
-cd /home/node/.openclaw/workspace
-./kodi-cli system status
-./kodi-cli jsonrpc call --method JSONRPC.Version
-./kodi-cli addon info --addonid plugin.video.example
-./kodi-cli addon execute --addonid plugin.video.example
-./kodi-cli builtin exec --command PlayerControl(Play)
-./kodi-cli log tail --lines 20
-```
-
-**Server Configuration:**
-- Default server: `http://localhost:8000`
-- Override with `--server`:
-  ```bash
-  kodi-cli --server http://my-kodi-server:8000 system status
-  ```
-
-**Output Format:**
-- All commands output structured JSON
-- Success: `{"ok": true, "command": "...", "data": {...}, "latency_ms": ...}`
-- Error: `{"ok": false, "command": "...", "error": "...", "error_type": ..., "error_code": ...}`
-- Use `--compact` for inline JSON (no indentation):
-  ```bash
-  kodi-cli --compact jsonrpc call --method JSONRPC.Version
-  ```
-
-**Exit Codes:**
-| Code | Meaning |
-|------|---------|
-| 0 | Success |
-| 1 | Invalid arguments |
-| 2 | Connection error (server unreachable) |
-| 3 | Server error (HTTP error or invalid response) |
-| 4 | Request timeout |
-
-**Architecture:**
-```
-agent → kodi-cli → backend server (localhost:8000) → remote Kodi
-```
-
-No business logic is duplicated here. All operations delegate to the server's tool endpoints.
-
-## MCP Server (stdio, canonical)
-
-This repo contains a **stdio-based MCP server** (Model Context Protocol) intended to be the **primary/canonical** integration surface for agent clients (VS Code/Cline).
-
-It calls the core tool logic directly and does **not** require the FastAPI HTTP server to be running.
-
-### Environment
-
-The MCP server uses the same configuration as the core transports/tools:
-
-- Required:
-  - `KODI_JSONRPC_URL`
-  - `KODI_BRIDGE_BASE_URL`
-- Optional:
-  - `KODI_JSONRPC_USERNAME`
-  - `KODI_JSONRPC_PASSWORD`
-  - `KODI_TIMEOUT`
-
-### Run the MCP server manually
-
-```bash
-# Windows PowerShell
-kodi-mcp
-```
-
-```bash
-# macOS/Linux
-kodi-mcp
-```
-
-The MCP server speaks MCP over **stdin/stdout**, so it will appear to “hang” when run directly. That’s expected; VS Code/Cline will manage the process.
-
-> Deprecated alias: `kodi-mcp-wrapper` still works, but `kodi-mcp` is the canonical command.
-
-### Configure in Cline (stdio)
-
-Add an entry to your `cline_mcp_settings.json` `mcpServers` section.
-
-**Example (local backend):**
+**Cline config (stdio)**
 
 ```json
 {
@@ -278,42 +30,143 @@ Add an entry to your `cline_mcp_settings.json` `mcpServers` section.
 }
 ```
 
-**Example (remote backend):**
+### 2) MCP remote transport (Streamable HTTP)
+
+Expose the MCP server over HTTP at:
+
+- `http://<host>:8010/mcp`
+
+The MCP server runs on the host and clients connect over HTTP; **no local process is required**.
+
+Start the server:
+
+```bash
+uvicorn kodi_mcp_server.main:app --host 0.0.0.0 --port 8010
+```
+
+#### Cline config (remote MCP)
+
+Example **with API key header**:
 
 ```json
 {
   "mcpServers": {
-    "kodi-mcp": {
-      "command": "kodi-mcp",
-      "args": [],
-      "env": {
-        "KODI_JSONRPC_URL": "http://<your-kodi-host>:8080/jsonrpc",
-        "KODI_BRIDGE_BASE_URL": "http://<your-kodi-host>:8765"
+    "kodi-mcp-remote": {
+      "type": "streamableHttp",
+      "url": "http://claw.home.arpa:8010/mcp",
+      "disabled": false,
+      "headers": {
+        "x-mcp-api-key": "<optional>"
       }
     }
   }
 }
 ```
 
-### First connection test
+Example **without headers** (no API key):
 
-After Cline connects, try these tools first:
+```json
+{
+  "mcpServers": {
+    "kodi-mcp-remote": {
+      "type": "streamableHttp",
+      "url": "http://claw.home.arpa:8010/mcp",
+      "disabled": false
+    }
+  }
+}
+```
 
+#### API key (optional)
+
+To require an API key for remote MCP requests, set:
+
+- `MCP_API_KEY=<your key>`
+
+Clients must send:
+
+- `x-mcp-api-key: <your key>`
+
+> Tip (Windows/cmd.exe): use `set "MCP_API_KEY=secret"` to avoid accidental trailing spaces.
+
+### 3) Optional HTTP debug/compatibility endpoints
+
+The same FastAPI app also exposes HTTP endpoints under `/health`, `/status`, and `/tools/*`.
+
+These are useful for debugging and for the included CLI wrapper, but MCP (stdio or remote) is the primary interface.
+
+## Configuration
+
+Required environment variables:
+- `KODI_JSONRPC_URL` (e.g. `http://kodi.local:8080/jsonrpc`)
+- `KODI_BRIDGE_BASE_URL` (e.g. `http://kodi.local:8765`)
+
+Optional:
+- `KODI_JSONRPC_USERNAME`, `KODI_JSONRPC_PASSWORD`
+- `KODI_TIMEOUT`
+- `MCP_API_KEY` (remote MCP only)
+
+## First connection test (stdio or remote)
+
+Once connected, try these MCP tools first:
 1. `kodi_status`
 2. `bridge_health`
 3. `bridge_runtime_info`
 
-Notes:
-- If you’re developing locally without installing the package, you can set `command` to `python` and point `args` at `src/kodi_mcp_mcp/server.py`.
-
-## HTTP Server (FastAPI, optional compatibility adapter)
-
-The FastAPI app remains available as an **optional HTTP adapter** (and for repo serving). It is not required for MCP usage.
-
-Run it with:
+If you’re testing the **remote** transport directly, you can also do a minimal curl initialize:
 
 ```bash
-uvicorn kodi_mcp_server.main:app --port 8000 --host 0.0.0.0
+curl -i -N http://claw.home.arpa:8010/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "x-mcp-api-key: <optional>" \
+  --data-binary '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
+```
+
+---
+
+## Optional HTTP endpoints (debug/compatibility)
+
+When you run the FastAPI server (the same one used for remote MCP), these endpoints are also available:
+
+- `GET /health`
+- `GET /status`
+- `/tools/*` (legacy HTTP endpoints used by `kodi-cli`)
+
+The `/tools/*` endpoints are not the primary integration surface; they exist for debugging and backwards compatibility.
+
+They are **not MCP** and are not used by MCP clients.
+
+## Hosting example (systemd)
+
+Example unit file (Linux). This hosts remote MCP at `http://<host>:8010/mcp`:
+
+```ini
+[Unit]
+Description=Kodi MCP Server (FastAPI + Remote MCP)
+After=network.target
+
+[Service]
+Type=simple
+User=kodi
+WorkingDirectory=/opt/kodi_mcp_server
+Environment=KODI_JSONRPC_URL=http://kodi.local:8080/jsonrpc
+Environment=KODI_BRIDGE_BASE_URL=http://kodi.local:8765
+# Optional (protect /mcp)
+Environment=MCP_API_KEY=change-me
+
+ExecStart=/opt/kodi_mcp_server/.venv/bin/uvicorn kodi_mcp_server.main:app --host 0.0.0.0 --port 8010
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+```
+
+## Testing
+
+```bash
+python -m pytest -v
 ```
 
 ## Next Steps
