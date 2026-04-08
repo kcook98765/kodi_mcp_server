@@ -152,7 +152,8 @@ project/
 │   ├── main.py            — Server entry point
 │   ├── mcp_app.py         — MCP-style endpoints
 │   ├── repo_app.py        — Repo server endpoints
-│   ├── app_shared.py      — Shared app configuration
+│   ├── composition.py      — Tool/transport builders (framework-free)
+│   ├── http_app.py         — FastAPI app factory
 │   ├── config.py          — Configuration loading
 │   ├── paths.py           — Path constants
 │   ├── models/
@@ -222,38 +223,39 @@ agent → kodi-cli → backend server (localhost:8000) → remote Kodi
 
 No business logic is duplicated here. All operations delegate to the server's tool endpoints.
 
-## MCP Wrapper (VS Code / Cline)
+## MCP Server (stdio, canonical)
 
-This repo also contains a **stdio-based MCP server wrapper** that exposes a curated subset of the HTTP `/tools/*` endpoints to VS Code/Cline via the Model Context Protocol.
+This repo contains a **stdio-based MCP server** (Model Context Protocol) intended to be the **primary/canonical** integration surface for agent clients (VS Code/Cline).
 
-### Prerequisites
-
-1. Run the backend HTTP server (this project) on a reachable URL (default `http://localhost:8000`).
-2. Install this project so the console scripts are available.
+It calls the core tool logic directly and does **not** require the FastAPI HTTP server to be running.
 
 ### Environment
 
-- `KODI_MCP_BASE_URL` (optional)
-  - Default: `http://localhost:8000`
-  - Purpose: Base URL of the running `kodi_mcp_server` FastAPI backend.
+The MCP server uses the same configuration as the core transports/tools:
 
-### Run the MCP wrapper manually
+- Required:
+  - `KODI_JSONRPC_URL`
+  - `KODI_BRIDGE_BASE_URL`
+- Optional:
+  - `KODI_JSONRPC_USERNAME`
+  - `KODI_JSONRPC_PASSWORD`
+  - `KODI_TIMEOUT`
 
-With the backend already running:
+### Run the MCP server manually
 
 ```bash
 # Windows PowerShell
-$env:KODI_MCP_BASE_URL = "http://localhost:8000"
-kodi-mcp-wrapper
+kodi-mcp
 ```
 
 ```bash
 # macOS/Linux
-export KODI_MCP_BASE_URL="http://localhost:8000"
-kodi-mcp-wrapper
+kodi-mcp
 ```
 
-The wrapper speaks MCP over **stdin/stdout**, so it will appear to “hang” when run directly. That’s expected; VS Code/Cline will manage the process.
+The MCP server speaks MCP over **stdin/stdout**, so it will appear to “hang” when run directly. That’s expected; VS Code/Cline will manage the process.
+
+> Deprecated alias: `kodi-mcp-wrapper` still works, but `kodi-mcp` is the canonical command.
 
 ### Configure in Cline (stdio)
 
@@ -265,10 +267,11 @@ Add an entry to your `cline_mcp_settings.json` `mcpServers` section.
 {
   "mcpServers": {
     "kodi-mcp": {
-      "command": "kodi-mcp-wrapper",
+      "command": "kodi-mcp",
       "args": [],
       "env": {
-        "KODI_MCP_BASE_URL": "http://localhost:8000"
+        "KODI_JSONRPC_URL": "http://kodi.local:8080/jsonrpc",
+        "KODI_BRIDGE_BASE_URL": "http://kodi.local:8765"
       }
     }
   }
@@ -281,10 +284,11 @@ Add an entry to your `cline_mcp_settings.json` `mcpServers` section.
 {
   "mcpServers": {
     "kodi-mcp": {
-      "command": "kodi-mcp-wrapper",
+      "command": "kodi-mcp",
       "args": [],
       "env": {
-        "KODI_MCP_BASE_URL": "http://<your-server-host>:8000"
+        "KODI_JSONRPC_URL": "http://<your-kodi-host>:8080/jsonrpc",
+        "KODI_BRIDGE_BASE_URL": "http://<your-kodi-host>:8765"
       }
     }
   }
@@ -300,8 +304,17 @@ After Cline connects, try these tools first:
 3. `bridge_runtime_info`
 
 Notes:
-- If you’re developing locally without installing the package, you can set `command` to `python` and point `args` at `src/kodi_mcp_wrapper/server.py`.
-- The wrapper currently implements only a subset of tools and uses the backend for execution.
+- If you’re developing locally without installing the package, you can set `command` to `python` and point `args` at `src/kodi_mcp_mcp/server.py`.
+
+## HTTP Server (FastAPI, optional compatibility adapter)
+
+The FastAPI app remains available as an **optional HTTP adapter** (and for repo serving). It is not required for MCP usage.
+
+Run it with:
+
+```bash
+uvicorn kodi_mcp_server.main:app --port 8000 --host 0.0.0.0
+```
 
 ## Next Steps
 

@@ -12,7 +12,8 @@ dependencies = [
 
 [project.scripts]
 kodi-mcp-server = "kodi_mcp_server.main:main"
-kodi-mcp-wrapper = "kodi_mcp_wrapper.server:main"
+kodi-mcp = "kodi_mcp_mcp.server:main"
+kodi-mcp-wrapper = "kodi_mcp_mcp.server:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -20,7 +21,7 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 namespaces = true
-include = ["kodi_mcp_server*", "kodi_mcp_wrapper*"]
+include = ["kodi_mcp_server*", "kodi_mcp_mcp*"]
 
 [build-system]
 requires = ["setuptools>=61.0"]
