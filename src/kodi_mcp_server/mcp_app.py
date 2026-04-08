@@ -78,8 +78,9 @@ def configure_mcp_app(app):
         if KODI_BRIDGE_BASE_URL:
             try:
                 from kodi_mcp_server.transport.http_bridge import HttpBridgeClient
+                from kodi_mcp_server.config import KODI_BRIDGE_TOKEN
 
-                client = HttpBridgeClient(base_url=KODI_BRIDGE_BASE_URL, timeout=5)
+                client = HttpBridgeClient(base_url=KODI_BRIDGE_BASE_URL, timeout=5, token=KODI_BRIDGE_TOKEN)
                 response = await client.get_health()
                 if response.error:
                     result["bridge"]["status"] = "error"

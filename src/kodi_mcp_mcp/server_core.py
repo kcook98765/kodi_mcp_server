@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 from typing import Any, Tuple
 
 from mcp.server import Server
@@ -43,6 +44,15 @@ from kodi_mcp_server.composition import (
     build_notification_probe,
 )
 from kodi_mcp_server.config import KODI_BRIDGE_BASE_URL, KODI_JSONRPC_URL
+from kodi_mcp_server.managed_addons import (
+    managed_addon_build_publish_and_stage,
+    managed_addon_get,
+    managed_addon_list,
+    managed_addon_register,
+)
+from kodi_mcp_server.kodi_apply import managed_addon_build_publish_stage_and_apply
+from kodi_mcp_server.milestone_a_bridge import read_addon_state
+from kodi_mcp_server.paths import AUTHORITATIVE_REPO_ROOT
 
 
 SERVER_NAME = "kodi-mcp"
@@ -109,10 +119,17 @@ async def _kodi_status(runtime: Runtime) -> dict[str, Any]:
 def build_runtime() -> Runtime:
     """Build the shared runtime once at startup."""
 
+    notifications = None
+    try:
+        # Optional dependency (`websockets`) may not be installed in all environments.
+        notifications = build_notification_probe()
+    except Exception:
+        notifications = None
+
     return {
         "bridge": build_bridge_tool(),
         "jsonrpc": build_jsonrpc_tool(),
-        "notifications": build_notification_probe(),
+        "notifications": notifications,
     }
 
 
@@ -309,6 +326,98 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                     "additionalProperties": False,
                 },
             ),
+            Tool(
+                name="managed_addon_register",
+                description="Register/update a managed local addon source path (no GitHub).",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "source_path": {
+                            "type": "string",
+                            "description": "Local filesystem path to an addon root containing addon.xml.",
+                        }
+                    },
+                    "required": ["source_path"],
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="managed_addon_list",
+                description="List all managed addons registered with this MCP server.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="managed_addon_get",
+                description="Get a single managed addon registry entry by managed_addon_id (usually addon id).",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "managed_addon_id": {
+                            "type": "string",
+                            "description": "Managed addon id (key). Defaults to addon id.",
+                        }
+                    },
+                    "required": ["managed_addon_id"],
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="managed_addon_build_publish_and_stage",
+                description="Build+publish a managed addon, build dev repo zip, then stage it to Kodi via the bridge.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "managed_addon_id": {"type": "string"},
+                        "version_policy": {
+                            "type": "string",
+                            "enum": ["use_addon_xml", "bump_patch", "set_explicit"],
+                        },
+                        "explicit_version": {"type": "string"},
+                        "repo_version": {"type": "string"},
+                        "verify": {"type": "boolean", "default": True},
+                    },
+                    "required": ["managed_addon_id", "version_policy"],
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="managed_addon_build_publish_stage_and_apply",
+                description=(
+                    "Build+publish a managed addon, stage the dev repo zip to Kodi, then refresh and "
+                    "install/update the addon from Kodi (best-effort; assumes repo already installed once)."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "managed_addon_id": {"type": "string"},
+                        "version_policy": {
+                            "type": "string",
+                            "enum": ["use_addon_xml", "bump_patch", "set_explicit"],
+                        },
+                        "explicit_version": {"type": "string"},
+                        "repo_version": {"type": "string"},
+                        "verify": {"type": "boolean", "default": True},
+                    },
+                    "required": ["managed_addon_id", "version_policy"],
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="managed_addon_validate_state",
+                description="Read-only validation report for managed addon readiness (registry/artifacts/bridge).",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "managed_addon_id": {"type": "string"},
+                    },
+                    "required": ["managed_addon_id"],
+                    "additionalProperties": False,
+                },
+            ),
         ]
 
         return ServerResult(ListToolsResult(tools=tools))
@@ -330,6 +439,12 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
             "jsonrpc_introspect",
             "kodi_notifications_sample",
             "bridge_write_log_marker",
+            "managed_addon_register",
+            "managed_addon_list",
+            "managed_addon_get",
+            "managed_addon_build_publish_and_stage",
+            "managed_addon_build_publish_stage_and_apply",
+            "managed_addon_validate_state",
         }:
             # Preserve exact normalized missing-arg behavior for addon_details.
             if tool_name == "addon_details":
@@ -384,6 +499,171 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                             content=[TextContent(type="text", text=text)],
                         )
                     )
+
+            # Managed addon required-arg checks.
+            if tool_name in {
+                "managed_addon_register",
+                "managed_addon_get",
+                "managed_addon_build_publish_and_stage",
+                "managed_addon_build_publish_stage_and_apply",
+                "managed_addon_validate_state",
+            }:
+                args = request.params.arguments or {}
+                if not isinstance(args, dict):
+                    args = {}
+
+                if tool_name == "managed_addon_register":
+                    source_path = args.get("source_path")
+                    if not isinstance(source_path, str) or not source_path.strip():
+                        envelope = {
+                            "ok": False,
+                            "tool": tool_name,
+                            "data": None,
+                            "error": "missing required argument: source_path",
+                            "error_type": "invalid_params",
+                            "error_code": None,
+                            "latency_ms": 0,
+                            "request_id": None,
+                            "raw": {"arguments": args},
+                        }
+                        text = json.dumps(envelope, indent=2, sort_keys=True)
+                        return ServerResult(
+                            CallToolResult(
+                                isError=True,
+                                content=[TextContent(type="text", text=text)],
+                            )
+                        )
+
+                if tool_name == "managed_addon_get":
+                    managed_addon_id = args.get("managed_addon_id")
+                    if not isinstance(managed_addon_id, str) or not managed_addon_id.strip():
+                        envelope = {
+                            "ok": False,
+                            "tool": tool_name,
+                            "data": None,
+                            "error": "missing required argument: managed_addon_id",
+                            "error_type": "invalid_params",
+                            "error_code": None,
+                            "latency_ms": 0,
+                            "request_id": None,
+                            "raw": {"arguments": args},
+                        }
+                        text = json.dumps(envelope, indent=2, sort_keys=True)
+                        return ServerResult(
+                            CallToolResult(
+                                isError=True,
+                                content=[TextContent(type="text", text=text)],
+                            )
+                        )
+
+                if tool_name == "managed_addon_validate_state":
+                    managed_addon_id = args.get("managed_addon_id")
+                    if not isinstance(managed_addon_id, str) or not managed_addon_id.strip():
+                        envelope = {
+                            "ok": False,
+                            "tool": tool_name,
+                            "data": None,
+                            "error": "missing required argument: managed_addon_id",
+                            "error_type": "invalid_params",
+                            "error_code": None,
+                            "latency_ms": 0,
+                            "request_id": None,
+                            "raw": {"arguments": args},
+                        }
+                        text = json.dumps(envelope, indent=2, sort_keys=True)
+                        return ServerResult(
+                            CallToolResult(
+                                isError=True,
+                                content=[TextContent(type="text", text=text)],
+                            )
+                        )
+
+                if tool_name == "managed_addon_build_publish_and_stage":
+                    managed_addon_id = args.get("managed_addon_id")
+                    version_policy = args.get("version_policy")
+                    if not isinstance(managed_addon_id, str) or not managed_addon_id.strip():
+                        envelope = {
+                            "ok": False,
+                            "tool": tool_name,
+                            "data": None,
+                            "error": "missing required argument: managed_addon_id",
+                            "error_type": "invalid_params",
+                            "error_code": None,
+                            "latency_ms": 0,
+                            "request_id": None,
+                            "raw": {"arguments": args},
+                        }
+                        text = json.dumps(envelope, indent=2, sort_keys=True)
+                        return ServerResult(
+                            CallToolResult(
+                                isError=True,
+                                content=[TextContent(type="text", text=text)],
+                            )
+                        )
+                    if version_policy not in {"use_addon_xml", "bump_patch", "set_explicit"}:
+                        envelope = {
+                            "ok": False,
+                            "tool": tool_name,
+                            "data": None,
+                            "error": "invalid argument: version_policy",
+                            "error_type": "invalid_params",
+                            "error_code": None,
+                            "latency_ms": 0,
+                            "request_id": None,
+                            "raw": {"arguments": args, "allowed": ["use_addon_xml", "bump_patch", "set_explicit"]},
+                        }
+                        text = json.dumps(envelope, indent=2, sort_keys=True)
+                        return ServerResult(
+                            CallToolResult(
+                                isError=True,
+                                content=[TextContent(type="text", text=text)],
+                            )
+                        )
+
+                if tool_name == "managed_addon_build_publish_stage_and_apply":
+                    managed_addon_id = args.get("managed_addon_id")
+                    version_policy = args.get("version_policy")
+                    if not isinstance(managed_addon_id, str) or not managed_addon_id.strip():
+                        envelope = {
+                            "ok": False,
+                            "tool": tool_name,
+                            "data": None,
+                            "error": "missing required argument: managed_addon_id",
+                            "error_type": "invalid_params",
+                            "error_code": None,
+                            "latency_ms": 0,
+                            "request_id": None,
+                            "raw": {"arguments": args},
+                        }
+                        text = json.dumps(envelope, indent=2, sort_keys=True)
+                        return ServerResult(
+                            CallToolResult(
+                                isError=True,
+                                content=[TextContent(type="text", text=text)],
+                            )
+                        )
+                    if version_policy not in {"use_addon_xml", "bump_patch", "set_explicit"}:
+                        envelope = {
+                            "ok": False,
+                            "tool": tool_name,
+                            "data": None,
+                            "error": "invalid argument: version_policy",
+                            "error_type": "invalid_params",
+                            "error_code": None,
+                            "latency_ms": 0,
+                            "request_id": None,
+                            "raw": {
+                                "arguments": args,
+                                "allowed": ["use_addon_xml", "bump_patch", "set_explicit"],
+                            },
+                        }
+                        text = json.dumps(envelope, indent=2, sort_keys=True)
+                        return ServerResult(
+                            CallToolResult(
+                                isError=True,
+                                content=[TextContent(type="text", text=text)],
+                            )
+                        )
 
             start = time.time()
             envelope: dict[str, Any]
@@ -448,6 +728,9 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         filterbytransport=_as_bool(filterbytransport, False),
                     )
                 elif tool_name == "kodi_notifications_sample":
+                    if runtime.get("notifications") is None:
+                        raise RuntimeError("notifications probe unavailable (missing optional dependency: websockets)")
+
                     args = request.params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
@@ -474,6 +757,179 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         args = {}
                     message = args.get("message")
                     raw_result = await runtime["bridge"].write_bridge_log_marker(message=message)
+                elif tool_name == "managed_addon_register":
+                    args = request.params.arguments or {}
+                    if not isinstance(args, dict):
+                        args = {}
+                    raw_result = managed_addon_register(source_path=str(args.get("source_path") or "").strip())
+                elif tool_name == "managed_addon_list":
+                    raw_result = managed_addon_list()
+                elif tool_name == "managed_addon_get":
+                    args = request.params.arguments or {}
+                    if not isinstance(args, dict):
+                        args = {}
+                    raw_result = managed_addon_get(managed_addon_id=str(args.get("managed_addon_id") or "").strip())
+                elif tool_name == "managed_addon_build_publish_and_stage":
+                    args = request.params.arguments or {}
+                    if not isinstance(args, dict):
+                        args = {}
+                    verify = args.get("verify", True)
+                    if not isinstance(verify, bool):
+                        verify = True
+                    raw_result = await managed_addon_build_publish_and_stage(
+                        managed_addon_id=str(args.get("managed_addon_id") or "").strip(),
+                        version_policy=str(args.get("version_policy") or "").strip(),
+                        explicit_version=(
+                            str(args.get("explicit_version") or "").strip()
+                            if args.get("explicit_version") is not None
+                            else None
+                        ),
+                        repo_version=(
+                            str(args.get("repo_version") or "").strip()
+                            if args.get("repo_version") is not None
+                            else None
+                        ),
+                        verify=verify,
+                    )
+                elif tool_name == "managed_addon_build_publish_stage_and_apply":
+                    args = request.params.arguments or {}
+                    if not isinstance(args, dict):
+                        args = {}
+                    verify = args.get("verify", True)
+                    if not isinstance(verify, bool):
+                        verify = True
+                    raw_result = await managed_addon_build_publish_stage_and_apply(
+                        managed_addon_id=str(args.get("managed_addon_id") or "").strip(),
+                        version_policy=str(args.get("version_policy") or "").strip(),
+                        explicit_version=(
+                            str(args.get("explicit_version") or "").strip()
+                            if args.get("explicit_version") is not None
+                            else None
+                        ),
+                        repo_version=(
+                            str(args.get("repo_version") or "").strip()
+                            if args.get("repo_version") is not None
+                            else None
+                        ),
+                        verify=verify,
+                        bridge_tool=runtime["bridge"],
+                        jsonrpc_tool=runtime["jsonrpc"],
+                    )
+                elif tool_name == "managed_addon_validate_state":
+                    args = request.params.arguments or {}
+                    if not isinstance(args, dict):
+                        args = {}
+                    managed_addon_id = str(args.get("managed_addon_id") or "").strip()
+                    registry_result = managed_addon_get(managed_addon_id=managed_addon_id)
+
+                    entry = (registry_result.get("managed_addon") if registry_result.get("ok") else None)
+                    last_build = entry.get("last_build") if isinstance(entry, dict) else None
+
+                    registry_exists = bool(registry_result.get("ok") and isinstance(entry, dict))
+                    enabled = bool(entry.get("enabled", False)) if isinstance(entry, dict) else False
+                    source_path = str(entry.get("source_path") or "") if isinstance(entry, dict) else ""
+                    addon_id = str(entry.get("addon_id") or "") if isinstance(entry, dict) else ""
+                    last_observed_version = str(entry.get("last_observed_version") or "") if isinstance(entry, dict) else ""
+
+                    # Artifact presence
+                    def _exists(p: str) -> bool:
+                        try:
+                            from pathlib import Path as _Path
+
+                            return bool(p and _Path(p).exists())
+                        except Exception:
+                            return False
+
+                    last_build_zip_exists = _exists(str((last_build or {}).get("zip_path") or "")) if isinstance(last_build, dict) else False
+                    published_repo_zip_exists = _exists(str((last_build or {}).get("repo_zip_path") or "")) if isinstance(last_build, dict) else False
+
+                    dev_repo_dir = AUTHORITATIVE_REPO_ROOT / "dev-repo"
+                    dev_repo_exists = dev_repo_dir.exists()
+                    addons_xml_exists = (dev_repo_dir / "addons.xml").exists()
+                    addons_xml_md5_exists = (dev_repo_dir / "addons.xml.md5").exists()
+
+                    # Best-effort bridge checks
+                    reachable = False
+                    bridge_error = None
+                    mcp_state_read_ok = False
+                    registration_present = None
+                    registration_stale = None
+                    repo_zip_file_exists = None
+                    repo_zip_special_path = None
+                    dev_setup_available = None
+
+                    try:
+                        health = await runtime["bridge"].get_bridge_health()
+                        bridge_error = getattr(health, "error", None)
+                        reachable = bool(bridge_error is None)
+                    except Exception as exc:
+                        reachable = False
+                        bridge_error = str(exc)
+
+                    if reachable:
+                        try:
+                            view, resp = await read_addon_state()
+                            mcp_state_read_ok = bool(view.transport_ok)
+                            derived = None
+                            repo_zip = None
+                            if resp.error is None and isinstance((resp.result or {}).get("result"), dict):
+                                result_obj = (resp.result.get("result") or {})
+                                derived = result_obj.get("derived")
+                                repo_zip = result_obj.get("repo_zip")
+                            if isinstance(derived, dict):
+                                registration_present = derived.get("registration_present")
+                                registration_stale = derived.get("registration_stale")
+                                repo_zip_file_exists = derived.get("repo_zip_file_exists")
+                                dev_setup_available = derived.get("dev_setup_available")
+                            if isinstance(repo_zip, dict):
+                                special_path = repo_zip.get("special_path")
+                                if isinstance(special_path, str) and special_path.strip():
+                                    repo_zip_special_path = special_path.strip()
+                        except Exception as exc:
+                            mcp_state_read_ok = False
+                            bridge_error = str(exc)
+
+                    # Overall readiness
+                    ready_for_build = bool(registry_exists and enabled and source_path and _exists(source_path) and _exists(str(Path(source_path) / "addon.xml")))
+                    ready_for_publish = bool(ready_for_build and last_build_zip_exists and dev_repo_exists)
+                    ready_for_stage = bool(ready_for_publish and reachable and mcp_state_read_ok and bool(registration_present) and not bool(registration_stale))
+                    ready_for_kodi_install = bool(ready_for_stage and bool(repo_zip_file_exists) and bool(dev_setup_available))
+
+                    raw_result = {
+                        "ok": True,
+                        "managed_addon_id": managed_addon_id,
+                        "registry": {
+                            "exists": registry_exists,
+                            "enabled": enabled,
+                            "addon_id": addon_id,
+                            "source_path": source_path,
+                            "last_observed_version": last_observed_version,
+                            "last_build": last_build if isinstance(last_build, dict) else None,
+                        },
+                        "artifacts": {
+                            "last_build_zip_exists": last_build_zip_exists,
+                            "published_repo_zip_exists": published_repo_zip_exists,
+                            "dev_repo_exists": dev_repo_exists,
+                            "addons_xml_exists": addons_xml_exists,
+                            "addons_xml_md5_exists": addons_xml_md5_exists,
+                        },
+                        "kodi_bridge": {
+                            "reachable": reachable,
+                            "mcp_state_read_ok": mcp_state_read_ok,
+                            "error": bridge_error,
+                            "registration_present": registration_present,
+                            "registration_stale": registration_stale,
+                            "repo_zip_file_exists": repo_zip_file_exists,
+                            "repo_zip_special_path": repo_zip_special_path,
+                            "dev_setup_available": dev_setup_available,
+                        },
+                        "summary": {
+                            "ready_for_build": ready_for_build,
+                            "ready_for_publish": ready_for_publish,
+                            "ready_for_stage": ready_for_stage,
+                            "ready_for_kodi_install": ready_for_kodi_install,
+                        },
+                    }
                 else:
                     raw_result = await _kodi_status(runtime)
 

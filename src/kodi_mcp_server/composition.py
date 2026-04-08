@@ -8,6 +8,7 @@ layer so that MCP / CLI / other adapters can call tool logic directly.
 
 from kodi_mcp_server.config import (
     KODI_BRIDGE_BASE_URL,
+    KODI_BRIDGE_TOKEN,
     KODI_JSONRPC_PASSWORD,
     KODI_JSONRPC_URL,
     KODI_JSONRPC_USERNAME,
@@ -39,7 +40,7 @@ def build_jsonrpc_tool() -> JsonRpcTool:
 
 def build_bridge_tool() -> BridgeTool:
     """Build a tool client for the minimal Kodi addon bridge."""
-    client = HttpBridgeClient(base_url=KODI_BRIDGE_BASE_URL, timeout=KODI_TIMEOUT)
+    client = HttpBridgeClient(base_url=KODI_BRIDGE_BASE_URL, timeout=KODI_TIMEOUT, token=KODI_BRIDGE_TOKEN)
     return BridgeTool(client=client)
 
 

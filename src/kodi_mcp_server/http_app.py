@@ -19,6 +19,26 @@ def create_base_app() -> FastAPI:
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         async with remote_lifespan():
+            # Milestone A: best-effort addon registration on server startup.
+            # This is intentionally non-fatal so the server can still run even if
+            # Kodi is offline or the bridge token is not yet configured.
+            try:
+                from kodi_mcp_server.milestone_a_bridge import build_registration_payload, register_with_addon
+
+                payload = build_registration_payload()
+                envelope_view, resp = await register_with_addon(payload)
+                if not envelope_view.transport_ok:
+                    # likely network error or response not parseable
+                    print(f"[kodi_mcp_server] addon registration transport failed: {resp.error}")
+                elif not envelope_view.business_ok:
+                    # transport ok, but addon rejected or unauthorized
+                    result = (envelope_view.envelope or {}).get("result") if envelope_view.envelope else None
+                    print(f"[kodi_mcp_server] addon registration rejected: {result}")
+                else:
+                    state_rev = ((envelope_view.envelope or {}).get("result") or {}).get("state_rev")
+                    print(f"[kodi_mcp_server] addon registration ok (state_rev={state_rev})")
+            except Exception as exc:
+                print(f"[kodi_mcp_server] addon registration skipped due to error: {exc}")
             yield
 
     app = FastAPI(title="Kodi MCP Server", version="0.1.0", lifespan=lifespan)

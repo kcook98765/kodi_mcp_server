@@ -4,6 +4,16 @@ This repository provides an **MCP (Model Context Protocol) server for Kodi**.
 
 It exposes a curated set of Kodi operations (Kodi JSON-RPC + the Kodi MCP bridge addon) as MCP tools, so agent clients (like VS Code/Cline) can control and inspect Kodi in a structured way.
 
+## Quick start (managed addon loop)
+
+1) Register local addon: `managed_addon_register`
+2) Build/publish/stage/apply: `managed_addon_build_publish_stage_and_apply`
+3) If needed: `managed_addon_validate_state`
+
+Success = `verification.apply_verified == true`
+Retry only if `verification.can_retry == true`
+Manual: first-time repo install once in Kodi (Developer setup → Install from zip)
+
 ## Connection modes
 
 ### 1) MCP over stdio (default / most compatible)
@@ -123,6 +133,78 @@ curl -i -N http://claw.home.arpa:8010/mcp \
   --data-binary '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
 ```
 
+## Managed addon development workflow (golden path)
+
+### Prerequisites
+- `KODI_BRIDGE_BASE_URL` set (bridge addon HTTP base URL)
+- `KODI_BRIDGE_TOKEN` set
+  - Must match Kodi addon setting: **service.kodi_mcp → mcp_token**
+- Kodi is running with **service.kodi_mcp enabled**
+
+### Tool call sequence (MCP)
+
+1) Register the local addon source folder (must contain `addon.xml`):
+```json
+{ "source_path": "C:/dev/addons/plugin.video.foo" }
+```
+
+2) Build → publish into dev repo → build dev repo zip → stage to Kodi:
+```json
+{
+  "managed_addon_id": "plugin.video.foo",
+  "version_policy": "bump_patch",
+  "repo_version": "2026.04.08.1",
+  "verify": true
+}
+```
+
+3) Validate state (fast read-only readiness report):
+```json
+{ "managed_addon_id": "plugin.video.foo" }
+```
+
+### Autonomous iteration (agent loop)
+
+Example tool call:
+```json
+{
+  "managed_addon_id": "plugin.video.foo",
+  "version_policy": "bump_patch",
+  "repo_version": "2026.04.08.1",
+  "verify": true
+}
+```
+
+Success signal (only reliable): `verification.apply_verified == true`
+
+Retry behavior:
+- Retry only when `verification.can_retry == true`
+- Sleep `verification.retry_delay_seconds` (if present)
+- Stop when `verification.can_retry == false`
+- Use `verification.retry_hint` as the operator-readable reason
+
+Key `verification.apply_status` values:
+- `applied` — version changed to target
+- `already_current` — target already installed
+- `repo_not_installed` — one-time repo install required
+- `repo_not_ready` — repo refresh/metadata not ready
+- `addon_not_found` — addon not visible in repo metadata
+- `*_attempted_not_verified` — install/update requested but not confirmed
+- `bridge_unreachable` — Kodi bridge not reachable
+- `failed` — unknown failure (inspect output)
+
+Operator rule: If the loop cannot complete, run `managed_addon_validate_state` and follow its output.
+
+### Kodi-side manual step (required)
+1) Open:
+   **Kodi → Add-ons → Services → Kodi MCP Service → Configure**
+2) Then:
+   **Developer → Developer setup**
+3) Kodi opens **Install from zip file**
+4) You must **manually browse** to the staged `special://...` path shown and select the staged repo zip.
+
+Troubleshooting rule: **If anything fails, run `managed_addon_validate_state` first.**
+
 ---
 
 ## Optional HTTP endpoints (debug/compatibility)
@@ -162,6 +244,46 @@ RestartSec=2
 [Install]
 WantedBy=multi-user.target
 ```
+
+## Troubleshooting
+
+### Kodi bridge unreachable
+Symptom: `apply_status = bridge_unreachable`; `managed_addon_validate_state` shows `reachable=false`.
+Action:
+- Start Kodi
+- Ensure `service.kodi_mcp` is enabled
+- Verify `KODI_BRIDGE_BASE_URL` and token match
+
+### Repo not installed (first-time setup)
+Symptom: `apply_status = repo_not_installed`; `dev_setup_available` may be true.
+Action:
+- Kodi → Add-ons → Services → Kodi MCP Service → Configure
+- Developer → Developer setup
+- Install from zip (select staged `special://` path)
+
+### Repo not ready / refresh lag
+Symptom: `apply_status = repo_not_ready`.
+Action:
+- Wait a few seconds and retry
+- Or manually run “Check for updates” in Kodi
+
+### Addon not found in repo
+Symptom: `apply_status = addon_not_found`.
+Action:
+- Retry once
+- If still failing: confirm repo installed and repo zip staged correctly (`managed_addon_validate_state`)
+
+### Install/update not verified
+Symptom: `apply_status = install_attempted_not_verified` or `update_attempted_not_verified`.
+Action:
+- Retry (short delay)
+- If persistent: verify repo enabled and check Kodi update settings (optionally trigger update manually)
+
+### Unknown failure
+Symptom: `apply_status = failed`.
+Action:
+- Run `managed_addon_validate_state`
+- Inspect: artifacts, repo_ready_check, bridge state
 
 ## Testing
 

@@ -57,17 +57,22 @@ Custom Python middle-layer server for remote Kodi integration via three-surface 
 
 ### Dev-Loop Surface (`/dev-loop/*`)
 
-**Purpose:** Addon lifecycle management (build, publish, verify).
+**Purpose:** Developer workflow for building/publishing addon artifacts and staging a repo zip to Kodi.
 
-**Classification:** Requires human manual install between stages 2 and 4.
+**Source model:** Local addon source trees live in folders outside the dev repo; they are registered and managed by the MCP server.
 
-**Tools:**
-- `build_addon_package` - Build addon ZIP (automated)
-- `publish_addon_to_repo` - Publish ZIP to local repo (automated)
-- `upload_bridge_addon_zip` - Serve ZIP from local repo (human-gated)
-- `update_addon` - Check repo for updates (human-gated)
-- `restart_bridge_addon` - Restart via JSON-RPC (hybrid)
-- `verify_bridge_addon_deploy` - Verify version match (human-gated)
+**Primary tools (managed-addon workflow):**
+- `managed_addon_register`
+- `managed_addon_list`
+- `managed_addon_get`
+- `managed_addon_build_publish_and_stage`
+- `managed_addon_validate_state`
+
+**Dev repo role:** `repo/dev-repo` is artifact-only (`zips/`, `addons.xml`, `addons.xml.md5`). A repo zip is built from this directory and staged to Kodi via the bridge.
+
+**Kodi-side handoff:** The Kodi bridge addon stores registration/staging state and provides a user-guided Developer setup flow. Kodi opens **Install from zip file** and the user manually selects the staged `special://...` path.
+
+Note: older dev-loop tools (`build_addon_package`, `publish_addon_to_repo`, `update_addon`, `upload_bridge_addon_zip`, `verify_bridge_addon_deploy`, etc.) are now considered **legacy** and are not the primary recommended path.
 
 ---
 
@@ -83,59 +88,21 @@ Custom Python middle-layer server for remote Kodi integration via three-surface 
 
 ---
 
-## Dev-Loop Workflow (Stages 1-5)
+## Dev-Loop Workflow (managed-addon)
 
 ```
-Stage 1: build/package → build_addon_package (automated)
+Stage 1: register local source path → managed_addon_register
   ↓
-Stage 2: publish to repo → publish_addon_to_repo (automated)
+Stage 2: build + publish + stage repo zip → managed_addon_build_publish_and_stage
   ↓
 [HUMAN MANUAL INSTALL CHECKPOINT]
   ↓
-Stage 3: Kodi repo refresh → trigger_repo_refresh (human-gated)
+Stage 3: user runs Kodi MCP Service → Developer setup → InstallFromZip (manual browse to staged special:// path)
   ↓
-Stage 4: addon update/install → update_addon (human-gated)
-  ↓
-Stage 5: runtime verification → verify_bridge_addon_deploy (automated)
+Stage 4: validate readiness/troubleshoot → managed_addon_validate_state
 ```
 
-**Automated stages:** 1, 2, 5
-**Hybrid stages:** None (restart_bridge_addon is hybrid but not in main flow)
-**Human-gated stages:** 3, 4
-
-### Stage Details
-
-**Stage 1 - Build/Package:**
-- Tool: `build_addon_package`
-- Input: Source directory with `addon.xml`
-- Output: `dist/addon_name-x.y.z.zip`
-- Automation: Fully automated
-
-**Stage 2 - Publish to Repo:**
-- Tool: `publish_addon_to_repo`
-- Input: Built ZIP, repo server running
-- Output: ZIP at `http://localhost:8001/<addon_id>/addon.xml`
-- Automation: Fully automated
-
-**HUMAN MANUAL INSTALL CHECKPOINT:**
-- Human must manually install ZIP on remote Kodi
-- Go to Add-ons > My Add-ons > Install from zip file
-- Select published ZIP, confirm installation
-
-**Stage 3 - Kodi Repo Refresh:**
-- Tool: `trigger_repo_refresh` (NOT YET IMPLEMENTED)
-- Automation: Human-gated - no bridge endpoint exists
-- Workaround: Manual refresh on remote Kodi
-
-**Stage 4 - Addon Update/Install:**
-- Tool: `update_addon`
-- Automation: Human-gated - can detect but not force install
-- Reports: Version mismatch, update available
-
-**Stage 5 - Runtime Verification:**
-- Tool: `verify_bridge_addon_deploy`
-- Automation: Fully automated
-- Output: `{addonid, current_version, expected_version, matches: boolean}`
+**Key principle:** the server can stage the repo zip, but installation remains user-guided in Kodi.
 
 ---
 
@@ -169,21 +136,20 @@ Stage 5: runtime verification → verify_bridge_addon_deploy (automated)
 ### Automated vs Hybrid vs Human-Gated Distinctions
 
 **Automated:** No human action required. Server completes operation fully.
-- Examples: `build_addon_package`, `publish_addon_to_repo`, `verify_bridge_addon_deploy`
+- Examples: `managed_addon_build_publish_and_stage`
 
 **Hybrid:** Optional human verification recommended. Server can complete but human should confirm.
 - Examples: `restart_bridge_addon`, `ensure_addon_enabled`
 
 **Human-Gated:** Requires human action on remote Kodi. Server reports state but cannot complete deployment.
-- Examples: `update_addon`, `upload_bridge_addon_zip`, `trigger_repo_refresh`
+- Examples: Kodi-side Developer setup → InstallFromZip (manual browse to staged `special://...` path)
 
 ### addon.xml Version Bump REQUIRED
 
 **Mandatory before:**
-1. Any `build_addon_package` operation
-2. Any `publish_addon_to_repo` operation
-3. Any commit/push tied to deployment
-4. Any `update_addon` preparation
+1. Any `managed_addon_build_publish_and_stage` operation
+2. Any commit/push tied to deployment
+3. Any release/update preparation
 
 **Version bump process:**
 1. Edit `addon.xml` `version` attribute
@@ -206,9 +172,9 @@ Stage 5: runtime verification → verify_bridge_addon_deploy (automated)
 
 | Classification | Tools | Human Action Required |
 |----------------|-------|----------------------|
-| Automated | build_addon_package, publish_addon_to_repo, verify_bridge_addon_deploy, runtime tools | No |
+| Automated | managed_addon_build_publish_and_stage, runtime tools | No |
 | Hybrid | restart_bridge_addon, ensure_addon_enabled | Optional (should verify) |
-| Human-Gated | upload_bridge_addon_zip, update_addon, trigger_repo_refresh (if added), advisory tools | Required for actual deployment |
+| Human-Gated | Kodi Developer setup → InstallFromZip, advisory tools | Required for actual deployment |
 
 ---
 

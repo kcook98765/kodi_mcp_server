@@ -81,42 +81,44 @@ The kodi_mcp_server exposes three distinct operational surfaces:
 
 **Critical constraint:** Repo state ≠ Installed addon state. Repo may have newer version, but installed addon only changes via human manual install on remote Kodi.
 
-### Dev-Loop Workflow (Stages 1-5)
+## Current dev loop (managed-addon workflow)
 
-```
-Stage 1: build/package → build_addon_package (automated)
-  ↓
-Stage 2: publish to repo server → publish_addon_to_repo (automated)
-  ↓
-[HUMAN MANUAL INSTALL CHECKPOINT]
-  ↓
-Stage 3: Kodi repo refresh → trigger_repo_refresh (human-gated)
-  ↓
-Stage 4: addon update/install → update_addon (human-gated)
-  ↓
-Stage 5: runtime verification → verify_bridge_addon_deploy (automated)
-```
+### Source of truth
+- Addon source lives in a **local folder** (outside the dev repo).
+- The MCP server registers it via:
+  - `managed_addon_register(source_path)`
 
-**Automated stages:** 1, 2, 5
-**Hybrid stages:** None in main flow (restart_bridge_addon is hybrid but optional)
-**Human-gated stages:** 3, 4
+### Core workflow
+1) `managed_addon_register` (one-time per addon source path)
+2) `managed_addon_build_publish_and_stage` (repeat per edit cycle)
+3) `managed_addon_validate_state` (fast read-only verification/troubleshooting)
 
-### Automation Classifications
+### Autonomous loop behavior
+- `managed_addon_build_publish_stage_and_apply` is the primary tool for repeated agent-driven iterations after one-time repo installation.
+- `verification.apply_verified == true` is the only hard success signal.
+- `verification.can_retry`, `verification.retry_hint`, and `verification.retry_delay_seconds` guide bounded retries.
+- Retry behavior is deterministic and conservative (prefer “not verified” over assuming success).
+- First-time repo installation in Kodi remains a manual checkpoint.
 
-**Automated:** Server completes operation fully without human intervention.
-- `build_addon_package` - Builds ZIP locally
-- `publish_addon_to_repo` - Publishes to local repo server
-- `verify_bridge_addon_deploy` - Verifies version match via JSON-RPC
+### Dev repo model
+- `repo/dev-repo` is **artifact-only**:
+  - `zips/`
+  - `addons.xml`
+  - `addons.xml.md5`
+- The repo zip is built from `repo/dev-repo/` and staged to Kodi via the bridge.
 
-**Hybrid:** Server can complete but human verification recommended.
-- `restart_bridge_addon` - Can restart via Disable/Enable but human should confirm
-- `ensure_addon_enabled` - Can enable but human should verify state
+### Kodi install step (explicit, user-guided)
+- User runs **Developer setup** in the Kodi addon:
+  - Kodi → Add-ons → Services → Kodi MCP Service → Configure
+  - Developer → Developer setup
+- Kodi opens **Install from zip file**.
+- User manually selects the staged repo zip from the shown `special://...` path.
 
-**Human-Gated:** Server reports state but cannot complete deployment without human action on remote Kodi.
-- `update_addon` - Can detect version mismatch but cannot force install
-- `upload_bridge_addon_zip` - Can serve ZIP from local repo but remote install required
-- `trigger_repo_refresh` - No bridge endpoint exists; manual refresh required
-- Advisory tools (`get_bridge_version`, `check_bridge_addon_version`) - Can report but cannot enforce
+### Validation model
+- `managed_addon_validate_state` is the primary troubleshooting tool.
+  - Includes bridge reachability and `dev_setup_available`.
+
+Note: Older dev-loop tools (`build_addon_package`, `publish_addon_to_repo`, `update_addon`, `upload_bridge_addon_zip`, `verify_bridge_addon_deploy`, etc.) are now considered **legacy** and are not the primary workflow.
 
 ---
 
