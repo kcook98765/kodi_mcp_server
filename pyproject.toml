@@ -5,6 +5,7 @@ description = "MCP server for Kodi integration"
 authors = [{name = "kodi_mcp"}]
 dependencies = [
     "fastapi>=0.100.0",
+    "jinja2>=3.1.0",
     "uvicorn>=0.20.0",
     "websockets>=15.0.0",
     "mcp>=1.27.0",
