@@ -124,16 +124,24 @@ async def _addon_registration_loop(*, stop_event: asyncio.Event) -> None:
                                     raise RuntimeError(f"build_repo_addon failed: {repo_addon}")
 
                                 repo_addon_zip = Path(str(repo_addon.get("output_zip") or "")).expanduser()
-                                if not repo_addon_zip.exists() or repo_addon_zip.stat().st_size < 1024:
-                                    raise RuntimeError(
-                                        f"repo addon zip missing/too small: {repo_addon_zip} ({repo_addon_zip.stat().st_size if repo_addon_zip.exists() else 'missing'})"
-                                    )
+                                if not repo_addon_zip.exists():
+                                    raise RuntimeError(f"repo addon zip missing: {repo_addon_zip}")
 
+                                # Validate by structure, not arbitrary size.
                                 with zipfile.ZipFile(repo_addon_zip, "r") as zf:
                                     names = set(zf.namelist())
                                     if "addon.xml" not in names:
+                                        raise RuntimeError(f"repo addon zip invalid (missing addon.xml): {repo_addon_zip}")
+
+                                    try:
+                                        addon_xml = zf.read("addon.xml").decode("utf-8", errors="replace")
+                                    except Exception as exc:
+                                        raise RuntimeError(f"repo addon zip invalid (cannot read addon.xml): {exc}")
+
+                                    # Conservative: ensure this looks like a repository addon.
+                                    if "xbmc.addon.repository" not in addon_xml:
                                         raise RuntimeError(
-                                            f"repo addon zip invalid (missing addon.xml): {repo_addon_zip}"
+                                            "repo addon zip invalid (addon.xml missing repository extension)"
                                         )
 
                                 print("[kodi_mcp_server] repo zip staging: starting (repository add-on zip)")
