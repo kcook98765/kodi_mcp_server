@@ -82,3 +82,14 @@ Then perform the one-time UI install and retry future updates via `POST /tools/u
 - **Admin/internal helpers** (may require server-local paths): e.g. path-based publish endpoints.
 
 Agents should avoid relying on internal filesystem paths; success payloads are designed to use ids + repo URLs.
+
+---
+
+## Optional capability: WebSocket notifications
+
+Kodi WebSocket notifications (typically `ws://<kodi-host>:9090/jsonrpc`) are an **optional advanced capability**.
+
+- Core repo publishing + update workflows (artifact upload → publish → update) do **not** require WebSocket.
+- Compatibility smoke tests should treat notification sampling failures as **non-blocking / advisory**.
+
+

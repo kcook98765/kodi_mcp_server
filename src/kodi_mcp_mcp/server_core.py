@@ -306,7 +306,12 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
             ),
             Tool(
                 name="kodi_notifications_sample",
-                description="Collect a short sample of Kodi WebSocket notifications (helps validate events your addon should emit/observe).",
+                description=(
+                    "Collect a short sample of Kodi WebSocket notifications. "
+                    "This is an OPTIONAL capability (requires Kodi WebSocket at ws://<host>:9090/jsonrpc). "
+                    "Core repo/publish/update workflows do NOT require WebSocket notifications; "
+                    "treat failures as advisory/informational."
+                ),
                 inputSchema={
                     "type": "object",
                     "properties": {
