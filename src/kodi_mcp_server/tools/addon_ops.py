@@ -98,7 +98,35 @@ class AddonOpsTool:
                 error=f"addon {addonid} not found in repo metadata",
             )
 
+        # Product rule: for a *brand-new* addon, the initial install must be
+        # user-driven in the Kodi UI (Install from repository). Agents can only
+        # automate refresh/update flows after the first install.
         before = await self.bridge_tool.get_bridge_addon_info(addonid=addonid)
+        before_installed = None
+        try:
+            if isinstance(before.result, dict):
+                before_installed = before.result.get("installed")
+        except Exception:
+            before_installed = None
+
+        if before.error is None and before_installed is False:
+            return ResponseMessage(
+                request_id=request_id,
+                result={
+                    "addon_id": addonid,
+                    "repo_version": repo_version,
+                    "is_published_in_repo": True,
+                    "is_installed": False,
+                    "requires_initial_user_install": True,
+                    "suggested_user_action": (
+                        "In Kodi UI: Add-ons → Install from repository → Kodi MCP Repository → "
+                        f"install '{addonid}' (v{repo_version})."
+                    ),
+                    "next_automatable_step": "After initial install, run update_addon again to refresh and apply updates.",
+                },
+                error=None,
+            )
+
         refresh = await self.bridge_tool.execute_bridge_builtin(command="UpdateAddonRepos")
         install = await self.bridge_tool.execute_bridge_builtin(command="InstallAddon", addonid=addonid)
         wait = await self.wait_for_addon_version(
