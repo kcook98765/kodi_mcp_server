@@ -50,6 +50,19 @@ class PublishAddonRequest(BaseModel):
     provider_name: str = "kodi_mcp"
 
 
+class PublishArtifactRequest(BaseModel):
+    """Publish a previously-registered artifact into the dev repo.
+
+    Agent-safe: refers to server-owned artifact_id rather than server filesystem paths.
+    """
+
+    artifact_id: str
+    addon_id: str
+    addon_name: str
+    addon_version: str
+    provider_name: str = "kodi_mcp"
+
+
 class UpdateAddonRequest(BaseModel):
     """Request to update an addon."""
 
