@@ -116,6 +116,46 @@ class ArtifactStore:
             version=version,
         )
 
+    def register_bytes(
+        self,
+        *,
+        data: bytes,
+        filename: str = "upload.zip",
+        addon_id: str | None = None,
+        version: str | None = None,
+        artifact_id: str | None = None,
+    ) -> ArtifactRecord:
+        """Register an uploaded artifact from bytes.
+
+        This is the minimal ingest primitive used by remote upload endpoints.
+        """
+
+        if not isinstance(data, (bytes, bytearray)):
+            raise TypeError("data must be bytes")
+
+        artifact_id = artifact_id or str(uuid.uuid4())
+        suffix = Path(str(filename or "")).suffix or ".zip"
+        dest_name = f"{artifact_id}{suffix}"
+        dest_path = (self.root_dir / dest_name).resolve()
+        dest_path.write_bytes(bytes(data))
+
+        index = self._load_index()
+        artifacts = index.get("artifacts") or {}
+        artifacts[str(artifact_id)] = {
+            "path": str(dest_path),
+            "addon_id": addon_id,
+            "version": version,
+        }
+        index["artifacts"] = artifacts
+        self._save_index(index)
+
+        return ArtifactRecord(
+            artifact_id=str(artifact_id),
+            path=str(dest_path),
+            addon_id=addon_id,
+            version=version,
+        )
+
     def get(self, artifact_id: str) -> ArtifactRecord | None:
         artifact_id = str(artifact_id or "").strip()
         if not artifact_id:

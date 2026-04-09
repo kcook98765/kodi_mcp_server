@@ -90,3 +90,71 @@ def test_publish_artifact_flow(tmp_path: Path, monkeypatch):
     zip_url = payload["result"]["repo"]["zip_url"]
     zip_get = client.get(zip_url)
     assert zip_get.status_code == 200
+
+
+def test_upload_then_publish_flow(tmp_path: Path, monkeypatch):
+    """End-to-end local test for upload->artifact_id->publish flow."""
+
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("REPO_BASE_URL", "http://testserver")
+    monkeypatch.setenv("KODI_JSONRPC_URL", "http://localhost:8080/jsonrpc")
+    monkeypatch.setenv("KODI_BRIDGE_BASE_URL", "http://localhost:8765")
+
+    import kodi_mcp_server.paths as paths
+
+    monkeypatch.setattr(paths, "AUTHORITATIVE_REPO_ROOT", repo_root, raising=False)
+    monkeypatch.setattr(paths, "PROJECT_ROOT", tmp_path, raising=False)
+    monkeypatch.setattr(paths, "PROJECT_DIR", tmp_path / "project", raising=False)
+
+    import importlib
+    import kodi_mcp_server.config as config
+    import kodi_mcp_server.repo_server as repo_server
+
+    importlib.reload(config)
+    importlib.reload(repo_server)
+
+    dev_repo = repo_root / "dev-repo"
+    dev_repo.mkdir(parents=True, exist_ok=True)
+    (dev_repo / "addons.xml").write_text(
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<addons>\n</addons>\n',
+        encoding="utf-8",
+    )
+
+    app = _make_app()
+    client = TestClient(app)
+
+    # Upload a tiny fake zip.
+    upload = client.post(
+        "/tools/artifacts/upload",
+        files={"file": ("script.kodi_mcp_test-0.0.1.zip", b"PK\x03\x04", "application/zip")},
+        data={"addon_id": "script.kodi_mcp_test", "version": "0.0.1"},
+    )
+    assert upload.status_code == 200
+    upload_payload = upload.json()
+    assert upload_payload.get("error") is None
+    artifact = (upload_payload.get("result") or {}).get("artifact")
+    artifact_id = (artifact or {}).get("artifact_id")
+    assert isinstance(artifact_id, str) and artifact_id
+
+    # Publish via artifact id.
+    pub = client.post(
+        "/tools/repo/publish_artifact",
+        json={
+            "artifact_id": artifact_id,
+            "addon_id": "script.kodi_mcp_test",
+            "addon_name": "Kodi MCP Test Script",
+            "addon_version": "0.0.1",
+            "provider_name": "kodi_mcp",
+        },
+    )
+    assert pub.status_code == 200
+    pub_payload = pub.json()
+    assert pub_payload.get("error") is None
+
+    # Repo serving validation
+    addons_xml = (dev_repo / "addons.xml").read_text(encoding="utf-8")
+    assert 'id="script.kodi_mcp_test"' in addons_xml
+    zip_url = pub_payload["result"]["repo"]["zip_url"]
+    zip_get = client.get(zip_url)
+    assert zip_get.status_code == 200

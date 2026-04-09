@@ -1,6 +1,6 @@
 """MCP/API tool registration for kodi_mcp_server."""
 
-from fastapi import Query
+from fastapi import Query, File, Form, UploadFile
 
 from kodi_mcp_server.composition import (
     build_addon_ops_tool,
@@ -388,6 +388,56 @@ def configure_mcp_app(app):
             "error_code": None,
             "latency_ms": None,
         }
+
+    @app.post("/tools/artifacts/upload")
+    async def upload_artifact_endpoint(
+        file: UploadFile = File(...),
+        addon_id: str | None = Form(default=None),
+        version: str | None = Form(default=None),
+    ):
+        """Upload a single zip artifact into the server-owned Artifact Store.
+
+        Minimal ingest endpoint to support remote agent workflows.
+        """
+
+        import uuid
+
+        from kodi_mcp_server.artifact_store import ArtifactStore
+        from kodi_mcp_server.paths import PROJECT_ROOT
+
+        request_id = str(uuid.uuid4())
+        try:
+            data = await file.read()
+            store = ArtifactStore(root_dir=PROJECT_ROOT / "artifacts")
+            record = store.register_bytes(
+                data=data,
+                filename=file.filename or "upload.zip",
+                addon_id=(addon_id.strip() if isinstance(addon_id, str) and addon_id.strip() else None),
+                version=(version.strip() if isinstance(version, str) and version.strip() else None),
+            )
+            return {
+                "request_id": request_id,
+                "result": {
+                    "artifact": record.to_dict(),
+                    "upload": {
+                        "filename": file.filename,
+                        "size_bytes": len(data) if isinstance(data, (bytes, bytearray)) else None,
+                    },
+                },
+                "error": None,
+                "error_type": None,
+                "error_code": None,
+                "latency_ms": None,
+            }
+        except Exception as exc:
+            return {
+                "request_id": request_id,
+                "result": None,
+                "error": f"Failed to upload artifact: {exc}",
+                "error_type": "server_error",
+                "error_code": 500,
+                "latency_ms": None,
+            }
 
     @app.get("/tools/wait_for_addon_version")
     async def wait_for_addon_version_endpoint(
