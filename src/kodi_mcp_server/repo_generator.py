@@ -104,6 +104,9 @@ def build_repo_addon(
     if output_zip is None:
         output_zip = repo_root.parent / "repo-addon" / f"repository.kodi-mcp-{repo_version}.zip"
 
+    # Kodi expects addon zips to contain a top-level folder named the addon id.
+    addon_id = "repository.kodi-mcp"
+
     # Create staging directory
     staging = tempfile.mkdtemp(prefix="repo-addon-")
     staging_path = Path(staging)
@@ -119,24 +122,27 @@ def build_repo_addon(
             "repo_base_url": repo_base_url,
         }
 
+        addon_root = staging_path / addon_id
+        addon_root.mkdir(parents=True, exist_ok=True)
+
         # Copy addon.xml from repository-addon template
         addon_xml_template = (
             Path(__file__).parent.parent.parent / "templates" / "repository-addon" / "addon.xml"
         )
-        addon_xml_output = staging_path / "addon.xml"
+        addon_xml_output = addon_root / "addon.xml"
         render_template(addon_xml_template, addon_xml_output, context)
 
         # Copy service.py stub (Kodi repo addons need this)
         service_py_template = (
             Path(__file__).parent.parent.parent / "templates" / "repository-addon" / "service.py"
         )
-        shutil.copy2(service_py_template, staging_path / "service.py")
+        shutil.copy2(service_py_template, addon_root / "service.py")
 
         # Copy metadata/addons.xml from template
         metadata_addons_template = (
             Path(__file__).parent.parent.parent / "templates" / "repository-addon" / "metadata" / "addons.xml"
         )
-        shutil.copy2(metadata_addons_template, staging_path / "addons.xml")
+        shutil.copy2(metadata_addons_template, addon_root / "addons.xml")
 
         # Create ZIP
         output_zip.parent.mkdir(parents=True, exist_ok=True)

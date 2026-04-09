@@ -130,11 +130,14 @@ async def _addon_registration_loop(*, stop_event: asyncio.Event) -> None:
                                 # Validate by structure, not arbitrary size.
                                 with zipfile.ZipFile(repo_addon_zip, "r") as zf:
                                     names = set(zf.namelist())
-                                    if "addon.xml" not in names:
-                                        raise RuntimeError(f"repo addon zip invalid (missing addon.xml): {repo_addon_zip}")
+                                    addon_xml_path = "repository.kodi-mcp/addon.xml"
+                                    if addon_xml_path not in names:
+                                        raise RuntimeError(
+                                            f"repo addon zip invalid (missing {addon_xml_path}): {repo_addon_zip}"
+                                        )
 
                                     try:
-                                        addon_xml = zf.read("addon.xml").decode("utf-8", errors="replace")
+                                        addon_xml = zf.read(addon_xml_path).decode("utf-8", errors="replace")
                                     except Exception as exc:
                                         raise RuntimeError(f"repo addon zip invalid (cannot read addon.xml): {exc}")
 
