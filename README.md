@@ -4,21 +4,28 @@ This repository provides an **MCP (Model Context Protocol) server for Kodi**.
 
 It exposes a curated set of Kodi operations (Kodi JSON-RPC + the Kodi MCP bridge addon) as MCP tools, so agent clients (like VS Code/Cline) can control and inspect Kodi in a structured way.
 
-## Quick start (managed addon loop)
+## Quick start
 
+**First-time onboarding (repo install)**
+1) Install + enable the Kodi bridge addon: `service.kodi_mcp`
+2) Set the shared token in Kodi addon settings (**service.kodi_mcp → Kodi MCP → MCP shared token**)
+3) Start this server
+4) Wait briefly: the server will **auto-register** and **auto-stage the dev repo zip**; then in Kodi run **Developer setup → Install from zip**
+
+**Managed addon loop (after repo is installed in Kodi)**
 1) Register local addon: `managed_addon_register`
 2) Build/publish/stage/apply: `managed_addon_build_publish_stage_and_apply`
 3) If needed: `managed_addon_validate_state`
 
 Success = `verification.apply_verified == true`
 Retry only if `verification.can_retry == true`
-Manual: first-time repo install once in Kodi (Developer setup → Install from zip)
 
 ## Kodi addon requirement
 
 - This MCP server requires the Kodi bridge addon to be installed and enabled in Kodi:
   https://github.com/kcook98765/kodi_mcp_addon
 - The addon exposes the HTTP bridge used by this server and provides the Developer setup flow for first-time repo installation.
+- After the addon token is configured and this server starts, the server will automatically register and stage the dev repo zip for first-time install.
 - Without the addon, the MCP server cannot talk to Kodi.
 
 ## Connection modes
@@ -70,7 +77,7 @@ Example **with API key header**:
   "mcpServers": {
     "kodi-mcp-remote": {
       "type": "streamableHttp",
-      "url": "http://claw.home.arpa:8010/mcp",
+      "url": "http://<server-host>:8010/mcp",
       "disabled": false,
       "headers": {
         "x-mcp-api-key": "<optional>"
@@ -87,7 +94,7 @@ Example **without headers** (no API key):
   "mcpServers": {
     "kodi-mcp-remote": {
       "type": "streamableHttp",
-      "url": "http://claw.home.arpa:8010/mcp",
+      "url": "http://<server-host>:8010/mcp",
       "disabled": false
     }
   }
@@ -133,7 +140,7 @@ Once connected, try these MCP tools first:
 If you’re testing the **remote** transport directly, you can also do a minimal curl initialize:
 
 ```bash
-curl -i -N http://claw.home.arpa:8010/mcp \
+curl -i -N http://<server-host>:8010/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
   -H "x-mcp-api-key: <optional>" \
@@ -147,6 +154,8 @@ curl -i -N http://claw.home.arpa:8010/mcp \
 - `KODI_BRIDGE_TOKEN` set
   - Must match Kodi addon setting: **service.kodi_mcp → mcp_token**
 - Kodi is running with **service.kodi_mcp enabled**
+
+Note: first-time repo installation no longer requires a separate staging action — the server auto-stages the current dev repo zip once registration is healthy.
 
 ### Tool call sequence (MCP)
 
@@ -203,12 +212,14 @@ Key `verification.apply_status` values:
 Operator rule: If the loop cannot complete, run `managed_addon_validate_state` and follow its output.
 
 ### Kodi-side manual step (required)
-1) Open:
-   **Kodi → Add-ons → Services → Kodi MCP Service → Configure**
-2) Then:
+1) Install + enable **Kodi MCP Service**
+2) Configure token:
+   **Kodi → Add-ons → Services → Kodi MCP Service → Configure → Kodi MCP → MCP shared token**
+3) Start the MCP server and wait briefly for **Developer status** to report ready
+4) Then:
    **Developer → Developer setup**
-3) Kodi opens **Install from zip file**
-4) You must **manually browse** to the staged `special://...` path shown and select the staged repo zip.
+5) Kodi opens **Install from zip file**
+6) Manually browse to the staged `special://...` path shown and select the staged repo zip
 
 Troubleshooting rule: **If anything fails, run `managed_addon_validate_state` first.**
 
@@ -267,6 +278,7 @@ Action:
 - Kodi → Add-ons → Services → Kodi MCP Service → Configure
 - Developer → Developer setup
 - Install from zip (select staged `special://` path)
+If Developer setup is not ready yet, wait briefly for server auto-staging and re-check Developer status.
 
 ### Repo not ready / refresh lag
 Symptom: `apply_status = repo_not_ready`.
