@@ -70,8 +70,16 @@ def test_update_addon_returns_initial_install_hint_when_not_installed(tmp_path: 
     class _DummyJsonRpcTool:
         pass
 
+    # mcp_app imports build_addon_ops_tool directly, so patch both the
+    # composition module and the imported symbol in mcp_app.
     import kodi_mcp_server.composition as composition
-    monkeypatch.setattr(composition, "build_addon_ops_tool", lambda: __import__("kodi_mcp_server.tools.addon_ops", fromlist=["AddonOpsTool"]).AddonOpsTool(_DummyBridgeTool(), _DummyJsonRpcTool()))
+    import kodi_mcp_server.mcp_app as mcp_app
+
+    factory = lambda: __import__("kodi_mcp_server.tools.addon_ops", fromlist=["AddonOpsTool"]).AddonOpsTool(
+        _DummyBridgeTool(), _DummyJsonRpcTool()
+    )
+    monkeypatch.setattr(composition, "build_addon_ops_tool", factory)
+    monkeypatch.setattr(mcp_app, "build_addon_ops_tool", factory)
 
     app = _make_app()
     client = TestClient(app)
@@ -86,3 +94,6 @@ def test_update_addon_returns_initial_install_hint_when_not_installed(tmp_path: 
     assert result.get("is_published_in_repo") is True
     assert result.get("is_installed") is False
     assert result.get("repo_version") == "0.0.1"
+
+
+

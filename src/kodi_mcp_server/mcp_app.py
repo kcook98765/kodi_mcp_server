@@ -370,11 +370,29 @@ def configure_mcp_app(app):
 
         # Include repo-visible paths (relative to /repo/content/).
         repo_rel_zip = f"zips/{request.addon_id}/{request.addon_id}-{request.addon_version}.zip"
+
+        # Remove internal filesystem paths from the publish result (agent-facing).
+        if isinstance(publish_result, dict):
+            publish_result = {
+                k: v
+                for (k, v) in publish_result.items()
+                if k
+                not in {
+                    "source_dir",
+                    "build_zip_path",
+                    "zip_path",
+                    "addons_xml_path",
+                }
+            }
         return {
             "request_id": request_id,
             "result": {
                 "artifact_id": request.artifact_id,
-                "artifact": record.to_dict(),
+                "artifact": {
+                    "artifact_id": record.artifact_id,
+                    "addon_id": record.addon_id,
+                    "version": record.version,
+                },
                 "publish": publish_result,
                 "repo": {
                     "addons_xml": "addons.xml",
@@ -418,7 +436,11 @@ def configure_mcp_app(app):
             return {
                 "request_id": request_id,
                 "result": {
-                    "artifact": record.to_dict(),
+                    "artifact": {
+                        "artifact_id": record.artifact_id,
+                        "addon_id": record.addon_id,
+                        "version": record.version,
+                    },
                     "upload": {
                         "filename": file.filename,
                         "size_bytes": len(data) if isinstance(data, (bytes, bytearray)) else None,
@@ -516,7 +538,7 @@ def configure_mcp_app(app):
         return result.to_dict()
 
     @app.get("/tools/get_player_item")
-    async def endpoint():
+    async def get_player_item_endpoint():
         result = await build_jsonrpc_tool().get_player_item()
         return result.to_dict()
 
@@ -542,7 +564,7 @@ def configure_mcp_app(app):
         return result.to_dict()
 
     @app.get("/tools/get_system_properties")
-    async def endpoint():
+    async def get_system_properties_endpoint():
         result = await build_jsonrpc_tool().get_system_properties()
         return result.to_dict()
 
@@ -575,7 +597,7 @@ def configure_mcp_app(app):
         return result.to_dict()
 
     @app.get("/tools/get_jsonrpc_version")
-    async def endpoint():
+    async def get_jsonrpc_version_endpoint():
         result = await build_jsonrpc_tool().get_jsonrpc_version()
         return result.to_dict()
 

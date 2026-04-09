@@ -149,6 +149,30 @@ curl -i -N http://<server-host>:8010/mcp \
 
 ## Managed addon development workflow (golden path)
 
+## Repo-based agent workflow rule (important)
+
+Kodi has a practical workflow constraint we now treat as a **product rule**:
+
+1) **Brand-new addon (never installed before)**
+   - After publishing into the Kodi MCP repository, the **first install must be user-driven in the Kodi UI**:
+     - **Add-ons → Install from repository → Kodi MCP Repository → select addon → Install**
+   - Agents should *not* try to automate `InstallAddon` for a never-installed addon.
+
+2) **Already-installed addon (installed at least once)**
+   - Subsequent updates can be fully automated:
+     - Upload zip → publish artifact → update addon
+
+### Recommended agent workflow (HTTP tools)
+
+Publish a new version:
+1) `POST /tools/artifacts/upload` (multipart zip) → returns `artifact_id`
+2) `POST /tools/repo/publish_artifact` (JSON) → updates repo metadata + zip
+
+Apply update in Kodi (only after first manual install has happened):
+3) `POST /tools/update_addon` → refresh repos + install/update + wait for version
+
+If `POST /tools/update_addon` returns `requires_initial_user_install: true`, perform the one-time UI install and then re-run the update tool for future versions.
+
 ### Prerequisites
 - `KODI_BRIDGE_BASE_URL` set (bridge addon HTTP base URL)
 - `KODI_BRIDGE_TOKEN` set

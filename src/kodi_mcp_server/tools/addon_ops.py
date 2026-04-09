@@ -127,6 +127,13 @@ class AddonOpsTool:
                 error=None,
             )
 
+        def _strip_host_paths(state: dict | None) -> dict | None:
+            """Remove host filesystem paths from agent-facing payloads."""
+
+            if not isinstance(state, dict):
+                return None
+            return {k: v for (k, v) in state.items() if k not in {"install_path", "profile_path"}}
+
         refresh = await self.bridge_tool.execute_bridge_builtin(command="UpdateAddonRepos")
         install = await self.bridge_tool.execute_bridge_builtin(command="InstallAddon", addonid=addonid)
         wait = await self.wait_for_addon_version(
@@ -146,8 +153,16 @@ class AddonOpsTool:
             "enabled": (after.result or {}).get("enabled") if after.result else None,
             "refresh_result": refresh.result,
             "install_result": install.result,
-            "wait_result": wait.result,
+            "wait_result": (
+                {
+                    **(wait.result or {}),
+                    "final_state": _strip_host_paths((wait.result or {}).get("final_state") if isinstance(wait.result, dict) else None),
+                }
+                if isinstance(wait.result, dict)
+                else wait.result
+            ),
             "success": wait.error is None and bool((wait.result or {}).get("success")),
+            "addon_state_after": _strip_host_paths(after.result if isinstance(after.result, dict) else None),
         }
         errors = [err for err in [before.error, refresh.error, install.error, wait.error, after.error] if err]
         return ResponseMessage(
