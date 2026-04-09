@@ -309,10 +309,3 @@ Action:
 ```bash
 python -m pytest -v
 ```
-
-## Next Steps
-
-1. **Live integration testing** — Validate CLI + server against real remote Kodi
-2. **Connection reuse** — Optimize transport with connection pooling
-3. **README/API docs** — Expand documentation with examples
-4. **Production validation** — Test across network conditions and Kodi states
