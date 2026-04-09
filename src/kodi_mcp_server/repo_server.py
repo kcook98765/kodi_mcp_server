@@ -41,13 +41,22 @@ async def repo_health_detailed():
     """Detailed repo health and visibility for debugging."""
     from kodi_mcp_server.repo_generator import load_addons_xml
 
-    addons_data = load_addons_xml(REPO_ROOT)
+    # The repo metadata that Kodi should consume is whatever we actually serve
+    # from /repo/content/*.
+    served_root = REPO_ROOT / "dev-repo" if (REPO_ROOT / "dev-repo").exists() else REPO_ROOT
+
+    addons_data = load_addons_xml(served_root)
     addon_count = len(addons_data.get("addons", []))
     addons_list = addons_data.get("addons", [])
 
-    addons_gz = REPO_ROOT / "addons.xml.gz"
+    addons_xml = served_root / "addons.xml"
+    addons_gz = served_root / "addons.xml.gz"
     gz_exists = addons_gz.exists()
     gz_size = gz_exists and addons_gz.stat().st_size
+
+    xml_exists = addons_xml.exists()
+
+    metadata_path = "/repo/content/addons.xml.gz" if gz_exists else "/repo/content/addons.xml"
 
     return JSONResponse(
         {
@@ -60,13 +69,15 @@ async def repo_health_detailed():
                 "addons": addons_list[:20],
             },
             "metadata": {
-                "addons_xml_exists": True,
+                "addons_xml_exists": xml_exists,
                 "addons_xml_gz_exists": gz_exists,
                 "addons_xml_gz_size": gz_size,
+                "served_repo_root": str(served_root),
+                "served_metadata_path": metadata_path,
             },
             "kodi_can_see": {
                 "index_url": f"{REPO_BASE_URL}/repo/",
-                "metadata_url": f"{REPO_BASE_URL}/repo/addons.xml.gz",
+                "metadata_url": f"{REPO_BASE_URL}{metadata_path}",
                 "addons_available": addon_count > 0,
             },
         }
@@ -104,13 +115,17 @@ async def repo_info():
                 "name": "Kodi MCP Server Repository",
                 "description": "Official repository for Kodi MCP Server middle-layer backend",
                 "short_url": f"{REPO_BASE_URL}/repo/",
-                "dev_repo_url": f"{REPO_BASE_URL}/repo/dev-repo/",
+                # Canonical served repo root (mounted by mount_repo_static)
+                "dev_repo_url": f"{REPO_BASE_URL}/repo/content/",
                 "install_dir": f"{REPO_BASE_URL}/repo/install/",
                 "latest_zip_url": f"{REPO_BASE_URL}/repo/install/latest.zip" if latest_zip else None,
             },
             "install_urls": {
-                "canonical_repo_root": f"{REPO_BASE_URL}/repo/dev-repo/",
-                "addons_metadata": f"{REPO_BASE_URL}/repo/dev-repo/addons.xml.gz",
+                "canonical_repo_root": f"{REPO_BASE_URL}/repo/content/",
+                # Prefer compressed metadata if present, else fall back to plain xml.
+                "addons_metadata": f"{REPO_BASE_URL}/repo/content/addons.xml.gz"
+                if (REPO_ROOT / "dev-repo" / "addons.xml.gz").exists()
+                else f"{REPO_BASE_URL}/repo/content/addons.xml",
                 "repository_addon_zip": f"{REPO_BASE_URL}/repo/install/latest.zip" if latest_zip else None,
                 "repository_addon_checksum": zip_checksum,
             },
@@ -261,6 +276,9 @@ def mount_repo_static(app):
             addons_gz = dev_repo / "addons.xml.gz"
             if addons_gz.exists():
                 return RedirectResponse(url="/repo/content/addons.xml.gz")
+            addons_xml = dev_repo / "addons.xml"
+            if addons_xml.exists():
+                return RedirectResponse(url="/repo/content/addons.xml")
             return PlainTextResponse("Kodi MCP Repository", status_code=200)
 
         @app.get("/repo/content/{path:path}", include_in_schema=False)

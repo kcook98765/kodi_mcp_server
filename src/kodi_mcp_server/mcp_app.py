@@ -8,6 +8,7 @@ from kodi_mcp_server.composition import (
     build_jsonrpc_tool,
     build_notification_probe,
     build_repo_tool,
+    build_service_ops_tool,
 )
 from kodi_mcp_server.models.requests import (
     ExecuteAddonRequest,
