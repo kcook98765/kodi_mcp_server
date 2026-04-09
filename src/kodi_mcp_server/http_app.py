@@ -63,6 +63,7 @@ async def _addon_registration_loop(*, stop_event: asyncio.Event) -> None:
                     derived = result.get("derived") if isinstance(result, dict) else None
                     state_obj = result.get("state") if isinstance(result, dict) else None
                     reg_obj = (state_obj or {}).get("registration") if isinstance(state_obj, dict) else None
+                    repo_obj = (state_obj or {}).get("repo_zip") if isinstance(state_obj, dict) else None
                     if isinstance(reg_obj, dict):
                         try:
                             ttl_seconds = int(reg_obj.get("applied_ttl_seconds") or ttl_seconds)
@@ -81,19 +82,26 @@ async def _addon_registration_loop(*, stop_event: asyncio.Event) -> None:
                     if healthy and isinstance(derived, dict):
                         repo_ready = bool(derived.get("dev_setup_available") is True)
                         repo_present = bool(derived.get("repo_zip_file_exists") is True)
-                        repo_needs_stage = (not repo_ready) and (not repo_present)
+                        repo_size = int(repo_obj.get("size_bytes") or 0) if isinstance(repo_obj, dict) else 0
+
+                        # Stage if missing OR if the staged artifact looks obviously wrong (too small).
+                        # First-time onboarding requires an installable repository add-on zip.
+                        repo_needs_stage = ((not repo_ready) and (not repo_present)) or (repo_present and repo_size < 1024)
 
                         now_mono = asyncio.get_running_loop().time()
                         if repo_needs_stage and now_mono >= next_stage_attempt_at:
                             try:
-                                from kodi_mcp_server.managed_addons import build_and_stage_dev_repo_zip
+                                import zipfile
+                                from pathlib import Path
+
+                                from kodi_mcp_server.milestone_a_bridge import stage_dev_repo_zip
+                                from kodi_mcp_server.repo_generator import build_repo_addon
                                 from kodi_mcp_server.paths import AUTHORITATIVE_REPO_ROOT
 
-                                # Ensure dev-repo directory exists for first-time onboarding.
-                                # (build_dev_repo_zip requires repo/dev-repo to exist.)
+                                # Ensure the authoritative repo content root exists so the repo add-on's
+                                # URLs have something to point at (even if empty).
                                 dev_repo_dir = AUTHORITATIVE_REPO_ROOT / "dev-repo"
-                                if not dev_repo_dir.exists():
-                                    dev_repo_dir.mkdir(parents=True, exist_ok=True)
+                                dev_repo_dir.mkdir(parents=True, exist_ok=True)
                                 addons_xml_path = dev_repo_dir / "addons.xml"
                                 if not addons_xml_path.exists():
                                     addons_xml_path.write_text(
@@ -102,12 +110,42 @@ async def _addon_registration_loop(*, stop_event: asyncio.Event) -> None:
                                         '</addons>\n',
                                         encoding="utf-8",
                                     )
+                                addons_md5_path = dev_repo_dir / "addons.xml.md5"
+                                if not addons_md5_path.exists():
+                                    import hashlib
 
-                                print("[kodi_mcp_server] repo zip staging: starting")
-                                stage_out = await build_and_stage_dev_repo_zip(verify=True)
-                                stage_result = (stage_out or {}).get("addon_stage_result") or {}
-                                state_view = ((stage_result.get("state") or {}) if isinstance(stage_result, dict) else {})
-                                dev_ready_after = bool(isinstance(state_view, dict) and state_view.get("dev_setup_available"))
+                                    md5 = hashlib.md5(addons_xml_path.read_bytes()).hexdigest()
+                                    addons_md5_path.write_text(f"{md5}  addons.xml\n", encoding="utf-8")
+
+                                # First-time onboarding needs an installable *repository add-on zip*.
+                                # Do NOT stage a raw zip of repo/dev-repo contents.
+                                repo_addon = build_repo_addon(repo_version="1.0.0")
+                                if repo_addon.get("status") != "ok":
+                                    raise RuntimeError(f"build_repo_addon failed: {repo_addon}")
+
+                                repo_addon_zip = Path(str(repo_addon.get("output_zip") or "")).expanduser()
+                                if not repo_addon_zip.exists() or repo_addon_zip.stat().st_size < 1024:
+                                    raise RuntimeError(
+                                        f"repo addon zip missing/too small: {repo_addon_zip} ({repo_addon_zip.stat().st_size if repo_addon_zip.exists() else 'missing'})"
+                                    )
+
+                                with zipfile.ZipFile(repo_addon_zip, "r") as zf:
+                                    names = set(zf.namelist())
+                                    if "addon.xml" not in names:
+                                        raise RuntimeError(
+                                            f"repo addon zip invalid (missing addon.xml): {repo_addon_zip}"
+                                        )
+
+                                print("[kodi_mcp_server] repo zip staging: starting (repository add-on zip)")
+                                stage_out = await stage_dev_repo_zip(
+                                    zip_path=str(repo_addon_zip),
+                                    repo_version="1.0.0",
+                                    verify=True,
+                                )
+                                state_after = (stage_out or {}).get("state") if isinstance(stage_out, dict) else None
+                                dev_ready_after = bool(
+                                    isinstance(state_after, dict) and state_after.get("dev_setup_available")
+                                )
 
                                 if dev_ready_after:
                                     print("[kodi_mcp_server] repo zip staging: ok")
