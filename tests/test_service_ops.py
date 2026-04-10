@@ -7,9 +7,6 @@ Verifies service-type addon detection and status retrieval.
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 
-import sys
-sys.path.insert(0, "/home/node/.openclaw/workspace/project/src")
-
 from kodi_mcp_server.tools.service_ops import ServiceOpsTool
 from kodi_mcp_server.transport.http_bridge import HttpBridgeClient
 from kodi_mcp_server.models.messages import ResponseMessage

@@ -12,9 +12,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-# Add scripts directory to path
-sys.path.insert(0, "/home/node/.openclaw/workspace/project/scripts")
-
+# Import shim module (src/kodi_cli.py) which re-exports scripts/kodi_cli.py.
 import kodi_cli
 
 

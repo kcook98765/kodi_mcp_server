@@ -50,6 +50,12 @@ from kodi_mcp_server.managed_addons import (
     managed_addon_list,
     managed_addon_register,
 )
+from kodi_mcp_server.dev_loop_artifacts import (
+    artifact_upload_zip as _artifact_upload_zip,
+    repo_publish_artifact as _repo_publish_artifact,
+    repo_stage_current_dev_repo as _repo_stage_current_dev_repo,
+    repo_stage_and_apply_addon as _repo_stage_and_apply_addon,
+)
 from kodi_mcp_server.kodi_apply import managed_addon_build_publish_stage_and_apply
 from kodi_mcp_server.milestone_a_bridge import read_addon_state
 from kodi_mcp_server.paths import AUTHORITATIVE_REPO_ROOT
@@ -333,7 +339,11 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
             ),
             Tool(
                 name="managed_addon_register",
-                description="Register/update a managed local addon source path (no GitHub).",
+                description=(
+                    "Register/update a managed addon backed by a SERVER-LOCAL source directory (must contain addon.xml). "
+                    "This workflow is intended for local dev on the same host as the MCP server; remote agents should prefer "
+                    "artifact_upload_zip + repo_publish_artifact + repo_stage_* tools."
+                ),
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -372,7 +382,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
             ),
             Tool(
                 name="managed_addon_build_publish_and_stage",
-                description="Build+publish a managed addon, build dev repo zip, then stage it to Kodi via the bridge.",
+                description=(
+                    "SERVER-LOCAL workflow: build+publish a managed addon from its registered source_path, then build dev repo zip "
+                    "and stage it to Kodi via the bridge. For remote agent workflows, use artifact_upload_zip + repo_publish_artifact."
+                ),
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -392,8 +405,8 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
             Tool(
                 name="managed_addon_build_publish_stage_and_apply",
                 description=(
-                    "Build+publish a managed addon, stage the dev repo zip to Kodi, then refresh and "
-                    "install/update the addon from Kodi (best-effort; assumes repo already installed once)."
+                    "SERVER-LOCAL workflow: build+publish from source_path, stage repo zip to Kodi, then refresh and install/update "
+                    "the addon (best-effort; assumes repo already installed once). For remote agent workflows, use repo_stage_and_apply_addon."
                 ),
                 inputSchema={
                     "type": "object",
@@ -420,6 +433,78 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         "managed_addon_id": {"type": "string"},
                     },
                     "required": ["managed_addon_id"],
+                    "additionalProperties": False,
+                },
+            ),
+
+            # Agent-safe, pathless dev-loop tools (artifact-based)
+            Tool(
+                name="artifact_upload_zip",
+                description=(
+                    "Upload a zip artifact to the server-owned artifact store (agent-safe; no server filesystem paths required). "
+                    "Input is base64-encoded zip bytes."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "zip_base64": {"type": "string", "description": "Base64-encoded zip bytes (optionally data: URI)."},
+                        "filename": {"type": "string", "default": "upload.zip"},
+                        "addon_id": {"type": "string"},
+                        "version": {"type": "string"},
+                    },
+                    "required": ["zip_base64"],
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="repo_publish_artifact",
+                description=(
+                    "Publish a previously uploaded artifact (by artifact_id) into the dev repo. "
+                    "Returns repo-relative paths/URLs and does not expose internal server filesystem paths."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "artifact_id": {"type": "string"},
+                        "addon_id": {"type": "string"},
+                        "addon_name": {"type": "string"},
+                        "addon_version": {"type": "string"},
+                        "provider_name": {"type": "string", "default": "kodi_mcp"},
+                    },
+                    "required": ["artifact_id", "addon_id", "addon_name", "addon_version"],
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="repo_stage_current_dev_repo",
+                description=(
+                    "Build a dev-repo zip from the current server repo state (repo/dev-repo) and stage it to Kodi via the bridge."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "repo_version": {"type": "string"},
+                        "verify": {"type": "boolean", "default": True},
+                    },
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="repo_stage_and_apply_addon",
+                description=(
+                    "Agent-safe dev loop: stage current dev repo zip to Kodi, then refresh/install/update an addon from the repo "
+                    "(best-effort; assumes repo already installed at least once)."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "addonid": {"type": "string"},
+                        "repo_version": {"type": "string"},
+                        "verify": {"type": "boolean", "default": True},
+                        "timeout_seconds": {"type": "integer", "default": 45, "minimum": 1},
+                        "poll_interval_seconds": {"type": "integer", "default": 4, "minimum": 1},
+                    },
+                    "required": ["addonid"],
                     "additionalProperties": False,
                 },
             ),
@@ -450,6 +535,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
             "managed_addon_build_publish_and_stage",
             "managed_addon_build_publish_stage_and_apply",
             "managed_addon_validate_state",
+            "artifact_upload_zip",
+            "repo_publish_artifact",
+            "repo_stage_current_dev_repo",
+            "repo_stage_and_apply_addon",
         }:
             # Preserve exact normalized missing-arg behavior for addon_details.
             if tool_name == "addon_details":
@@ -525,6 +614,83 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                             "tool": tool_name,
                             "data": None,
                             "error": "missing required argument: source_path",
+                            "error_type": "invalid_params",
+                            "error_code": None,
+                            "latency_ms": 0,
+                            "request_id": None,
+                            "raw": {"arguments": args},
+                        }
+                        text = json.dumps(envelope, indent=2, sort_keys=True)
+                        return ServerResult(
+                            CallToolResult(
+                                isError=True,
+                                content=[TextContent(type="text", text=text)],
+                            )
+                        )
+
+            # Agent-safe artifact tools required-arg checks.
+            if tool_name in {
+                "artifact_upload_zip",
+                "repo_publish_artifact",
+                "repo_stage_and_apply_addon",
+            }:
+                args = request.params.arguments or {}
+                if not isinstance(args, dict):
+                    args = {}
+
+                if tool_name == "artifact_upload_zip":
+                    zip_base64 = args.get("zip_base64")
+                    if not isinstance(zip_base64, str) or not zip_base64.strip():
+                        envelope = {
+                            "ok": False,
+                            "tool": tool_name,
+                            "data": None,
+                            "error": "missing required argument: zip_base64",
+                            "error_type": "invalid_params",
+                            "error_code": None,
+                            "latency_ms": 0,
+                            "request_id": None,
+                            "raw": {"arguments": args},
+                        }
+                        text = json.dumps(envelope, indent=2, sort_keys=True)
+                        return ServerResult(
+                            CallToolResult(
+                                isError=True,
+                                content=[TextContent(type="text", text=text)],
+                            )
+                        )
+
+                if tool_name == "repo_publish_artifact":
+                    for k in ("artifact_id", "addon_id", "addon_name", "addon_version"):
+                        v = args.get(k)
+                        if not isinstance(v, str) or not v.strip():
+                            envelope = {
+                                "ok": False,
+                                "tool": tool_name,
+                                "data": None,
+                                "error": f"missing required argument: {k}",
+                                "error_type": "invalid_params",
+                                "error_code": None,
+                                "latency_ms": 0,
+                                "request_id": None,
+                                "raw": {"arguments": args},
+                            }
+                            text = json.dumps(envelope, indent=2, sort_keys=True)
+                            return ServerResult(
+                                CallToolResult(
+                                    isError=True,
+                                    content=[TextContent(type="text", text=text)],
+                                )
+                            )
+
+                if tool_name == "repo_stage_and_apply_addon":
+                    addonid = args.get("addonid")
+                    if not isinstance(addonid, str) or not addonid.strip():
+                        envelope = {
+                            "ok": False,
+                            "tool": tool_name,
+                            "data": None,
+                            "error": "missing required argument: addonid",
                             "error_type": "invalid_params",
                             "error_code": None,
                             "latency_ms": 0,
@@ -935,6 +1101,64 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                             "ready_for_kodi_install": ready_for_kodi_install,
                         },
                     }
+                elif tool_name == "artifact_upload_zip":
+                    args = request.params.arguments or {}
+                    if not isinstance(args, dict):
+                        args = {}
+                    raw_result = _artifact_upload_zip(
+                        zip_base64=str(args.get("zip_base64") or ""),
+                        filename=str(args.get("filename") or "upload.zip"),
+                        addon_id=(str(args.get("addon_id") or "").strip() if args.get("addon_id") is not None else None),
+                        version=(str(args.get("version") or "").strip() if args.get("version") is not None else None),
+                    )
+                elif tool_name == "repo_publish_artifact":
+                    args = request.params.arguments or {}
+                    if not isinstance(args, dict):
+                        args = {}
+                    raw_result = _repo_publish_artifact(
+                        artifact_id=str(args.get("artifact_id") or "").strip(),
+                        addon_id=str(args.get("addon_id") or "").strip(),
+                        addon_name=str(args.get("addon_name") or "").strip(),
+                        addon_version=str(args.get("addon_version") or "").strip(),
+                        provider_name=(
+                            str(args.get("provider_name") or "kodi_mcp").strip() or "kodi_mcp"
+                        ),
+                    )
+                elif tool_name == "repo_stage_current_dev_repo":
+                    args = request.params.arguments or {}
+                    if not isinstance(args, dict):
+                        args = {}
+                    verify = args.get("verify", True)
+                    if not isinstance(verify, bool):
+                        verify = True
+                    repo_version = args.get("repo_version")
+                    raw_result = await _repo_stage_current_dev_repo(
+                        repo_version=(str(repo_version).strip() if isinstance(repo_version, str) and repo_version.strip() else None),
+                        verify=verify,
+                    )
+                elif tool_name == "repo_stage_and_apply_addon":
+                    args = request.params.arguments or {}
+                    if not isinstance(args, dict):
+                        args = {}
+                    verify = args.get("verify", True)
+                    if not isinstance(verify, bool):
+                        verify = True
+                    timeout_seconds = args.get("timeout_seconds", 45)
+                    if not isinstance(timeout_seconds, int) or timeout_seconds < 1:
+                        timeout_seconds = 45
+                    poll_interval_seconds = args.get("poll_interval_seconds", 4)
+                    if not isinstance(poll_interval_seconds, int) or poll_interval_seconds < 1:
+                        poll_interval_seconds = 4
+                    repo_version = args.get("repo_version")
+                    raw_result = await _repo_stage_and_apply_addon(
+                        addonid=str(args.get("addonid") or "").strip(),
+                        runtime_bridge_tool=runtime["bridge"],
+                        runtime_jsonrpc_tool=runtime["jsonrpc"],
+                        repo_version=(str(repo_version).strip() if isinstance(repo_version, str) and repo_version.strip() else None),
+                        verify=verify,
+                        timeout_seconds=timeout_seconds,
+                        poll_interval_seconds=poll_interval_seconds,
+                    )
                 else:
                     raw_result = await _kodi_status(runtime)
 

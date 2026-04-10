@@ -48,9 +48,12 @@ def test_update_addon_returns_initial_install_hint_when_not_installed(tmp_path: 
     import importlib
     import kodi_mcp_server.config as config
     import kodi_mcp_server.repo_server as repo_server
+    import kodi_mcp_server.tools.addon_ops as addon_ops
 
     importlib.reload(config)
     importlib.reload(repo_server)
+    # Ensure AddonOpsTool picks up the reloaded config.REPO_ROOT.
+    importlib.reload(addon_ops)
 
     # Monkeypatch composition to provide a bridge tool that reports not installed.
     # This keeps the test local without any real Kodi bridge.
@@ -94,6 +97,7 @@ def test_update_addon_returns_initial_install_hint_when_not_installed(tmp_path: 
     assert result.get("is_published_in_repo") is True
     assert result.get("is_installed") is False
     assert result.get("repo_version") == "0.0.1"
+
 
 
 

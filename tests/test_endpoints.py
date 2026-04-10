@@ -5,7 +5,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from fastapi.testclient import TestClient
-from kodi_mcp_server.mcp_app import app
+
+# Compose the full app (repo + tool routes) via the canonical composition module.
+from kodi_mcp_server.main import app
 
 
 def test_health_endpoint_exists():
