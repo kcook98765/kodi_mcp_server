@@ -425,14 +425,22 @@ def configure_mcp_app(app):
 
         request_id = str(uuid.uuid4())
         try:
-            data = await file.read()
+            # Stream the incoming upload to disk to avoid buffering the whole file in memory.
             store = ArtifactStore(root_dir=PROJECT_ROOT / "artifacts")
-            record = store.register_bytes(
-                data=data,
+            # Use a file-like register helper to write directly into the store directory.
+            record = store.register_filelike(
+                fileobj=file.file,
                 filename=file.filename or "upload.zip",
                 addon_id=(addon_id.strip() if isinstance(addon_id, str) and addon_id.strip() else None),
                 version=(version.strip() if isinstance(version, str) and version.strip() else None),
             )
+
+            # If possible, try to determine the size without reading the whole file.
+            try:
+                size_bytes = record and Path(record.path).stat().st_size
+            except Exception:
+                size_bytes = None
+
             return {
                 "request_id": request_id,
                 "result": {
@@ -443,7 +451,7 @@ def configure_mcp_app(app):
                     },
                     "upload": {
                         "filename": file.filename,
-                        "size_bytes": len(data) if isinstance(data, (bytes, bytearray)) else None,
+                        "size_bytes": size_bytes,
                     },
                 },
                 "error": None,
