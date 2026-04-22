@@ -137,7 +137,57 @@ class ArtifactStore:
         suffix = Path(str(filename or "")).suffix or ".zip"
         dest_name = f"{artifact_id}{suffix}"
         dest_path = (self.root_dir / dest_name).resolve()
+        # Write bytes to file in a single operation (backwards compatible for small uploads)
         dest_path.write_bytes(bytes(data))
+
+        index = self._load_index()
+        artifacts = index.get("artifacts") or {}
+        artifacts[str(artifact_id)] = {
+            "path": str(dest_path),
+            "addon_id": addon_id,
+            "version": version,
+        }
+        index["artifacts"] = artifacts
+        self._save_index(index)
+
+        return ArtifactRecord(
+            artifact_id=str(artifact_id),
+            path=str(dest_path),
+            addon_id=addon_id,
+            version=version,
+        )
+
+    def register_filelike(
+        self,
+        *,
+        fileobj,
+        filename: str = "upload.zip",
+        addon_id: str | None = None,
+        version: str | None = None,
+        artifact_id: str | None = None,
+        chunk_size: int = 64 * 1024,
+    ) -> ArtifactRecord:
+        """Register an uploaded artifact from a file-like stream.
+
+        Writes the incoming stream directly into the store directory in chunks to avoid
+        buffering the entire file in memory.
+        """
+
+        artifact_id = artifact_id or str(uuid.uuid4())
+        suffix = Path(str(filename or "")).suffix or ".zip"
+        dest_name = f"{artifact_id}{suffix}"
+        dest_path = (self.root_dir / dest_name).resolve()
+
+        # Ensure parent directory exists
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write stream to destination in chunks
+        with dest_path.open("wb") as dst:
+            while True:
+                chunk = fileobj.read(chunk_size)
+                if not chunk:
+                    break
+                dst.write(chunk)
 
         index = self._load_index()
         artifacts = index.get("artifacts") or {}

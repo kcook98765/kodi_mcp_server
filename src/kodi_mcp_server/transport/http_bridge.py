@@ -55,12 +55,20 @@ class HttpBridgeClient:
         return {"X-Kodi-MCP-Token": self.token}
 
     async def _retry_wrapper(self, method, *args, request_id: str, max_retries: int = 1, **kwargs) -> ResponseMessage:
-        """Wrapper that retries on network errors (max 1 retry)."""
+        """Wrapper that retries on network errors (max 1 retry).
+
+        Runs the provided (potentially blocking) method in a threadpool so the
+        asyncio event loop is not blocked by stdlib blocking calls. Retries on
+        URLError/socket.timeout with a simple backoff.
+        """
+        import asyncio
+
         start_time = time.time()
         last_error = None
         for attempt in range(max_retries + 1):
             try:
-                result = method(*args, **kwargs)  # method is sync, don't await
+                # Run blocking method in a thread to avoid blocking the event loop.
+                result = await asyncio.to_thread(method, *args, **kwargs)
                 return self._response(
                     request_id=request_id,
                     result=result.result,  # result is already ResponseMessage
@@ -74,7 +82,8 @@ class HttpBridgeClient:
                 if attempt == max_retries:
                     # Final attempt failed, return error response
                     return _url_error_to_response(exc, request_id)
-                # Retry: loop again
+                # small exponential backoff before retrying
+                await asyncio.sleep(0.25 * (2 ** attempt))
 
     def _response(
         self,
