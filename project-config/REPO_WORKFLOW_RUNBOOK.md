@@ -12,6 +12,8 @@ Goal: enable agents (and operators) to publish and update addons **without relyi
 - **Bridge addon**: `service.kodi_mcp` (Kodi-resident HTTP bridge).
 - **Repo addon**: `repository.kodi-mcp` (installed in Kodi once; points to the server repo URL).
 
+Bridge addon source is maintained in the standalone `kodi_mcp_addon` repo. This server repo owns the host-side MCP/API implementation and bridge contract tests.
+
 ---
 
 ## Rule: first install is manual for brand-new addons
@@ -106,4 +108,3 @@ Before any GitHub push:
 - confirm `.env`, `.env.*`, and local backup files are untracked/ignored
 - run the server test suite
 - verify only intentional files appear in `git status --short`
-

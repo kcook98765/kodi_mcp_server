@@ -145,13 +145,17 @@ async def stage_dev_repo_zip(
     if verify:
         state_view, state_resp = await read_addon_state()
         derived = None
+        install_hint = None
         if state_resp.error is None and isinstance((state_resp.result or {}).get("result"), dict):
-            derived = (state_resp.result.get("result") or {}).get("derived")
+            result = state_resp.result.get("result") or {}
+            derived = result.get("derived")
+            install_hint = result.get("install_hint")
         out["state"] = {
             "transport_ok": state_resp.error is None,
             "error": state_resp.error,
             "envelope_view": state_view.__dict__,
             "derived": derived,
+            "install_hint": install_hint,
             "dev_setup_available": bool(isinstance(derived, dict) and derived.get("dev_setup_available")),
         }
 

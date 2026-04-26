@@ -18,6 +18,7 @@ The companion Kodi bridge addon (`service.kodi_mcp`) must be installed, enabled,
 - Repo path: `/home/kyle/kodi_mcp_server`
 - Git remote: `git@github.com:kcook98765/kodi_mcp_server.git`
 - Work branch for this review: `review/kodi-mcp-server-hygiene-20260425`
+- Bridge addon source of truth: `/srv/openclaw-projects/kodi_mcp_addon/workspace/project`
 - Local env backups such as `.env.bak.localhost-20260424` are local-only and must not be committed.
 - The active Kodi agent stack uses host-control workflow proxying because direct container-to-host MCP TCP remains blocked/timeouts in the current environment.
 - `kodi-local.service`, `kodi-mcp.service`, `openclaw-kodi-agent.service`, and `kodi-agent-host-control.service` were previously confirmed active/enabled in the Kodi agent handoff.
@@ -96,10 +97,29 @@ python3 -m py_compile src/kodi_mcp_server/config.py src/kodi_mcp_server/main.py 
 
 For live Kodi validation, prefer the Kodi agent stack's host-control workflow checks from `/srv/openclaw-stacks/kodi-agent`, because that path matches the current local environment.
 
+## Latest Live Smoke
+
+After installing the updated standalone bridge addon package into local Kodi and restarting Kodi:
+
+- Kodi JSON-RPC health: ok
+- Bridge health: ok
+- Bridge `/status`: `service.kodi_mcp` `0.2.16`
+- Bridge `/capabilities` and `/control/capabilities`: ok
+- Bridge `/mcp/state`: ok, with registration, staged repo zip, `dev_setup_available=true`, and install hint
+- Managed-addon smoke using `script.kodi_mcp_test` reached the expected first-install gate: package/upload/publish/stage succeeded, apply reported `requires_initial_user_install=true` because the test addon is not installed yet.
+
+## Bridge Addon Ownership
+
+The server repo does not own `service.kodi_mcp` source. The standalone `kodi_mcp_addon` repo owns Kodi-resident addon code and packaging. The server repo owns host-side clients, MCP tools, bridge contract tests, and integration docs.
+
+`scripts/build_service_addon.py` delegates to the standalone addon repo build script. Set `KODI_MCP_ADDON_REPO` to override the default addon repo path.
+
 ## Future TODO
 
 - Keep `README.md`, this file, and `project-config/REPO_WORKFLOW_RUNBOOK.md` aligned whenever managed-addon behavior changes.
 - Add focused tests around `.env` loading and startup config behavior when touching configuration code.
+- Keep Milestone A bridge contract tests aligned with `service.kodi_mcp` endpoint changes.
+- Complete the Kodi UI first install for `script.kodi_mcp_test`, then rerun managed apply to verify post-install update automation.
 - Keep local-only files out of Git before any GitHub push; verify with `git status --short --ignored`.
 - Revisit direct container-to-host MCP TCP only after the host-control workflow remains stable.
 - Push prepared branches only after explicit user approval.

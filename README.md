@@ -33,6 +33,7 @@ Retry only if `verification.can_retry == true`
 - The addon exposes the HTTP bridge used by this server and provides the Developer setup flow for first-time repo installation.
 - After the addon token is configured and this server starts, the server will automatically register and stage the dev repo zip for first-time install.
 - Without the addon, the MCP server cannot talk to Kodi.
+- Kodi-resident bridge addon source is owned by the standalone `kodi_mcp_addon` repo, not this server repo.
 
 ## Connection modes
 
