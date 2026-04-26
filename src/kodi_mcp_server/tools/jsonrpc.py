@@ -69,6 +69,45 @@ class JsonRpcTool:
         """Retrieve the list of active Kodi players."""
         return await self.execute_jsonrpc(method="Player.GetActivePlayers")
 
+    async def stop_player(self, playerid: int = 1) -> ResponseMessage:
+        """Stop a Kodi player."""
+        return await self.execute_jsonrpc(
+            method="Player.Stop",
+            params={"playerid": playerid},
+        )
+
+    async def pause_player(self, playerid: int = 1) -> ResponseMessage:
+        """Pause a Kodi player without toggling it back to playing."""
+        return await self.execute_jsonrpc(
+            method="Player.PlayPause",
+            params={"playerid": playerid, "play": False},
+        )
+
+    async def seek_player_to_seconds(
+        self,
+        playerid: int = 1,
+        seconds: float = 0,
+    ) -> ResponseMessage:
+        """Seek a Kodi player to an absolute timestamp in seconds."""
+        total_ms = max(0, int(round(seconds * 1000)))
+        hours, rem = divmod(total_ms, 3_600_000)
+        minutes, rem = divmod(rem, 60_000)
+        secs, milliseconds = divmod(rem, 1000)
+        return await self.execute_jsonrpc(
+            method="Player.Seek",
+            params={
+                "playerid": playerid,
+                "value": {
+                    "time": {
+                        "hours": hours,
+                        "minutes": minutes,
+                        "seconds": secs,
+                        "milliseconds": milliseconds,
+                    }
+                },
+            },
+        )
+
     async def get_movies_sample(self, limit: int = 5) -> ResponseMessage:
         """Retrieve a limited sample of movies from Kodi's library."""
         return await self.execute_jsonrpc(
@@ -166,12 +205,12 @@ class JsonRpcTool:
             },
         )
 
-    async def get_player_item(self) -> ResponseMessage:
-        """Retrieve the current item for Kodi player 1."""
+    async def get_player_item(self, playerid: int = 1) -> ResponseMessage:
+        """Retrieve the current item for a Kodi player."""
         return await self.execute_jsonrpc(
             method="Player.GetItem",
             params={
-                "playerid": 1,
+                "playerid": playerid,
                 "properties": ["title", "album", "artist", "season", "episode"],
             },
         )

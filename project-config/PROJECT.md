@@ -80,6 +80,16 @@ Note: older dev-loop tools (`build_addon_package`, `publish_addon_to_repo`, `upd
 
 **Runtime surface:** Executes operations on addons that are already installed on remote Kodi. All side effects are constrained to existing installations.
 
+Playback runtime tools are MCP-first and intentionally curated:
+
+- `kodi_player_active`
+- `kodi_player_item`
+- `kodi_player_seek`
+- `kodi_player_pause`
+- `kodi_player_stop`
+
+Autonomous agents should use these tools for playback verification and cleanup. They should not fall back to raw Kodi JSON-RPC, bridge HTTP endpoints, host-control scripts, or ad hoc curl unless the MCP surface is being debugged by a human.
+
 **Advisory/diagnostic surface:** Purely read-only metadata queries. Can report state but cannot change anything.
 
 **Dev-loop surface:** Manages addon lifecycle (build → publish → install → verify). Operates on build artifacts and repo server. Requires human manual install on remote Kodi.

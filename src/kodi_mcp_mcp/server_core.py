@@ -348,6 +348,93 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                 },
             ),
             Tool(
+                name="kodi_player_active",
+                description="Return active Kodi players through MCP. Agents should use this instead of raw Player.GetActivePlayers calls.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="kodi_player_item",
+                description="Return the current item for a Kodi player through MCP.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "playerid": {
+                            "type": "integer",
+                            "default": 1,
+                            "minimum": 0,
+                            "description": "Kodi player id, usually 1 for video.",
+                        }
+                    },
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="kodi_player_seek",
+                description="Seek a Kodi player to an absolute timestamp in seconds through MCP.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "playerid": {
+                            "type": "integer",
+                            "default": 1,
+                            "minimum": 0,
+                            "description": "Kodi player id, usually 1 for video.",
+                        },
+                        "seconds": {
+                            "type": "number",
+                            "minimum": 0,
+                            "description": "Absolute playback timestamp in seconds.",
+                        },
+                    },
+                    "required": ["seconds"],
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="kodi_player_pause",
+                description="Pause a Kodi player through MCP without toggling it back to playing.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "playerid": {
+                            "type": "integer",
+                            "default": 1,
+                            "minimum": 0,
+                            "description": "Kodi player id, usually 1 for video.",
+                        }
+                    },
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="kodi_player_stop",
+                description=(
+                    "Stop a Kodi player through MCP and optionally verify the player is no longer active. "
+                    "Agents should use this for playback cleanup instead of direct JSON-RPC or host-control fallbacks."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "playerid": {
+                            "type": "integer",
+                            "default": 1,
+                            "minimum": 0,
+                            "description": "Kodi player id, usually 1 for video.",
+                        },
+                        "verify": {
+                            "type": "boolean",
+                            "default": True,
+                            "description": "If true, query active players after stop and fail if this player remains active.",
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
                 name="jsonrpc_introspect",
                 description="Introspect the Kodi JSON-RPC API; useful for discovering methods and validating parameter shapes.",
                 inputSchema={
@@ -621,6 +708,11 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
             "addon_list",
             "addon_details",
             "addon_execute",
+            "kodi_player_active",
+            "kodi_player_item",
+            "kodi_player_seek",
+            "kodi_player_pause",
+            "kodi_player_stop",
             "jsonrpc_introspect",
             "kodi_notifications_sample",
             "bridge_write_log_marker",
@@ -718,6 +810,54 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                             content=[TextContent(type="text", text=text)],
                         )
                     )
+
+            if tool_name in {"kodi_player_item", "kodi_player_seek", "kodi_player_pause", "kodi_player_stop"}:
+                args = request.params.arguments or {}
+                if not isinstance(args, dict):
+                    args = {}
+
+                playerid = args.get("playerid", 1)
+                if not isinstance(playerid, int) or isinstance(playerid, bool) or playerid < 0:
+                    envelope = {
+                        "ok": False,
+                        "tool": tool_name,
+                        "data": None,
+                        "error": "missing or invalid argument: playerid",
+                        "error_type": "invalid_params",
+                        "error_code": None,
+                        "latency_ms": 0,
+                        "request_id": None,
+                        "raw": {"arguments": args},
+                    }
+                    text = json.dumps(envelope, indent=2, sort_keys=True)
+                    return ServerResult(
+                        CallToolResult(
+                            isError=True,
+                            content=[TextContent(type="text", text=text)],
+                        )
+                    )
+
+                if tool_name == "kodi_player_seek":
+                    seconds = args.get("seconds")
+                    if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or seconds < 0:
+                        envelope = {
+                            "ok": False,
+                            "tool": tool_name,
+                            "data": None,
+                            "error": "missing or invalid required argument: seconds",
+                            "error_type": "invalid_params",
+                            "error_code": None,
+                            "latency_ms": 0,
+                            "request_id": None,
+                            "raw": {"arguments": args},
+                        }
+                        text = json.dumps(envelope, indent=2, sort_keys=True)
+                        return ServerResult(
+                            CallToolResult(
+                                isError=True,
+                                content=[TextContent(type="text", text=text)],
+                            )
+                        )
 
             # Managed addon required-arg checks.
             if tool_name in {
@@ -1038,6 +1178,63 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                     params = args.get("params")
                     params = params if isinstance(params, dict) else {}
                     raw_result = await runtime["jsonrpc"].execute_addon(addonid=addonid, params=params, wait=wait)
+                elif tool_name == "kodi_player_active":
+                    raw_result = await runtime["jsonrpc"].get_active_players()
+                elif tool_name == "kodi_player_item":
+                    args = request.params.arguments or {}
+                    if not isinstance(args, dict):
+                        args = {}
+                    playerid = args.get("playerid", 1)
+                    raw_result = await runtime["jsonrpc"].get_player_item(playerid=playerid)
+                elif tool_name == "kodi_player_seek":
+                    args = request.params.arguments or {}
+                    if not isinstance(args, dict):
+                        args = {}
+                    playerid = args.get("playerid", 1)
+                    seconds = args.get("seconds")
+                    raw_result = await runtime["jsonrpc"].seek_player_to_seconds(playerid=playerid, seconds=float(seconds))
+                elif tool_name == "kodi_player_pause":
+                    args = request.params.arguments or {}
+                    if not isinstance(args, dict):
+                        args = {}
+                    playerid = args.get("playerid", 1)
+                    raw_result = await runtime["jsonrpc"].pause_player(playerid=playerid)
+                elif tool_name == "kodi_player_stop":
+                    args = request.params.arguments or {}
+                    if not isinstance(args, dict):
+                        args = {}
+                    playerid = args.get("playerid", 1)
+                    verify = args.get("verify", True)
+                    verify = verify if isinstance(verify, bool) else True
+                    stop_result = await runtime["jsonrpc"].stop_player(playerid=playerid)
+                    stop_value = _as_dict(stop_result)
+                    if not verify or getattr(stop_result, "error", None) is not None:
+                        raw_result = stop_result
+                    else:
+                        active_result = await runtime["jsonrpc"].get_active_players()
+                        active_value = _as_dict(active_result)
+                        active_players = active_value.get("result") if isinstance(active_value, dict) else None
+                        if not isinstance(active_players, list):
+                            active_players = []
+                        still_active = any(
+                            isinstance(player, dict) and player.get("playerid") == playerid
+                            for player in active_players
+                        )
+                        raw_result = {
+                            "ok": not still_active and getattr(active_result, "error", None) is None,
+                            "playerid": playerid,
+                            "stopped": not still_active,
+                            "stop": stop_value,
+                            "active_players": active_players,
+                            "error": (
+                                "player still active after stop"
+                                if still_active
+                                else getattr(active_result, "error", None)
+                            ),
+                            "error_type": "player_still_active" if still_active else None,
+                            "error_code": None,
+                            "request_id": getattr(stop_result, "request_id", None),
+                        }
                 elif tool_name == "jsonrpc_introspect":
                     args = request.params.arguments or {}
                     if not isinstance(args, dict):

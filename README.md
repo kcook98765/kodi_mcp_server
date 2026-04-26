@@ -186,6 +186,18 @@ GUI helpers:
 - `addon_execute` launches an addon through Kodi JSON-RPC without using the legacy HTTP companion endpoint.
 - These can assist first-install UI navigation, but deterministic bridge/repo state checks should remain the primary workflow.
 
+Playback helpers:
+- `kodi_player_active` returns active Kodi players.
+- `kodi_player_item` returns the current item for a player.
+- `kodi_player_seek` seeks a player to an absolute timestamp in seconds.
+- `kodi_player_pause` pauses without toggling playback back on.
+- `kodi_player_stop` stops a player and, by default, verifies it is no longer active.
+
+Autonomous agents should use these MCP tools instead of direct Kodi JSON-RPC,
+bridge HTTP, host-control scripts, or curl fallbacks. If a required operation is
+missing from MCP, add a curated MCP tool rather than teaching agents a new escape
+hatch.
+
 If you’re testing the **remote** transport directly, you can also do a minimal curl initialize:
 
 ```bash
@@ -253,7 +265,7 @@ For split-host agents that already built a zip, prefer the pathless artifact wor
 
 1. `artifact_upload_zip`
 2. `repo_publish_stage_apply_artifact`
-3. `kodi_gui_screenshot` or addon-specific checks for visual/behavioral evidence
+3. `kodi_gui_screenshot`, `kodi_player_*`, or addon-specific checks for visual/behavioral evidence
 
 `artifact_upload_zip` validates the zip structure and `addon.xml`; `repo_publish_stage_apply_artifact` publishes, stages, applies, and returns `apply_verified`, `installed_version_after`, `apply_status`, `can_retry`, and `failure_reason` in one response.
 
