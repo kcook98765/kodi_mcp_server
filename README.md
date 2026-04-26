@@ -12,12 +12,34 @@ It exposes a curated set of Kodi operations (Kodi JSON-RPC + the Kodi MCP bridge
 > For the current local handoff state and next TODOs, see:
 > **project-config/CURRENT_STATE.md**
 
+**Server install**
+1) Clone this repository on the host that will run the MCP server.
+2) Create a virtual environment and install the package:
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e .
+```
+3) Copy `.env.example` to `.env` and set at least:
+```bash
+KODI_JSONRPC_URL=http://<kodi-host>:8080/jsonrpc
+KODI_BRIDGE_BASE_URL=http://<kodi-host>:8765
+KODI_BRIDGE_TOKEN=<same-token-configured-in-service.kodi_mcp>
+REPO_BASE_URL=http://<server-host>:8010
+```
+`REPO_BASE_URL` must be reachable from Kodi and any remote MCP client that needs repository files or screenshot URLs.
+4) Start the server:
+```bash
+.venv/bin/uvicorn kodi_mcp_server.main:app --host 0.0.0.0 --port 8010
+```
+
 **First-time onboarding (repo install)**
 1) Install + enable the Kodi bridge addon: `service.kodi_mcp`
 2) Set the shared token in Kodi addon settings (**service.kodi_mcp → Kodi MCP → MCP shared token**)
 3) Start this server
-4) Install the Kodi MCP repository add-on once if it is not already installed: `repository.kodi-mcp`
-5) For a brand-new target addon, use Kodi UI: **Add-ons → Install from repository → Kodi MCP Repository → target addon → Install**
+4) Install + launch the Kodi setup helper addon: `script.kodi_mcp_setup`
+5) In **Kodi MCP Setup**, confirm the server URL and choose **Prepare repository add-on zip**
+6) Choose **Open Install from zip file**, then select `repository.kodi-mcp-latest.zip`
+7) For a brand-new target addon, use Kodi UI: **Add-ons → Install from repository → Kodi MCP Repository → target addon → Install**
 
 **Managed addon loop (after repo is installed in Kodi)**
 1) Register local addon: `managed_addon_register`
@@ -140,6 +162,12 @@ Optional:
 - `REPO_BASE_URL` for repo and screenshot URLs visible to Kodi/clients on other hosts
 - `KODI_SCREENSHOT_STORE_DIR`, `KODI_SCREENSHOT_RETENTION_SECONDS`, `KODI_SCREENSHOT_MAX_FILES`
 - `KODI_VISION_MODEL_URL`, `KODI_VISION_MODEL_NAME`; when unset, screenshot capture remains available but vision-analysis tools are not exposed
+
+For a one-host setup, these URLs may all use `localhost`. For a split-host setup, use hostnames or IPs that are reachable from the machine that consumes each URL:
+
+- Kodi must reach `REPO_BASE_URL` for repository files.
+- The server must reach `KODI_JSONRPC_URL` and `KODI_BRIDGE_BASE_URL`.
+- Remote MCP clients must reach `http://<server-host>:8010/mcp` and screenshot URLs returned under `/screenshots/`.
 
 Local development can use a repo-root `.env` file copied from `.env.example`.
 Process environment values take precedence over `.env` values. Keep `.env`,
