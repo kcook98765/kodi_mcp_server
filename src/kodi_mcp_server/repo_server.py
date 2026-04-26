@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse, FileResponse, RedirectResponse, HTML
 from fastapi.staticfiles import StaticFiles
 
 from kodi_mcp_server.config import REPO_BASE_URL, REPO_ROOT
+from kodi_mcp_server.screenshot_store import cleanup_screenshots, screenshot_path_for
 
 router = APIRouter()
 
@@ -82,6 +83,17 @@ async def repo_health_detailed():
             },
         }
     )
+
+
+@router.get("/screenshots/{filename}")
+async def screenshot_file(filename: str):
+    """Serve a previously captured server-side Kodi screenshot by opaque filename."""
+
+    cleanup_screenshots()
+    path = screenshot_path_for(filename)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Screenshot not found")
+    return FileResponse(path, media_type="image/png", filename=path.name)
 
 
 @router.get("/repo/info")

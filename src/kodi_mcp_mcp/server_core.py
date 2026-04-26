@@ -43,7 +43,7 @@ from kodi_mcp_server.composition import (
     build_jsonrpc_tool,
     build_notification_probe,
 )
-from kodi_mcp_server.config import KODI_BRIDGE_BASE_URL, KODI_JSONRPC_URL
+from kodi_mcp_server.config import KODI_BRIDGE_BASE_URL, KODI_JSONRPC_URL, VISION_ENABLED
 from kodi_mcp_server.managed_addons import (
     managed_addon_build_publish_and_stage,
     managed_addon_get,
@@ -59,6 +59,7 @@ from kodi_mcp_server.dev_loop_artifacts import (
 from kodi_mcp_server.kodi_apply import managed_addon_build_publish_stage_and_apply
 from kodi_mcp_server.milestone_a_bridge import read_addon_state
 from kodi_mcp_server.paths import AUTHORITATIVE_REPO_ROOT
+from kodi_mcp_server.screenshot_store import store_screenshot_from_base64
 
 
 SERVER_NAME = "kodi-mcp"
@@ -91,6 +92,11 @@ async def _kodi_status(runtime: Runtime) -> dict[str, Any]:
         "config": {"loaded": bool(KODI_JSONRPC_URL and KODI_BRIDGE_BASE_URL)},
         "jsonrpc": {"status": "unknown", "url": KODI_JSONRPC_URL},
         "bridge": {"status": "unknown", "url": KODI_BRIDGE_BASE_URL},
+        "vision": {
+            "enabled": VISION_ENABLED,
+            "tools_available": [],
+            "note": "Screenshot capture is available; vision analysis tools require explicit vision model configuration.",
+        },
     }
 
     # Test JSON-RPC connectivity (simple ping)
@@ -264,15 +270,20 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
             ),
             Tool(
                 name="kodi_gui_screenshot",
-                description="Capture a Kodi GUI screenshot through the bridge addon; optionally include base64 PNG data for local vision helpers.",
+                description="Capture a Kodi GUI screenshot through the bridge addon and store it on the MCP server for remote clients.",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "include_image": {
                             "type": "boolean",
                             "default": False,
-                            "description": "If true, include base64 PNG data in the tool result.",
-                        }
+                            "description": "If true, also include base64 PNG data in the tool result.",
+                        },
+                        "store": {
+                            "type": "boolean",
+                            "default": True,
+                            "description": "If true, persist the screenshot on the MCP server and return a served URL.",
+                        },
                     },
                     "additionalProperties": False,
                 },
@@ -997,7 +1008,21 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                     if not isinstance(args, dict):
                         args = {}
                     include_image = args.get("include_image", False)
-                    raw_result = await runtime["bridge"].gui_screenshot(include_image=include_image if isinstance(include_image, bool) else False)
+                    store = args.get("store", True)
+                    include_image = include_image if isinstance(include_image, bool) else False
+                    store = store if isinstance(store, bool) else True
+                    raw_result = await runtime["bridge"].gui_screenshot(include_image=(include_image or store))
+                    raw_value = _as_dict(raw_result)
+                    bridge_result = raw_value.get("result") if isinstance(raw_value, dict) else None
+                    image_base64 = bridge_result.get("image_base64") if isinstance(bridge_result, dict) else None
+                    if store and isinstance(image_base64, str) and image_base64:
+                        stored = store_screenshot_from_base64(image_base64)
+                        bridge_result["server_screenshot"] = stored
+                        if not include_image:
+                            bridge_result.pop("image_base64", None)
+                    if isinstance(raw_value, dict) and isinstance(bridge_result, dict):
+                        raw_value["result"] = bridge_result
+                    raw_result = raw_value
                 elif tool_name == "managed_addon_register":
                     args = request.params.arguments or {}
                     if not isinstance(args, dict):

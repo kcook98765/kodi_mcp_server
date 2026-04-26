@@ -137,6 +137,9 @@ Optional:
 - `KODI_JSONRPC_USERNAME`, `KODI_JSONRPC_PASSWORD`
 - `KODI_TIMEOUT`
 - `MCP_API_KEY` (remote MCP only)
+- `REPO_BASE_URL` for repo and screenshot URLs visible to Kodi/clients on other hosts
+- `KODI_SCREENSHOT_STORE_DIR`, `KODI_SCREENSHOT_RETENTION_SECONDS`, `KODI_SCREENSHOT_MAX_FILES`
+- `KODI_VISION_MODEL_URL`, `KODI_VISION_MODEL_NAME`; when unset, screenshot capture remains available but vision-analysis tools are not exposed
 
 Local development can use a repo-root `.env` file copied from `.env.example`.
 Process environment values take precedence over `.env` values. Keep `.env`,
@@ -151,7 +154,7 @@ Once connected, try these MCP tools first:
 
 GUI helpers:
 - `kodi_gui_action` sends basic navigation actions (`up`, `down`, `left`, `right`, `select`, `back`, `home`, `context`, `info`).
-- `kodi_gui_screenshot` captures a Kodi GUI screenshot through the bridge addon.
+- `kodi_gui_screenshot` captures a Kodi GUI screenshot through the bridge addon, stores it on the MCP server by default, and returns a `/screenshots/<id>.png` URL.
 - These can assist first-install UI navigation, but deterministic bridge/repo state checks should remain the primary workflow.
 
 If you’re testing the **remote** transport directly, you can also do a minimal curl initialize:

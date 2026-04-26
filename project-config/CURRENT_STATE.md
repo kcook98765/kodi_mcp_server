@@ -58,7 +58,8 @@ GUI MCP tools:
 - `kodi_gui_action`
 - `kodi_gui_screenshot`
 
-These wrap bridge addon endpoints for basic Kodi GUI navigation and screenshot capture.
+These wrap bridge addon endpoints for basic Kodi GUI navigation and screenshot capture. Screenshot capture is remote-safe by default: the MCP server requests image data from the Kodi bridge, stores the PNG under the configured server screenshot store, serves it at `/screenshots/<id>.png`, and applies age/count cleanup using `KODI_SCREENSHOT_RETENTION_SECONDS` and `KODI_SCREENSHOT_MAX_FILES`.
+Vision-analysis tools are intentionally not exposed unless a future vision model integration is explicitly configured with `KODI_VISION_MODEL_URL` and `KODI_VISION_MODEL_NAME`; without that config, only screenshot capture is offered.
 The bridge endpoints and remote MCP wrappers are live-smoked; the running system
 `kodi-mcp.service` now reports the 23-tool list including these GUI tools.
 
