@@ -53,6 +53,7 @@ from kodi_mcp_server.managed_addons import (
 from kodi_mcp_server.dev_loop_artifacts import (
     artifact_upload_zip as _artifact_upload_zip,
     repo_publish_artifact as _repo_publish_artifact,
+    repo_publish_stage_apply_artifact as _repo_publish_stage_apply_artifact,
     repo_stage_current_dev_repo as _repo_stage_current_dev_repo,
     repo_stage_and_apply_addon as _repo_stage_and_apply_addon,
 )
@@ -322,6 +323,31 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                 },
             ),
             Tool(
+                name="addon_execute",
+                description="Execute a Kodi addon through JSON-RPC and return a compact launch report.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "addonid": {
+                            "type": "string",
+                            "description": "Kodi addon id to execute.",
+                        },
+                        "wait": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "If true, ask Kodi to wait for addon execution to complete.",
+                        },
+                        "params": {
+                            "type": "object",
+                            "default": {},
+                            "description": "Optional Addons.ExecuteAddon params object.",
+                        },
+                    },
+                    "required": ["addonid"],
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
                 name="jsonrpc_introspect",
                 description="Introspect the Kodi JSON-RPC API; useful for discovering methods and validating parameter shapes.",
                 inputSchema={
@@ -541,11 +567,38 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                     "properties": {
                         "addonid": {"type": "string"},
                         "repo_version": {"type": "string"},
+                        "target_version": {
+                            "type": "string",
+                            "description": "Optional installed version to require after apply; defaults to the repo/update result.",
+                        },
                         "verify": {"type": "boolean", "default": True},
                         "timeout_seconds": {"type": "integer", "default": 45, "minimum": 1},
                         "poll_interval_seconds": {"type": "integer", "default": 4, "minimum": 1},
                     },
                     "required": ["addonid"],
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="repo_publish_stage_apply_artifact",
+                description=(
+                    "One-shot agent-safe dev loop: publish an uploaded artifact into the dev repo, stage repo content to Kodi, "
+                    "apply the addon, and verify the installed version equals addon_version."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "artifact_id": {"type": "string"},
+                        "addon_id": {"type": "string"},
+                        "addon_name": {"type": "string"},
+                        "addon_version": {"type": "string"},
+                        "provider_name": {"type": "string", "default": "kodi_mcp"},
+                        "repo_version": {"type": "string"},
+                        "verify": {"type": "boolean", "default": True},
+                        "timeout_seconds": {"type": "integer", "default": 45, "minimum": 1},
+                        "poll_interval_seconds": {"type": "integer", "default": 4, "minimum": 1},
+                    },
+                    "required": ["artifact_id", "addon_id", "addon_name", "addon_version"],
                     "additionalProperties": False,
                 },
             ),
@@ -567,6 +620,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
             "bridge_log_markers",
             "addon_list",
             "addon_details",
+            "addon_execute",
             "jsonrpc_introspect",
             "kodi_notifications_sample",
             "bridge_write_log_marker",
@@ -582,9 +636,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
             "repo_publish_artifact",
             "repo_stage_current_dev_repo",
             "repo_stage_and_apply_addon",
+            "repo_publish_stage_apply_artifact",
         }:
             # Preserve exact normalized missing-arg behavior for addon_details.
-            if tool_name == "addon_details":
+            if tool_name in {"addon_details", "addon_execute"}:
                 args = request.params.arguments or {}
                 if not isinstance(args, dict):
                     args = {}
@@ -703,6 +758,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                 "artifact_upload_zip",
                 "repo_publish_artifact",
                 "repo_stage_and_apply_addon",
+                "repo_publish_stage_apply_artifact",
             }:
                 args = request.params.arguments or {}
                 if not isinstance(args, dict):
@@ -774,6 +830,29 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                                 content=[TextContent(type="text", text=text)],
                             )
                         )
+
+                if tool_name == "repo_publish_stage_apply_artifact":
+                    for k in ("artifact_id", "addon_id", "addon_name", "addon_version"):
+                        v = args.get(k)
+                        if not isinstance(v, str) or not v.strip():
+                            envelope = {
+                                "ok": False,
+                                "tool": tool_name,
+                                "data": None,
+                                "error": f"missing required argument: {k}",
+                                "error_type": "invalid_params",
+                                "error_code": None,
+                                "latency_ms": 0,
+                                "request_id": None,
+                                "raw": {"arguments": args},
+                            }
+                            text = json.dumps(envelope, indent=2, sort_keys=True)
+                            return ServerResult(
+                                CallToolResult(
+                                    isError=True,
+                                    content=[TextContent(type="text", text=text)],
+                                )
+                            )
 
                 if tool_name == "managed_addon_get":
                     managed_addon_id = args.get("managed_addon_id")
@@ -949,6 +1028,16 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         args = {}
                     addonid = args.get("addonid")
                     raw_result = await runtime["jsonrpc"].get_addon_details(addonid=addonid)
+                elif tool_name == "addon_execute":
+                    args = request.params.arguments or {}
+                    if not isinstance(args, dict):
+                        args = {}
+                    addonid = str(args.get("addonid") or "").strip()
+                    wait = args.get("wait", False)
+                    wait = wait if isinstance(wait, bool) else False
+                    params = args.get("params")
+                    params = params if isinstance(params, dict) else {}
+                    raw_result = await runtime["jsonrpc"].execute_addon(addonid=addonid, params=params, wait=wait)
                 elif tool_name == "jsonrpc_introspect":
                     args = request.params.arguments or {}
                     if not isinstance(args, dict):
@@ -1253,6 +1342,40 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         verify=verify,
                         timeout_seconds=timeout_seconds,
                         poll_interval_seconds=poll_interval_seconds,
+                        target_version=(
+                            str(args.get("target_version")).strip()
+                            if isinstance(args.get("target_version"), str) and str(args.get("target_version")).strip()
+                            else None
+                        ),
+                    )
+                elif tool_name == "repo_publish_stage_apply_artifact":
+                    args = request.params.arguments or {}
+                    if not isinstance(args, dict):
+                        args = {}
+                    verify = args.get("verify", True)
+                    if not isinstance(verify, bool):
+                        verify = True
+                    timeout_seconds = args.get("timeout_seconds", 45)
+                    if not isinstance(timeout_seconds, int) or timeout_seconds < 1:
+                        timeout_seconds = 45
+                    poll_interval_seconds = args.get("poll_interval_seconds", 4)
+                    if not isinstance(poll_interval_seconds, int) or poll_interval_seconds < 1:
+                        poll_interval_seconds = 4
+                    repo_version = args.get("repo_version")
+                    raw_result = await _repo_publish_stage_apply_artifact(
+                        artifact_id=str(args.get("artifact_id") or "").strip(),
+                        addon_id=str(args.get("addon_id") or "").strip(),
+                        addon_name=str(args.get("addon_name") or "").strip(),
+                        addon_version=str(args.get("addon_version") or "").strip(),
+                        provider_name=(
+                            str(args.get("provider_name") or "kodi_mcp").strip() or "kodi_mcp"
+                        ),
+                        repo_version=(str(repo_version).strip() if isinstance(repo_version, str) and repo_version.strip() else None),
+                        verify=verify,
+                        timeout_seconds=timeout_seconds,
+                        poll_interval_seconds=poll_interval_seconds,
+                        runtime_bridge_tool=runtime["bridge"],
+                        runtime_jsonrpc_tool=runtime["jsonrpc"],
                     )
                 else:
                     raw_result = await _kodi_status(runtime)
@@ -1275,15 +1398,19 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         "raw": raw_value,
                     }
                 else:
+                    ok = raw_value.get("ok", True) if isinstance(raw_value, dict) else True
+                    error = raw_value.get("error") if isinstance(raw_value, dict) else None
+                    error_type = raw_value.get("error_type") if isinstance(raw_value, dict) else None
+                    error_code = raw_value.get("error_code") if isinstance(raw_value, dict) else None
                     envelope = {
-                        "ok": True,
+                        "ok": bool(ok),
                         "tool": tool_name,
                         "data": raw_value,
-                        "error": None,
-                        "error_type": None,
-                        "error_code": None,
+                        "error": error,
+                        "error_type": error_type,
+                        "error_code": error_code,
                         "latency_ms": latency_ms,
-                        "request_id": None,
+                        "request_id": raw_value.get("request_id") if isinstance(raw_value, dict) else None,
                         "raw": raw_value,
                     }
             except Exception as exc:

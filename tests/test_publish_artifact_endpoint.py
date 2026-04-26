@@ -1,4 +1,6 @@
 from pathlib import Path
+import io
+import zipfile
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -13,6 +15,23 @@ def _make_app() -> FastAPI:
     configure_repo_app(app)
     configure_mcp_app(app)
     return app
+
+
+def _addon_zip_bytes(*, addon_id: str = "script.kodi_mcp_test", version: str = "0.0.1", name: str = "Kodi MCP Test Script") -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as archive:
+        archive.writestr(
+            f"{addon_id}/addon.xml",
+            (
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+                f'<addon id="{addon_id}" name="{name}" version="{version}" provider-name="kodi_mcp">\n'
+                '  <requires><import addon="xbmc.python" version="3.0.0"/></requires>\n'
+                '  <extension point="xbmc.python.script" library="default.py"/>\n'
+                "</addon>\n"
+            ),
+        )
+        archive.writestr(f"{addon_id}/default.py", "print('ok')\n")
+    return buf.getvalue()
 
 
 def test_publish_artifact_flow(tmp_path: Path, monkeypatch):
@@ -55,9 +74,8 @@ def test_publish_artifact_flow(tmp_path: Path, monkeypatch):
         encoding="utf-8",
     )
 
-    # Create a tiny fake addon zip (content isn't validated by RepoPublisher).
     fake_zip = tmp_path / "input.zip"
-    fake_zip.write_bytes(b"PK\x03\x04")
+    fake_zip.write_bytes(_addon_zip_bytes())
 
     # Register into artifact store.
     from kodi_mcp_server.artifact_store import ArtifactStore
@@ -127,7 +145,7 @@ def test_upload_then_publish_flow(tmp_path: Path, monkeypatch):
     # Upload a tiny fake zip.
     upload = client.post(
         "/tools/artifacts/upload",
-        files={"file": ("script.kodi_mcp_test-0.0.1.zip", b"PK\x03\x04", "application/zip")},
+        files={"file": ("script.kodi_mcp_test-0.0.1.zip", _addon_zip_bytes(), "application/zip")},
         data={"addon_id": "script.kodi_mcp_test", "version": "0.0.1"},
     )
     assert upload.status_code == 200

@@ -183,6 +183,7 @@ Once connected, try these MCP tools first:
 GUI helpers:
 - `kodi_gui_action` sends basic navigation actions (`up`, `down`, `left`, `right`, `select`, `back`, `home`, `context`, `info`).
 - `kodi_gui_screenshot` captures a Kodi GUI screenshot through the bridge addon, stores it on the MCP server by default, and returns a `/screenshots/<id>.png` URL.
+- `addon_execute` launches an addon through Kodi JSON-RPC without using the legacy HTTP companion endpoint.
 - These can assist first-install UI navigation, but deterministic bridge/repo state checks should remain the primary workflow.
 
 If you’re testing the **remote** transport directly, you can also do a minimal curl initialize:
@@ -247,6 +248,14 @@ Example tool call:
 ```
 
 Success signal (only reliable): `verification.apply_verified == true`
+
+For split-host agents that already built a zip, prefer the pathless artifact workflow:
+
+1. `artifact_upload_zip`
+2. `repo_publish_stage_apply_artifact`
+3. `kodi_gui_screenshot` or addon-specific checks for visual/behavioral evidence
+
+`artifact_upload_zip` validates the zip structure and `addon.xml`; `repo_publish_stage_apply_artifact` publishes, stages, applies, and returns `apply_verified`, `installed_version_after`, `apply_status`, `can_retry`, and `failure_reason` in one response.
 
 Retry behavior:
 - Retry only when `verification.can_retry == true`

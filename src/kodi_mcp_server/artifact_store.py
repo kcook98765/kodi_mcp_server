@@ -28,6 +28,7 @@ class ArtifactRecord:
     path: str  # absolute path on server host (internal)
     addon_id: str | None = None
     version: str | None = None
+    addon_name: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -35,6 +36,7 @@ class ArtifactRecord:
             "path": self.path,
             "addon_id": self.addon_id,
             "version": self.version,
+            "addon_name": self.addon_name,
         }
 
 
@@ -81,6 +83,7 @@ class ArtifactStore:
         file_path: str | Path,
         addon_id: str | None = None,
         version: str | None = None,
+        addon_name: str | None = None,
         artifact_id: str | None = None,
     ) -> ArtifactRecord:
         """Register an existing file path and return its artifact record.
@@ -105,6 +108,7 @@ class ArtifactStore:
             "path": str(dest_path),
             "addon_id": addon_id,
             "version": version,
+            "addon_name": addon_name,
         }
         index["artifacts"] = artifacts
         self._save_index(index)
@@ -114,6 +118,7 @@ class ArtifactStore:
             path=str(dest_path),
             addon_id=addon_id,
             version=version,
+            addon_name=addon_name,
         )
 
     def register_bytes(
@@ -123,6 +128,7 @@ class ArtifactStore:
         filename: str = "upload.zip",
         addon_id: str | None = None,
         version: str | None = None,
+        addon_name: str | None = None,
         artifact_id: str | None = None,
     ) -> ArtifactRecord:
         """Register an uploaded artifact from bytes.
@@ -146,6 +152,7 @@ class ArtifactStore:
             "path": str(dest_path),
             "addon_id": addon_id,
             "version": version,
+            "addon_name": addon_name,
         }
         index["artifacts"] = artifacts
         self._save_index(index)
@@ -155,6 +162,7 @@ class ArtifactStore:
             path=str(dest_path),
             addon_id=addon_id,
             version=version,
+            addon_name=addon_name,
         )
 
     def register_filelike(
@@ -164,6 +172,7 @@ class ArtifactStore:
         filename: str = "upload.zip",
         addon_id: str | None = None,
         version: str | None = None,
+        addon_name: str | None = None,
         artifact_id: str | None = None,
         chunk_size: int = 64 * 1024,
     ) -> ArtifactRecord:
@@ -195,6 +204,7 @@ class ArtifactStore:
             "path": str(dest_path),
             "addon_id": addon_id,
             "version": version,
+            "addon_name": addon_name,
         }
         index["artifacts"] = artifacts
         self._save_index(index)
@@ -204,6 +214,7 @@ class ArtifactStore:
             path=str(dest_path),
             addon_id=addon_id,
             version=version,
+            addon_name=addon_name,
         )
 
     def get(self, artifact_id: str) -> ArtifactRecord | None:
@@ -223,4 +234,5 @@ class ArtifactStore:
             path=path,
             addon_id=raw.get("addon_id") if isinstance(raw.get("addon_id"), str) else None,
             version=raw.get("version") if isinstance(raw.get("version"), str) else None,
+            addon_name=raw.get("addon_name") if isinstance(raw.get("addon_name"), str) else None,
         )

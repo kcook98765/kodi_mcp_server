@@ -288,122 +288,21 @@ def configure_mcp_app(app):
         This endpoint is agent-safe: it does not require knowledge of server filesystem paths.
         """
 
-        from pathlib import Path
-        import uuid
+        from kodi_mcp_server.dev_loop_artifacts import repo_publish_artifact
 
-        import tempfile
-
-        from kodi_mcp_server.artifact_store import ArtifactStore
-        from kodi_mcp_server.config import REPO_ROOT
-        from kodi_mcp_server.paths import PROJECT_ROOT
-        from kodi_mcp_server.repo_ops import RepoPublisher
-
-        request_id = str(uuid.uuid4())
-
-        store = ArtifactStore(root_dir=PROJECT_ROOT / "artifacts")
-        record = store.get(request.artifact_id)
-        if record is None:
-            return {
-                "request_id": request_id,
-                "result": None,
-                "error": f"unknown artifact_id: {request.artifact_id}",
-                "error_type": "not_found",
-                "error_code": 404,
-                "latency_ms": None,
-            }
-
-        zip_path = Path(record.path)
-        if not zip_path.exists() or not zip_path.is_file():
-            return {
-                "request_id": request_id,
-                "result": None,
-                "error": f"artifact file missing on server: {zip_path}",
-                "error_type": "not_found",
-                "error_code": 404,
-                "latency_ms": None,
-            }
-
-        publisher = RepoPublisher(repo_root=Path(REPO_ROOT))
-        try:
-            # RepoPublisher's compatibility publish_addon() derives the expected
-            # zip name from addon_id+version (addon_id-version.zip). Stage the
-            # stored artifact into a temp directory with that expected name.
-            tmpdir = Path(tempfile.mkdtemp(prefix=f"artifact-publish-{request.artifact_id}-"))
-            staged_zip = tmpdir / f"{request.addon_id}-{request.addon_version}.zip"
-            import shutil
-
-            shutil.copy2(zip_path, staged_zip)
-
-            publish_result = publisher.publish_addon(
-                addon_zip_path=str(staged_zip),
-                addon_id=request.addon_id,
-                addon_name=request.addon_name,
-                addon_version=request.addon_version,
-                provider_name=request.provider_name,
-            )
-        except FileNotFoundError as exc:
-            return {
-                "request_id": request_id,
-                "result": None,
-                "error": str(exc),
-                "error_type": "not_found",
-                "error_code": 404,
-                "latency_ms": None,
-            }
-        except Exception as exc:
-            return {
-                "request_id": request_id,
-                "result": None,
-                "error": f"Failed to publish artifact: {exc}",
-                "error_type": "server_error",
-                "error_code": 500,
-                "latency_ms": None,
-            }
-        finally:
-            try:
-                if "tmpdir" in locals():
-                    import shutil
-
-                    shutil.rmtree(tmpdir, ignore_errors=True)
-            except Exception:
-                pass
-
-        # Include repo-visible paths (relative to /repo/content/).
-        repo_rel_zip = f"zips/{request.addon_id}/{request.addon_id}-{request.addon_version}.zip"
-
-        # Remove internal filesystem paths from the publish result (agent-facing).
-        if isinstance(publish_result, dict):
-            publish_result = {
-                k: v
-                for (k, v) in publish_result.items()
-                if k
-                not in {
-                    "source_dir",
-                    "build_zip_path",
-                    "zip_path",
-                    "addons_xml_path",
-                }
-            }
+        result = repo_publish_artifact(
+            artifact_id=request.artifact_id,
+            addon_id=request.addon_id,
+            addon_name=request.addon_name,
+            addon_version=request.addon_version,
+            provider_name=request.provider_name,
+        )
         return {
-            "request_id": request_id,
-            "result": {
-                "artifact_id": request.artifact_id,
-                "artifact": {
-                    "artifact_id": record.artifact_id,
-                    "addon_id": record.addon_id,
-                    "version": record.version,
-                },
-                "publish": publish_result,
-                "repo": {
-                    "addons_xml": "addons.xml",
-                    "addons_xml_md5": "addons.xml.md5",
-                    "zip_relpath": repo_rel_zip,
-                    "zip_url": f"/repo/content/{repo_rel_zip}",
-                },
-            },
-            "error": None,
-            "error_type": None,
-            "error_code": None,
+            "request_id": result.get("request_id"),
+            "result": result.get("result"),
+            "error": result.get("error"),
+            "error_type": result.get("error_type"),
+            "error_code": result.get("error_code"),
             "latency_ms": None,
         }
 

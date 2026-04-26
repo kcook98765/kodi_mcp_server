@@ -57,11 +57,12 @@ GUI MCP tools:
 
 - `kodi_gui_action`
 - `kodi_gui_screenshot`
+- `addon_execute`
 
 These wrap bridge addon endpoints for basic Kodi GUI navigation and screenshot capture. Screenshot capture is remote-safe by default: the MCP server requests image data from the Kodi bridge, stores the PNG under the configured server screenshot store, serves it at `/screenshots/<id>.png`, and applies age/count cleanup using `KODI_SCREENSHOT_RETENTION_SECONDS` and `KODI_SCREENSHOT_MAX_FILES`.
 Vision-analysis tools are intentionally not exposed unless a future vision model integration is explicitly configured with `KODI_VISION_MODEL_URL` and `KODI_VISION_MODEL_NAME`; without that config, only screenshot capture is offered.
 The bridge endpoints and remote MCP wrappers are live-smoked; the running system
-`kodi-mcp.service` now reports the 23-tool list including these GUI tools.
+`kodi-mcp.service` reports the MCP tool list including these GUI tools.
 
 ### Managed Addon Loop
 
@@ -70,6 +71,14 @@ Preferred agent loop:
 1. `managed_addon_register`
 2. `managed_addon_build_publish_stage_and_apply`
 3. `managed_addon_validate_state` when troubleshooting or when apply verification is incomplete
+
+Preferred split-host artifact loop:
+
+1. `artifact_upload_zip`
+2. `repo_publish_stage_apply_artifact`
+3. `kodi_gui_screenshot` or addon-specific verification
+
+Artifact upload validates addon zips before they reach the repo. The one-shot artifact workflow returns `apply_verified`, `installed_version_after`, `apply_status`, `can_retry`, and `failure_reason` so agents do not need to infer success from a raw apply attempt.
 
 Hard success signal:
 
