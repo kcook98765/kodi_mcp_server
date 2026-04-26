@@ -241,6 +241,9 @@ async def test_mcp_addon_execute_dispatches_jsonrpc():
             self.calls.append({"addonid": addonid, "params": params, "wait": wait})
             return ResponseMessage(request_id="exec", result={"launched": True}, error=None)
 
+        async def get_active_players(self):
+            return ResponseMessage(request_id="active", result=[], error=None)
+
     jsonrpc = _JsonRpc()
     server, _ = build_mcp_server({"bridge": object(), "jsonrpc": jsonrpc, "notifications": None})
 
@@ -249,13 +252,59 @@ async def test_mcp_addon_execute_dispatches_jsonrpc():
             method="tools/call",
             params=CallToolRequestParams(
                 name="addon_execute",
-                arguments={"addonid": "plugin.kodi_world_poc", "wait": False, "params": {"mode": "test"}},
+                arguments={
+                    "addonid": "plugin.kodi_world_poc",
+                    "wait": False,
+                    "params": {"mode": "test"},
+                    "observe_player_seconds": 0,
+                },
             ),
         )
     )
     env = json.loads(resp.root.content[0].text)
     assert env["ok"] is True
+    assert env["data"]["dispatch_ok"] is True
+    assert env["data"]["verified"] is None
+    assert env["data"]["player_observation"]["player_started"] is False
+    assert "dispatch succeeded" in env["data"]["note"]
     assert jsonrpc.calls == [{"addonid": "plugin.kodi_world_poc", "params": {"mode": "test"}, "wait": False}]
+
+
+@pytest.mark.asyncio
+async def test_mcp_addon_execute_accepts_addon_id_alias():
+    import json
+
+    from kodi_mcp_server.models.messages import ResponseMessage
+    from kodi_mcp_mcp.server_core import build_mcp_server
+    from mcp.types import CallToolRequest, CallToolRequestParams
+
+    class _JsonRpc:
+        def __init__(self):
+            self.calls = []
+
+        async def execute_addon(self, addonid: str, params=None, wait: bool = False):
+            self.calls.append({"addonid": addonid, "params": params, "wait": wait})
+            return ResponseMessage(request_id="exec", result="OK", error=None)
+
+        async def get_active_players(self):
+            return ResponseMessage(request_id="active", result=[], error=None)
+
+    jsonrpc = _JsonRpc()
+    server, _ = build_mcp_server({"bridge": object(), "jsonrpc": jsonrpc, "notifications": None})
+
+    resp = await server.request_handlers[CallToolRequest](
+        CallToolRequest(
+            method="tools/call",
+            params=CallToolRequestParams(
+                name="addon_execute",
+                arguments={"addon_id": "plugin.kodi_world_poc", "observe_player_seconds": 0},
+            ),
+        )
+    )
+    env = json.loads(resp.root.content[0].text)
+    assert env["ok"] is True
+    assert env["data"]["addonid"] == "plugin.kodi_world_poc"
+    assert jsonrpc.calls == [{"addonid": "plugin.kodi_world_poc", "params": {}, "wait": False}]
 
 
 @pytest.mark.asyncio

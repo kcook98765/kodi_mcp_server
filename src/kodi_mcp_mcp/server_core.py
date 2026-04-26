@@ -68,6 +68,44 @@ SERVER_NAME = "kodi-mcp"
 SERVER_VERSION = "0.0.0"
 
 
+async def _observe_active_players(
+    jsonrpc_tool: Any,
+    timeout_seconds: int,
+    poll_interval_ms: int,
+) -> dict[str, Any]:
+    """Poll Kodi for an active player and return structured observation details."""
+    timeout_seconds = max(0, min(60, timeout_seconds))
+    poll_interval_ms = max(100, min(5000, poll_interval_ms))
+
+    active_value: Any = None
+    active_players: list[Any] = []
+    checks = 0
+    deadline = time.monotonic() + timeout_seconds
+
+    while True:
+        checks += 1
+        active_result = await jsonrpc_tool.get_active_players()
+        active_value = _as_dict(active_result)
+        if isinstance(active_value, dict):
+            result_value = active_value.get("result")
+            active_players = result_value if isinstance(result_value, list) else []
+        else:
+            active_players = active_value if isinstance(active_value, list) else []
+
+        if active_players or time.monotonic() >= deadline:
+            break
+        await asyncio.sleep(poll_interval_ms / 1000)
+
+    return {
+        "player_started": bool(active_players),
+        "timeout_seconds": timeout_seconds,
+        "poll_interval_ms": poll_interval_ms,
+        "checks": checks,
+        "active_players": active_players,
+        "last_active_response": active_value,
+    }
+
+
 Runtime = dict[str, Any]
 
 
@@ -344,6 +382,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                             "type": "string",
                             "description": "Kodi addon id to execute.",
                         },
+                        "addon_id": {
+                            "type": "string",
+                            "description": "Alias for addonid. Prefer addonid when possible.",
+                        },
                         "wait": {
                             "type": "boolean",
                             "default": False,
@@ -357,7 +399,14 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         "expect_player": {
                             "type": "boolean",
                             "default": False,
-                            "description": "If true, verify an active Kodi player appears after launch and return verification details.",
+                            "description": "If true, fail the tool call unless an active Kodi player appears after launch.",
+                        },
+                        "observe_player_seconds": {
+                            "type": "integer",
+                            "default": 2,
+                            "minimum": 0,
+                            "maximum": 60,
+                            "description": "Seconds to observe active-player state after launch even when expect_player is false. This makes dispatch-only success visible to agents.",
                         },
                         "player_timeout_seconds": {
                             "type": "integer",
@@ -788,7 +837,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                 if not isinstance(args, dict):
                     args = {}
 
-                addonid = args.get("addonid")
+                addonid = args.get("addonid") or args.get("addon_id")
                 if not isinstance(addonid, str) or not addonid:
                     envelope = {
                         "ok": False,
@@ -799,7 +848,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         "error_code": None,
                         "latency_ms": 0,
                         "request_id": None,
-                        "raw": {"arguments": args},
+                        "raw": {"arguments": args, "accepted_aliases": ["addonid", "addon_id"]},
                     }
                     text = json.dumps(envelope, indent=2, sort_keys=True)
                     return ServerResult(
@@ -1224,7 +1273,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                     args = request.params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
-                    addonid = str(args.get("addonid") or "").strip()
+                    addonid = str(args.get("addonid") or args.get("addon_id") or "").strip()
                     wait = args.get("wait", False)
                     wait = wait if isinstance(wait, bool) else False
                     params = args.get("params")
@@ -1233,53 +1282,55 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
 
                     expect_player = args.get("expect_player", False)
                     expect_player = expect_player if isinstance(expect_player, bool) else False
-                    if not expect_player:
-                        raw_result = execute_result
-                    else:
-                        timeout_seconds = args.get("player_timeout_seconds", 8)
-                        timeout_seconds = timeout_seconds if isinstance(timeout_seconds, int) else 8
-                        timeout_seconds = max(1, min(60, timeout_seconds))
-                        poll_interval_ms = args.get("poll_interval_ms", 500)
-                        poll_interval_ms = poll_interval_ms if isinstance(poll_interval_ms, int) else 500
-                        poll_interval_ms = max(100, min(5000, poll_interval_ms))
+                    timeout_seconds = args.get("player_timeout_seconds", 8)
+                    timeout_seconds = timeout_seconds if isinstance(timeout_seconds, int) else 8
+                    timeout_seconds = max(1, min(60, timeout_seconds))
+                    observe_seconds = args.get("observe_player_seconds", 2)
+                    observe_seconds = observe_seconds if isinstance(observe_seconds, int) else 2
+                    observe_seconds = max(0, min(60, observe_seconds))
+                    poll_interval_ms = args.get("poll_interval_ms", 500)
+                    poll_interval_ms = poll_interval_ms if isinstance(poll_interval_ms, int) else 500
+                    poll_interval_ms = max(100, min(5000, poll_interval_ms))
 
-                        execute_value = _as_dict(execute_result)
-                        execute_ok = not (isinstance(execute_value, dict) and execute_value.get("error") is not None)
-                        active_value: Any = None
-                        active_players: list[Any] = []
-                        checks = 0
-                        deadline = time.monotonic() + timeout_seconds
-                        while time.monotonic() <= deadline:
-                            checks += 1
-                            active_result = await runtime["jsonrpc"].get_active_players()
-                            active_value = _as_dict(active_result)
-                            if isinstance(active_value, dict):
-                                result_value = active_value.get("result")
-                                active_players = result_value if isinstance(result_value, list) else []
-                            else:
-                                active_players = active_value if isinstance(active_value, list) else []
-                            if active_players:
-                                break
-                            await asyncio.sleep(poll_interval_ms / 1000)
-
-                        player_started = bool(active_players)
-                        raw_result = {
-                            "ok": execute_ok and player_started,
-                            "addonid": addonid,
-                            "execute": execute_value,
-                            "player_verification": {
-                                "expected": True,
-                                "player_started": player_started,
-                                "timeout_seconds": timeout_seconds,
-                                "poll_interval_ms": poll_interval_ms,
-                                "checks": checks,
-                                "active_players": active_players,
-                                "last_active_response": active_value,
-                            },
-                            "error": None if execute_ok and player_started else "expected active player did not appear after addon_execute",
-                            "error_type": None if execute_ok and player_started else "verification_failed",
-                            "error_code": None,
-                        }
+                    execute_value = _as_dict(execute_result)
+                    execute_ok = not (isinstance(execute_value, dict) and execute_value.get("error") is not None)
+                    observation_timeout = timeout_seconds if expect_player else observe_seconds
+                    player_observation = await _observe_active_players(
+                        runtime["jsonrpc"],
+                        timeout_seconds=observation_timeout,
+                        poll_interval_ms=poll_interval_ms,
+                    )
+                    player_started = bool(player_observation["player_started"])
+                    verified = player_started if expect_player else None
+                    ok = execute_ok and (player_started if expect_player else True)
+                    raw_result = {
+                        "ok": ok,
+                        "addonid": addonid,
+                        "wait": wait,
+                        "params": params,
+                        "execute": execute_value,
+                        "dispatch_ok": execute_ok,
+                        "verified": verified,
+                        "verification_required": expect_player,
+                        "player_observation": player_observation,
+                        "player_verification": {
+                            "expected": expect_player,
+                            **player_observation,
+                        },
+                        "note": (
+                            "addon_execute dispatch succeeded; no active player was observed in the post-launch window"
+                            if execute_ok and not player_started
+                            else None
+                        ),
+                        "error": (
+                            None
+                            if ok
+                            else "expected active player did not appear after addon_execute"
+                        ),
+                        "error_type": None if ok else "verification_failed",
+                        "error_code": None,
+                        "request_id": getattr(execute_result, "request_id", None),
+                    }
                 elif tool_name == "kodi_player_active":
                     raw_result = await runtime["jsonrpc"].get_active_players()
                 elif tool_name == "kodi_player_item":
