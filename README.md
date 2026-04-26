@@ -16,7 +16,8 @@ It exposes a curated set of Kodi operations (Kodi JSON-RPC + the Kodi MCP bridge
 1) Install + enable the Kodi bridge addon: `service.kodi_mcp`
 2) Set the shared token in Kodi addon settings (**service.kodi_mcp → Kodi MCP → MCP shared token**)
 3) Start this server
-4) Wait briefly: the server will **auto-register** and **auto-stage the dev repo zip**; then in Kodi run **Developer setup → Install from zip**
+4) Install the Kodi MCP repository add-on once if it is not already installed: `repository.kodi-mcp`
+5) For a brand-new target addon, use Kodi UI: **Add-ons → Install from repository → Kodi MCP Repository → target addon → Install**
 
 **Managed addon loop (after repo is installed in Kodi)**
 1) Register local addon: `managed_addon_register`
@@ -30,8 +31,8 @@ Retry only if `verification.can_retry == true`
 
 - This MCP server requires the Kodi bridge addon to be installed and enabled in Kodi:
   https://github.com/kcook98765/kodi_mcp_addon
-- The addon exposes the HTTP bridge used by this server and provides the Developer setup flow for first-time repo installation.
-- After the addon token is configured and this server starts, the server will automatically register and stage the dev repo zip for first-time install.
+- The addon exposes the HTTP bridge used by this server, including GUI action/screenshot helpers for guided first-install checks.
+- After the addon token is configured and this server starts, the server can register with the bridge and stage repository content for the managed update loop.
 - Without the addon, the MCP server cannot talk to Kodi.
 - Kodi-resident bridge addon source is owned by the standalone `kodi_mcp_addon` repo, not this server repo.
 
@@ -151,6 +152,7 @@ Once connected, try these MCP tools first:
 GUI helpers:
 - `kodi_gui_action` sends basic navigation actions (`up`, `down`, `left`, `right`, `select`, `back`, `home`, `context`, `info`).
 - `kodi_gui_screenshot` captures a Kodi GUI screenshot through the bridge addon.
+- These can assist first-install UI navigation, but deterministic bridge/repo state checks should remain the primary workflow.
 
 If you’re testing the **remote** transport directly, you can also do a minimal curl initialize:
 
@@ -237,11 +239,12 @@ Operator rule: If the loop cannot complete, run `managed_addon_validate_state` a
 1) Install + enable **Kodi MCP Service**
 2) Configure token:
    **Kodi → Add-ons → Services → Kodi MCP Service → Configure → Kodi MCP → MCP shared token**
-3) Start the MCP server and wait briefly for **Developer status** to report ready
-4) Then:
-   **Developer → Developer setup**
-5) Kodi opens **Install from zip file**
-6) Manually browse to the staged `special://...` path shown and select the staged repo zip
+3) Install + enable **Kodi MCP Repository** (`repository.kodi-mcp`) once if it is missing
+4) For each brand-new target addon:
+   **Kodi → Add-ons → Install from repository → Kodi MCP Repository → target addon → Install**
+5) Rerun the managed addon apply/update workflow after the first install
+
+Note: a staged `dev-repo.zip` is repository content used by the server/bridge refresh loop; it is not itself an installable Kodi add-on zip.
 
 Troubleshooting rule: **If anything fails, run `managed_addon_validate_state` first.**
 
@@ -297,10 +300,9 @@ Action:
 ### Repo not installed (first-time setup)
 Symptom: `apply_status = repo_not_installed`; `dev_setup_available` may be true.
 Action:
-- Kodi → Add-ons → Services → Kodi MCP Service → Configure
-- Developer → Developer setup
-- Install from zip (select staged `special://` path)
-If Developer setup is not ready yet, wait briefly for server auto-staging and re-check Developer status.
+- Install `repository.kodi-mcp` once.
+- Then use **Add-ons → Install from repository → Kodi MCP Repository → target addon → Install**.
+- Do not try to install the staged `dev-repo.zip`; it is repository content, not an installable add-on zip.
 
 ### Repo not ready / refresh lag
 Symptom: `apply_status = repo_not_ready`.

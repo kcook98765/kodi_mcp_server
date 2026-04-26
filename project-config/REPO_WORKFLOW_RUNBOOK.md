@@ -76,6 +76,14 @@ If `POST /tools/update_addon` returns:
 
 Then perform the one-time UI install and retry future updates via `POST /tools/update_addon`.
 
+The one-time UI path is:
+
+**Add-ons → Install from repository → Kodi MCP Repository → target addon → Install**
+
+Do not install the staged `dev-repo.zip` directly. That archive is repository
+content used by the server/bridge refresh loop, not an installable Kodi add-on
+zip.
+
 ---
 
 ## Notes on endpoint classes

@@ -97,7 +97,16 @@ def test_update_addon_returns_initial_install_hint_when_not_installed(tmp_path: 
     assert result.get("is_published_in_repo") is True
     assert result.get("is_installed") is False
     assert result.get("repo_version") == "0.0.1"
-
+    assert result.get("repository_addon_id") == "repository.kodi-mcp"
+    assert result.get("repository_name") == "Kodi MCP Repository"
+    assert result.get("initial_install_steps") == [
+        "Open Kodi Add-ons",
+        "Choose Install from repository",
+        "Open Kodi MCP Repository",
+        "Select script.kodi_mcp_test",
+        "Choose Install",
+    ]
+    assert "Install from repository" in result.get("suggested_user_action")
 
 
 

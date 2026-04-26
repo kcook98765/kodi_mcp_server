@@ -57,8 +57,11 @@ async def test_stage_dev_repo_zip_reports_install_hint(tmp_path: Path, monkeypat
                     },
                     "derived": {"dev_setup_available": True},
                     "install_hint": {
-                        "action": "Kodi UI: Add-ons > Install from zip file",
+                        "action": "Kodi UI: Add-ons > Install from repository",
+                        "repository_addon_id": "repository.kodi-mcp",
+                        "repository_name": "Kodi MCP Repository",
                         "path": "/profile/repo_stage/dev-repo.zip",
+                        "staged_repo_archive_path": "/profile/repo_stage/dev-repo.zip",
                     },
                 },
             }
@@ -73,3 +76,5 @@ async def test_stage_dev_repo_zip_reports_install_hint(tmp_path: Path, monkeypat
     assert out["upload"]["transport_ok"] is True
     assert out["state"]["dev_setup_available"] is True
     assert out["state"]["install_hint"]["path"].endswith("dev-repo.zip")
+    assert out["state"]["install_hint"]["action"] == "Kodi UI: Add-ons > Install from repository"
+    assert out["state"]["install_hint"]["repository_addon_id"] == "repository.kodi-mcp"

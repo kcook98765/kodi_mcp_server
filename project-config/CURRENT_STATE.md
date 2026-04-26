@@ -59,8 +59,8 @@ GUI MCP tools:
 - `kodi_gui_screenshot`
 
 These wrap bridge addon endpoints for basic Kodi GUI navigation and screenshot capture.
-The bridge endpoints are live-smoked, but the running system `kodi-mcp.service`
-must be restarted with sudo before remote MCP clients see these new tools.
+The bridge endpoints and remote MCP wrappers are live-smoked; the running system
+`kodi-mcp.service` now reports the 23-tool list including these GUI tools.
 
 ### Managed Addon Loop
 
@@ -78,7 +78,7 @@ Retry only when:
 
 - `verification.can_retry == true`
 
-The first install path for a brand-new addon may still require a Kodi-side UI step through the bridge addon's Developer setup flow. After initial installation, repeated updates are handled by the managed apply workflow when Kodi, the bridge, and repo metadata are healthy.
+The first install path for a brand-new addon may still require a Kodi-side UI step: **Add-ons → Install from repository → Kodi MCP Repository → target addon → Install**. After initial installation, repeated updates are handled by the managed apply workflow when Kodi, the bridge, and repo metadata are healthy.
 
 ## Public Entry Points
 
@@ -114,15 +114,15 @@ After installing the updated standalone bridge addon package into local Kodi and
 - Bridge health: ok
 - Bridge `/status`: `service.kodi_mcp` `0.2.16`
 - Bridge `/capabilities` and `/control/capabilities`: ok
-- Bridge `/mcp/state`: ok, with registration, staged repo zip, `dev_setup_available=true`, and install hint
-- Managed-addon smoke using `script.kodi_mcp_test` reached the expected first-install gate: package/upload/publish/stage succeeded, apply reported `requires_initial_user_install=true` because the test addon is not installed yet.
-- Attempted the bridge `InstallAddon(script.kodi_mcp_test)` builtin; Kodi accepted the request but the addon remained uninstalled after polling, so the Kodi UI first install is still required.
+- Bridge `/mcp/state`: ok, with registration, staged repo archive, `dev_setup_available=true`, and an install hint that points to Install from repository.
+- Managed-addon smoke using `script.kodi_mcp_test`: package/upload/publish/stage succeeded, initial UI install was completed through Kodi, and post-initial managed apply updated the addon to `0.0.9`.
+- Attempted the bridge `InstallAddon(script.kodi_mcp_test)` builtin before first install; Kodi accepted the request but the addon remained uninstalled after polling, so first install still requires Kodi UI.
 - Rebuilt/reinstalled `service.kodi_mcp` after fixing its `mcp_token` setting metadata; bridge health and capabilities remained ok.
 - Added bridge GUI action/screenshot support and server MCP wrappers.
 - Live bridge smoke:
   - `/gui/action` with `down` and `back`: ok
   - `/gui/screenshot`: ok, returned a non-empty PNG under addon profile screenshots
-- The currently running MCP service still reported the old 21-tool list because `sudo systemctl restart kodi-mcp.service` requires interactive sudo.
+- The restarted MCP service reports 23 tools and remote MCP smoke passes.
 
 ## Bridge Addon Ownership
 
@@ -135,7 +135,6 @@ The server repo does not own `service.kodi_mcp` source. The standalone `kodi_mcp
 - Keep `README.md`, this file, and `project-config/REPO_WORKFLOW_RUNBOOK.md` aligned whenever managed-addon behavior changes.
 - Add focused tests around `.env` loading and startup config behavior when touching configuration code.
 - Keep Milestone A bridge contract tests aligned with `service.kodi_mcp` endpoint changes.
-- Complete the Kodi UI first install for `script.kodi_mcp_test`, then rerun managed apply to verify post-install update automation.
 - Keep local-only files out of Git before any GitHub push; verify with `git status --short --ignored`.
 - Revisit direct container-to-host MCP TCP only after the host-control workflow remains stable.
 - Push prepared branches only after explicit user approval.

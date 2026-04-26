@@ -70,7 +70,7 @@ Custom Python middle-layer server for remote Kodi integration via three-surface 
 
 **Dev repo role:** `repo/dev-repo` is artifact-only (`zips/`, `addons.xml`, `addons.xml.md5`). A repo zip is built from this directory and staged to Kodi via the bridge.
 
-**Kodi-side handoff:** The Kodi bridge addon stores registration/staging state and provides a user-guided Developer setup flow. Kodi opens **Install from zip file** and the user manually selects the staged `special://...` path.
+**Kodi-side handoff:** The Kodi bridge addon stores registration/staging state and lets agents inspect GUI state. The staged `dev-repo.zip` is repository content for refresh/state handoff, not an installable add-on zip. Brand-new target addons are first installed through **Add-ons → Install from repository → Kodi MCP Repository → target addon → Install** after `repository.kodi-mcp` is installed once.
 
 Note: older dev-loop tools (`build_addon_package`, `publish_addon_to_repo`, `update_addon`, `upload_bridge_addon_zip`, `verify_bridge_addon_deploy`, etc.) are now considered **legacy** and are not the primary recommended path.
 
@@ -97,12 +97,12 @@ Stage 2: build + publish + stage repo zip → managed_addon_build_publish_and_st
   ↓
 [HUMAN MANUAL INSTALL CHECKPOINT]
   ↓
-Stage 3: user runs Kodi MCP Service → Developer setup → InstallFromZip (manual browse to staged special:// path)
+Stage 3: user/agent uses Kodi UI → Install from repository → Kodi MCP Repository → target addon → Install
   ↓
 Stage 4: validate readiness/troubleshoot → managed_addon_validate_state
 ```
 
-**Key principle:** the server can stage the repo zip, but installation remains user-guided in Kodi.
+**Key principle:** the server can stage repository content and automate updates after first install, but the first install of a brand-new target addon remains Kodi UI guided.
 
 ---
 
@@ -142,7 +142,7 @@ Stage 4: validate readiness/troubleshoot → managed_addon_validate_state
 - Examples: `restart_bridge_addon`, `ensure_addon_enabled`
 
 **Human-Gated:** Requires human action on remote Kodi. Server reports state but cannot complete deployment.
-- Examples: Kodi-side Developer setup → InstallFromZip (manual browse to staged `special://...` path)
+- Examples: Kodi-side Add-ons → Install from repository → Kodi MCP Repository → target addon → Install
 
 ### addon.xml Version Bump REQUIRED
 
@@ -174,7 +174,7 @@ Stage 4: validate readiness/troubleshoot → managed_addon_validate_state
 |----------------|-------|----------------------|
 | Automated | managed_addon_build_publish_and_stage, runtime tools | No |
 | Hybrid | restart_bridge_addon, ensure_addon_enabled | Optional (should verify) |
-| Human-Gated | Kodi Developer setup → InstallFromZip, advisory tools | Required for actual deployment |
+| Human-Gated | Kodi Install from repository first-install flow, advisory tools | Required for first install |
 
 ---
 

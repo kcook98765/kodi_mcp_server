@@ -11,6 +11,8 @@ from .bridge import BridgeTool
 from .jsonrpc import JsonRpcTool
 
 BRIDGE_ADDON_ID = "service.kodi_mcp"
+DEFAULT_REPOSITORY_ADDON_ID = "repository.kodi-mcp"
+DEFAULT_REPOSITORY_NAME = "Kodi MCP Repository"
 
 
 class AddonOpsTool:
@@ -118,8 +120,17 @@ class AddonOpsTool:
                     "is_published_in_repo": True,
                     "is_installed": False,
                     "requires_initial_user_install": True,
+                    "repository_addon_id": DEFAULT_REPOSITORY_ADDON_ID,
+                    "repository_name": DEFAULT_REPOSITORY_NAME,
+                    "initial_install_steps": [
+                        "Open Kodi Add-ons",
+                        "Choose Install from repository",
+                        f"Open {DEFAULT_REPOSITORY_NAME}",
+                        f"Select {addonid}",
+                        "Choose Install",
+                    ],
                     "suggested_user_action": (
-                        "In Kodi UI: Add-ons → Install from repository → Kodi MCP Repository → "
+                        f"In Kodi UI: Add-ons → Install from repository → {DEFAULT_REPOSITORY_NAME} → "
                         f"install '{addonid}' (v{repo_version})."
                     ),
                     "next_automatable_step": "After initial install, run update_addon again to refresh and apply updates.",

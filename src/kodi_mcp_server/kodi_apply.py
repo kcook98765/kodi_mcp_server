@@ -365,7 +365,10 @@ async def managed_addon_build_publish_stage_and_apply(
     elif apply_status == "repo_not_installed":
         can_retry = False
         retry_delay_seconds = None
-        retry_hint = "Install repo via Kodi Developer setup (one-time)."
+        retry_hint = (
+            "Install repository.kodi-mcp once, then use Kodi UI: Add-ons > "
+            "Install from repository > Kodi MCP Repository for first installs."
+        )
     elif apply_status == "repo_not_ready":
         can_retry = True
         retry_delay_seconds = 2
@@ -407,5 +410,27 @@ async def managed_addon_build_publish_stage_and_apply(
             "retry_delay_seconds": retry_delay_seconds,
             "retry_hint": retry_hint,
             "notes": notes,
+            "manual_first_install": {
+                "required": (
+                    apply_status == "repo_not_installed"
+                    or (
+                        apply_status == "install_attempted_not_verified"
+                        and isinstance(addon_before, dict)
+                        and addon_before.get("installed") is False
+                    )
+                ),
+                "repository_addon_id": "repository.kodi-mcp",
+                "repository_name": "Kodi MCP Repository",
+                "target_addon_id": addon_id,
+                "steps": [
+                    "Install repository.kodi-mcp once if it is not installed",
+                    "Open Kodi Add-ons",
+                    "Choose Install from repository",
+                    "Open Kodi MCP Repository",
+                    f"Select {addon_id}",
+                    "Choose Install",
+                    "Rerun the managed apply/update workflow",
+                ],
+            },
         },
     }

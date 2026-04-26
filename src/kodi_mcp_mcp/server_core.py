@@ -153,7 +153,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
             protocolVersion="2025-11-25",
             capabilities=ServerCapabilities(tools=ToolsCapability()),
             serverInfo=Implementation(name=SERVER_NAME, version=SERVER_VERSION),
-            instructions="Kodi MCP wrapper (skeleton): tools not implemented yet.",
+            instructions="Kodi MCP server for Kodi status, bridge diagnostics, GUI navigation, screenshots, and managed addon workflows.",
         )
         return ServerResult(result)
 
@@ -249,7 +249,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
             ),
             Tool(
                 name="kodi_gui_action",
-                description="Send a basic GUI navigation action to Kodi.",
+                description="Send a basic GUI navigation action to Kodi through the bridge addon.",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -264,7 +264,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
             ),
             Tool(
                 name="kodi_gui_screenshot",
-                description="Capture a Kodi GUI screenshot through the bridge addon.",
+                description="Capture a Kodi GUI screenshot through the bridge addon; optionally include base64 PNG data for local vision helpers.",
                 inputSchema={
                     "type": "object",
                     "properties": {
