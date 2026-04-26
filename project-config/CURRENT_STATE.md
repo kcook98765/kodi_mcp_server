@@ -107,6 +107,8 @@ After installing the updated standalone bridge addon package into local Kodi and
 - Bridge `/capabilities` and `/control/capabilities`: ok
 - Bridge `/mcp/state`: ok, with registration, staged repo zip, `dev_setup_available=true`, and install hint
 - Managed-addon smoke using `script.kodi_mcp_test` reached the expected first-install gate: package/upload/publish/stage succeeded, apply reported `requires_initial_user_install=true` because the test addon is not installed yet.
+- Attempted the bridge `InstallAddon(script.kodi_mcp_test)` builtin; Kodi accepted the request but the addon remained uninstalled after polling, so the Kodi UI first install is still required.
+- Rebuilt/reinstalled `service.kodi_mcp` after fixing its `mcp_token` setting metadata; bridge health and capabilities remained ok.
 
 ## Bridge Addon Ownership
 
