@@ -15,6 +15,7 @@ NOTE: This file is intentionally a refactor/extraction from
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from pathlib import Path
@@ -262,7 +263,18 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["up", "down", "left", "right", "select", "back", "home", "context", "info"],
+                            "enum": [
+                                "up",
+                                "down",
+                                "left",
+                                "right",
+                                "select",
+                                "back",
+                                "home",
+                                "context",
+                                "info",
+                                "stop",
+                            ],
                         }
                     },
                     "required": ["action"],
@@ -341,6 +353,25 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                             "type": "object",
                             "default": {},
                             "description": "Optional Addons.ExecuteAddon params object.",
+                        },
+                        "expect_player": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "If true, verify an active Kodi player appears after launch and return verification details.",
+                        },
+                        "player_timeout_seconds": {
+                            "type": "integer",
+                            "default": 8,
+                            "minimum": 1,
+                            "maximum": 60,
+                            "description": "Seconds to wait for an active player when expect_player is true.",
+                        },
+                        "poll_interval_ms": {
+                            "type": "integer",
+                            "default": 500,
+                            "minimum": 100,
+                            "maximum": 5000,
+                            "description": "Delay between active-player checks when expect_player is true.",
                         },
                     },
                     "required": ["addonid"],
@@ -429,6 +460,27 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                             "type": "boolean",
                             "default": True,
                             "description": "If true, query active players after stop and fail if this player remains active.",
+                        },
+                        "verify_attempts": {
+                            "type": "integer",
+                            "default": 20,
+                            "minimum": 1,
+                            "maximum": 60,
+                            "description": "Number of active-player checks to make after stop.",
+                        },
+                        "verify_delay_ms": {
+                            "type": "integer",
+                            "default": 250,
+                            "minimum": 0,
+                            "maximum": 5000,
+                            "description": "Delay between stop verification checks in milliseconds.",
+                        },
+                        "stable_checks": {
+                            "type": "integer",
+                            "default": 5,
+                            "minimum": 1,
+                            "maximum": 20,
+                            "description": "Consecutive inactive checks required before stop is considered stable.",
                         },
                     },
                     "additionalProperties": False,
@@ -790,7 +842,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                     args = {}
 
                 action = args.get("action")
-                allowed_actions = {"up", "down", "left", "right", "select", "back", "home", "context", "info"}
+                allowed_actions = {"up", "down", "left", "right", "select", "back", "home", "context", "info", "stop"}
                 if not isinstance(action, str) or action not in allowed_actions:
                     envelope = {
                         "ok": False,
@@ -1177,7 +1229,57 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                     wait = wait if isinstance(wait, bool) else False
                     params = args.get("params")
                     params = params if isinstance(params, dict) else {}
-                    raw_result = await runtime["jsonrpc"].execute_addon(addonid=addonid, params=params, wait=wait)
+                    execute_result = await runtime["jsonrpc"].execute_addon(addonid=addonid, params=params, wait=wait)
+
+                    expect_player = args.get("expect_player", False)
+                    expect_player = expect_player if isinstance(expect_player, bool) else False
+                    if not expect_player:
+                        raw_result = execute_result
+                    else:
+                        timeout_seconds = args.get("player_timeout_seconds", 8)
+                        timeout_seconds = timeout_seconds if isinstance(timeout_seconds, int) else 8
+                        timeout_seconds = max(1, min(60, timeout_seconds))
+                        poll_interval_ms = args.get("poll_interval_ms", 500)
+                        poll_interval_ms = poll_interval_ms if isinstance(poll_interval_ms, int) else 500
+                        poll_interval_ms = max(100, min(5000, poll_interval_ms))
+
+                        execute_value = _as_dict(execute_result)
+                        execute_ok = not (isinstance(execute_value, dict) and execute_value.get("error") is not None)
+                        active_value: Any = None
+                        active_players: list[Any] = []
+                        checks = 0
+                        deadline = time.monotonic() + timeout_seconds
+                        while time.monotonic() <= deadline:
+                            checks += 1
+                            active_result = await runtime["jsonrpc"].get_active_players()
+                            active_value = _as_dict(active_result)
+                            if isinstance(active_value, dict):
+                                result_value = active_value.get("result")
+                                active_players = result_value if isinstance(result_value, list) else []
+                            else:
+                                active_players = active_value if isinstance(active_value, list) else []
+                            if active_players:
+                                break
+                            await asyncio.sleep(poll_interval_ms / 1000)
+
+                        player_started = bool(active_players)
+                        raw_result = {
+                            "ok": execute_ok and player_started,
+                            "addonid": addonid,
+                            "execute": execute_value,
+                            "player_verification": {
+                                "expected": True,
+                                "player_started": player_started,
+                                "timeout_seconds": timeout_seconds,
+                                "poll_interval_ms": poll_interval_ms,
+                                "checks": checks,
+                                "active_players": active_players,
+                                "last_active_response": active_value,
+                            },
+                            "error": None if execute_ok and player_started else "expected active player did not appear after addon_execute",
+                            "error_type": None if execute_ok and player_started else "verification_failed",
+                            "error_code": None,
+                        }
                 elif tool_name == "kodi_player_active":
                     raw_result = await runtime["jsonrpc"].get_active_players()
                 elif tool_name == "kodi_player_item":
@@ -1206,32 +1308,72 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                     playerid = args.get("playerid", 1)
                     verify = args.get("verify", True)
                     verify = verify if isinstance(verify, bool) else True
+                    verify_attempts = args.get("verify_attempts", 20)
+                    verify_attempts = verify_attempts if isinstance(verify_attempts, int) else 20
+                    verify_attempts = max(1, min(60, verify_attempts))
+                    verify_delay_ms = args.get("verify_delay_ms", 250)
+                    verify_delay_ms = verify_delay_ms if isinstance(verify_delay_ms, int) else 250
+                    verify_delay_ms = max(0, min(5000, verify_delay_ms))
+                    stable_checks = args.get("stable_checks", 5)
+                    stable_checks = stable_checks if isinstance(stable_checks, int) else 5
+                    stable_checks = max(1, min(20, stable_checks))
                     stop_result = await runtime["jsonrpc"].stop_player(playerid=playerid)
                     stop_value = _as_dict(stop_result)
                     if not verify or getattr(stop_result, "error", None) is not None:
                         raw_result = stop_result
                     else:
-                        active_result = await runtime["jsonrpc"].get_active_players()
-                        active_value = _as_dict(active_result)
-                        active_players = active_value.get("result") if isinstance(active_value, dict) else None
-                        if not isinstance(active_players, list):
-                            active_players = []
-                        still_active = any(
-                            isinstance(player, dict) and player.get("playerid") == playerid
-                            for player in active_players
-                        )
+                        active_result = None
+                        active_players = []
+                        still_active = True
+                        stable_inactive_checks = 0
+                        attempts_made = 0
+                        stop_attempts = 1
+                        for attempt in range(verify_attempts):
+                            attempts_made = attempt + 1
+                            active_result = await runtime["jsonrpc"].get_active_players()
+                            active_value = _as_dict(active_result)
+                            active_players = active_value.get("result") if isinstance(active_value, dict) else None
+                            if not isinstance(active_players, list):
+                                active_players = []
+                            still_active = any(
+                                isinstance(player, dict) and player.get("playerid") == playerid
+                                for player in active_players
+                            )
+                            if getattr(active_result, "error", None) is not None:
+                                break
+                            if still_active:
+                                stable_inactive_checks = 0
+                                if attempt < verify_attempts - 1:
+                                    retry_stop = await runtime["jsonrpc"].stop_player(playerid=playerid)
+                                    stop_attempts += 1
+                                    stop_value = _as_dict(retry_stop)
+                                    if getattr(retry_stop, "error", None) is not None:
+                                        stop_result = retry_stop
+                                        break
+                            else:
+                                stable_inactive_checks += 1
+                                if stable_inactive_checks >= stable_checks:
+                                    break
+                            if attempt < verify_attempts - 1 and verify_delay_ms > 0:
+                                await asyncio.sleep(verify_delay_ms / 1000)
+                        stopped = stable_inactive_checks >= stable_checks and getattr(active_result, "error", None) is None
                         raw_result = {
-                            "ok": not still_active and getattr(active_result, "error", None) is None,
+                            "ok": stopped,
                             "playerid": playerid,
-                            "stopped": not still_active,
+                            "stopped": stopped,
                             "stop": stop_value,
+                            "stop_attempts": stop_attempts,
                             "active_players": active_players,
+                            "verification_attempts": attempts_made,
+                            "verification_delay_ms": verify_delay_ms,
+                            "stable_checks_required": stable_checks,
+                            "stable_inactive_checks": stable_inactive_checks,
                             "error": (
-                                "player still active after stop"
-                                if still_active
+                                "player did not remain inactive after stop"
+                                if not stopped and getattr(active_result, "error", None) is None
                                 else getattr(active_result, "error", None)
                             ),
-                            "error_type": "player_still_active" if still_active else None,
+                            "error_type": "player_still_active" if not stopped else None,
                             "error_code": None,
                             "request_id": getattr(stop_result, "request_id", None),
                         }
@@ -1288,7 +1430,23 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                     args = request.params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
-                    raw_result = await runtime["bridge"].gui_action(action=str(args.get("action") or "").strip())
+                    action = str(args.get("action") or "").strip()
+                    if action == "stop":
+                        action_result = await runtime["jsonrpc"].execute_input_action(action=action)
+                        action_value = _as_dict(action_result)
+                        action_error = getattr(action_result, "error", None)
+                        raw_result = {
+                            "ok": action_error is None,
+                            "action": action,
+                            "method": "Input.ExecuteAction",
+                            "jsonrpc": action_value,
+                            "error": action_error,
+                            "error_type": getattr(action_result, "error_type", None),
+                            "error_code": getattr(action_result, "error_code", None),
+                            "request_id": getattr(action_result, "request_id", None),
+                        }
+                    else:
+                        raw_result = await runtime["bridge"].gui_action(action=action)
                 elif tool_name == "kodi_gui_screenshot":
                     args = request.params.arguments or {}
                     if not isinstance(args, dict):

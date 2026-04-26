@@ -109,7 +109,10 @@ async def test_player_tools_are_listed_and_dispatch_through_jsonrpc():
     stop_resp = await server.request_handlers[CallToolRequest](
         CallToolRequest(
             method="tools/call",
-            params=CallToolRequestParams(name="kodi_player_stop", arguments={"playerid": 1}),
+            params=CallToolRequestParams(
+                name="kodi_player_stop",
+                arguments={"playerid": 1, "verify_attempts": 1, "verify_delay_ms": 0, "stable_checks": 1},
+            ),
         )
     )
     stop_env = _tool_payload(stop_resp)
@@ -130,7 +133,10 @@ async def test_player_stop_fails_when_player_remains_active():
     resp = await server.request_handlers[CallToolRequest](
         CallToolRequest(
             method="tools/call",
-            params=CallToolRequestParams(name="kodi_player_stop", arguments={"playerid": 1}),
+            params=CallToolRequestParams(
+                name="kodi_player_stop",
+                arguments={"playerid": 1, "verify_attempts": 1, "verify_delay_ms": 0, "stable_checks": 1},
+            ),
         )
     )
     env = _tool_payload(resp)

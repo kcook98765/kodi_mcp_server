@@ -30,7 +30,12 @@ class _FakeBridge:
 
 
 class _FakeJsonRpc:
-    pass
+    async def execute_input_action(self, action: str):
+        return ResponseMessage(
+            request_id="fake-input-action",
+            result="OK",
+            error=None,
+        )
 
 
 @pytest.mark.asyncio
@@ -62,6 +67,17 @@ async def test_gui_tools_dispatch_through_bridge():
         action_env = json.loads(action_resp.root.content[0].text)
         assert action_env["ok"] is True
         assert action_env["data"]["action"] == "down"
+
+        stop_resp = await server.request_handlers[CallToolRequest](
+            CallToolRequest(
+                method="tools/call",
+                params=CallToolRequestParams(name="kodi_gui_action", arguments={"action": "stop"}),
+            )
+        )
+        stop_env = json.loads(stop_resp.root.content[0].text)
+        assert stop_env["ok"] is True
+        assert stop_env["data"]["action"] == "stop"
+        assert stop_env["data"]["method"] == "Input.ExecuteAction"
 
         screenshot_resp = await server.request_handlers[CallToolRequest](
             CallToolRequest(
@@ -129,4 +145,5 @@ async def test_gui_action_rejects_invalid_action():
     assert resp.root.isError is True
     assert env["ok"] is False
     assert env["error_type"] == "invalid_params"
+    assert "stop" in env["raw"]["allowed"]
     assert "select" in env["raw"]["allowed"]

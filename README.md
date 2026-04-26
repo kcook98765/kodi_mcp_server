@@ -181,7 +181,7 @@ Once connected, try these MCP tools first:
 3. `bridge_runtime_info`
 
 GUI helpers:
-- `kodi_gui_action` sends basic navigation actions (`up`, `down`, `left`, `right`, `select`, `back`, `home`, `context`, `info`).
+- `kodi_gui_action` sends basic navigation actions (`up`, `down`, `left`, `right`, `select`, `back`, `home`, `context`, `info`) and the cleanup action `stop`.
 - `kodi_gui_screenshot` captures a Kodi GUI screenshot through the bridge addon, stores it on the MCP server by default, and returns a `/screenshots/<id>.png` URL.
 - `addon_execute` launches an addon through Kodi JSON-RPC without using the legacy HTTP companion endpoint.
 - These can assist first-install UI navigation, but deterministic bridge/repo state checks should remain the primary workflow.
@@ -191,7 +191,7 @@ Playback helpers:
 - `kodi_player_item` returns the current item for a player.
 - `kodi_player_seek` seeks a player to an absolute timestamp in seconds.
 - `kodi_player_pause` pauses without toggling playback back on.
-- `kodi_player_stop` stops a player and, by default, verifies it is no longer active.
+- `kodi_player_stop` stops a player and, by default, verifies playback stays inactive across a short settle window.
 
 Autonomous agents should use these MCP tools instead of direct Kodi JSON-RPC,
 bridge HTTP, host-control scripts, or curl fallbacks. If a required operation is

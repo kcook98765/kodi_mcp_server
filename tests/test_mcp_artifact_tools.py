@@ -259,6 +259,82 @@ async def test_mcp_addon_execute_dispatches_jsonrpc():
 
 
 @pytest.mark.asyncio
+async def test_mcp_addon_execute_can_verify_player_started():
+    import json
+
+    from kodi_mcp_server.models.messages import ResponseMessage
+    from kodi_mcp_mcp.server_core import build_mcp_server
+    from mcp.types import CallToolRequest, CallToolRequestParams
+
+    class _JsonRpc:
+        async def execute_addon(self, addonid: str, params=None, wait: bool = False):
+            return ResponseMessage(request_id="exec", result={"launched": True}, error=None)
+
+        async def get_active_players(self):
+            return ResponseMessage(request_id="active", result=[{"playerid": 1, "type": "video"}], error=None)
+
+    server, _ = build_mcp_server({"bridge": object(), "jsonrpc": _JsonRpc(), "notifications": None})
+
+    resp = await server.request_handlers[CallToolRequest](
+        CallToolRequest(
+            method="tools/call",
+            params=CallToolRequestParams(
+                name="addon_execute",
+                arguments={
+                    "addonid": "plugin.kodi_world_poc",
+                    "wait": False,
+                    "params": {"mode": "run"},
+                    "expect_player": True,
+                    "player_timeout_seconds": 1,
+                    "poll_interval_ms": 100,
+                },
+            ),
+        )
+    )
+    env = json.loads(resp.root.content[0].text)
+    assert env["ok"] is True
+    assert env["data"]["player_verification"]["player_started"] is True
+    assert env["data"]["player_verification"]["active_players"] == [{"playerid": 1, "type": "video"}]
+
+
+@pytest.mark.asyncio
+async def test_mcp_addon_execute_verification_fails_when_player_missing():
+    import json
+
+    from kodi_mcp_server.models.messages import ResponseMessage
+    from kodi_mcp_mcp.server_core import build_mcp_server
+    from mcp.types import CallToolRequest, CallToolRequestParams
+
+    class _JsonRpc:
+        async def execute_addon(self, addonid: str, params=None, wait: bool = False):
+            return ResponseMessage(request_id="exec", result={"launched": True}, error=None)
+
+        async def get_active_players(self):
+            return ResponseMessage(request_id="active", result=[], error=None)
+
+    server, _ = build_mcp_server({"bridge": object(), "jsonrpc": _JsonRpc(), "notifications": None})
+
+    resp = await server.request_handlers[CallToolRequest](
+        CallToolRequest(
+            method="tools/call",
+            params=CallToolRequestParams(
+                name="addon_execute",
+                arguments={
+                    "addonid": "plugin.kodi_world_poc",
+                    "expect_player": True,
+                    "player_timeout_seconds": 1,
+                    "poll_interval_ms": 100,
+                },
+            ),
+        )
+    )
+    env = json.loads(resp.root.content[0].text)
+    assert env["ok"] is False
+    assert env["error_type"] == "verification_failed"
+    assert env["data"]["player_verification"]["player_started"] is False
+
+
+@pytest.mark.asyncio
 async def test_repo_publish_stage_apply_artifact_reports_installed_version_mismatch(tmp_path: Path, monkeypatch):
     import importlib
     import json
