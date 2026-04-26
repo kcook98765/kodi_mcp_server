@@ -5,8 +5,8 @@ Authoritative repo ownership:
 - legacy `server/repo*` paths are non-authoritative and must not be used
 
 Canonical startup behavior:
-- when running from `mcp_repo_server/`, load environment values from
-  `mcp_repo_server/.env` if present so documented canonical commands work
+- when running from the repo root, load environment values from `.env` if
+  present so documented canonical commands work
   without extra shell export steps.
 """
 
@@ -18,23 +18,28 @@ from .paths import AUTHORITATIVE_REPO_ROOT, PROJECT_ROOT, assert_not_legacy_repo
 
 
 def _load_dotenv_if_present() -> None:
-    """Load simple KEY=VALUE pairs from project root `.env` file."""
-    env_path = PROJECT_ROOT / "project" / ".env"
-    if not env_path.exists():
-        return
+    """Load simple KEY=VALUE pairs from supported local `.env` files."""
+    env_paths = [
+        PROJECT_ROOT / ".env",
+        PROJECT_ROOT / "project" / ".env",
+    ]
 
-    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
+    for env_path in env_paths:
+        if not env_path.exists():
             continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-        if not key:
-            continue
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'", "`"}:
-            value = value[1:-1]
-        os.environ.setdefault(key, value)
+
+        for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if not key:
+                continue
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'", "`"}:
+                value = value[1:-1]
+            os.environ.setdefault(key, value)
 
 
 _load_dotenv_if_present()

@@ -8,6 +8,9 @@ It exposes a curated set of Kodi operations (Kodi JSON-RPC + the Kodi MCP bridge
 
 > For the canonical repo publish/install/update behavior, see:
 > **project-config/REPO_WORKFLOW_RUNBOOK.md**
+>
+> For the current local handoff state and next TODOs, see:
+> **project-config/CURRENT_STATE.md**
 
 **First-time onboarding (repo install)**
 1) Install + enable the Kodi bridge addon: `service.kodi_mcp`
@@ -132,6 +135,10 @@ Optional:
 - `KODI_JSONRPC_USERNAME`, `KODI_JSONRPC_PASSWORD`
 - `KODI_TIMEOUT`
 - `MCP_API_KEY` (remote MCP only)
+
+Local development can use a repo-root `.env` file copied from `.env.example`.
+Process environment values take precedence over `.env` values. Keep `.env`,
+`.env.*`, local backups, keys, and logs out of Git.
 
 ## First connection test (stdio or remote)
 

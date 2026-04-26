@@ -92,4 +92,18 @@ Kodi WebSocket notifications (typically `ws://<kodi-host>:9090/jsonrpc`) are an 
 - Core repo publishing + update workflows (artifact upload → publish → update) do **not** require WebSocket.
 - Compatibility smoke tests should treat notification sampling failures as **non-blocking / advisory**.
 
+---
+
+## Current local agent integration note
+
+In the current Kodi agent stack, direct container-to-host MCP TCP connectivity is
+not the reliable control path. Use the Kodi agent host-control workflow proxy for
+live local smoke tests, and use this repo's MCP/HTTP tests for server-level
+regression checks.
+
+Before any GitHub push:
+
+- confirm `.env`, `.env.*`, and local backup files are untracked/ignored
+- run the server test suite
+- verify only intentional files appear in `git status --short`
 

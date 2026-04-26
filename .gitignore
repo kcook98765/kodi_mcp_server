@@ -2,6 +2,16 @@ __pycache__/
 *.pyc
 .venv/
 .env
+.env.*
+!.env.example
+!.env.test
+*.bak
+*.backup
+*.local
+*.log
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 dist/
 build/
 *.egg-info/
