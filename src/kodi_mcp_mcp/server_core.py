@@ -248,6 +248,36 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                 },
             ),
             Tool(
+                name="kodi_gui_action",
+                description="Send a basic GUI navigation action to Kodi.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["up", "down", "left", "right", "select", "back", "home", "context", "info"],
+                        }
+                    },
+                    "required": ["action"],
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="kodi_gui_screenshot",
+                description="Capture a Kodi GUI screenshot through the bridge addon.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "include_image": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "If true, include base64 PNG data in the tool result.",
+                        }
+                    },
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
                 name="addon_list",
                 description="List addons (optionally filtered by type and/or enabled) to confirm install/enable state during dev.",
                 inputSchema={
@@ -529,6 +559,8 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
             "jsonrpc_introspect",
             "kodi_notifications_sample",
             "bridge_write_log_marker",
+            "kodi_gui_action",
+            "kodi_gui_screenshot",
             "managed_addon_register",
             "managed_addon_list",
             "managed_addon_get",
@@ -585,6 +617,33 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         "latency_ms": 0,
                         "request_id": None,
                         "raw": {"arguments": args},
+                    }
+                    text = json.dumps(envelope, indent=2, sort_keys=True)
+                    return ServerResult(
+                        CallToolResult(
+                            isError=True,
+                            content=[TextContent(type="text", text=text)],
+                        )
+                    )
+
+            if tool_name == "kodi_gui_action":
+                args = request.params.arguments or {}
+                if not isinstance(args, dict):
+                    args = {}
+
+                action = args.get("action")
+                allowed_actions = {"up", "down", "left", "right", "select", "back", "home", "context", "info"}
+                if not isinstance(action, str) or action not in allowed_actions:
+                    envelope = {
+                        "ok": False,
+                        "tool": tool_name,
+                        "data": None,
+                        "error": "missing or invalid required argument: action",
+                        "error_type": "invalid_params",
+                        "error_code": None,
+                        "latency_ms": 0,
+                        "request_id": None,
+                        "raw": {"arguments": args, "allowed": sorted(allowed_actions)},
                     }
                     text = json.dumps(envelope, indent=2, sort_keys=True)
                     return ServerResult(
@@ -928,6 +987,17 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         args = {}
                     message = args.get("message")
                     raw_result = await runtime["bridge"].write_bridge_log_marker(message=message)
+                elif tool_name == "kodi_gui_action":
+                    args = request.params.arguments or {}
+                    if not isinstance(args, dict):
+                        args = {}
+                    raw_result = await runtime["bridge"].gui_action(action=str(args.get("action") or "").strip())
+                elif tool_name == "kodi_gui_screenshot":
+                    args = request.params.arguments or {}
+                    if not isinstance(args, dict):
+                        args = {}
+                    include_image = args.get("include_image", False)
+                    raw_result = await runtime["bridge"].gui_screenshot(include_image=include_image if isinstance(include_image, bool) else False)
                 elif tool_name == "managed_addon_register":
                     args = request.params.arguments or {}
                     if not isinstance(args, dict):

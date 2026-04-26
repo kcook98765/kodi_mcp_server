@@ -148,6 +148,10 @@ Once connected, try these MCP tools first:
 2. `bridge_health`
 3. `bridge_runtime_info`
 
+GUI helpers:
+- `kodi_gui_action` sends basic navigation actions (`up`, `down`, `left`, `right`, `select`, `back`, `home`, `context`, `info`).
+- `kodi_gui_screenshot` captures a Kodi GUI screenshot through the bridge addon.
+
 If you’re testing the **remote** transport directly, you can also do a minimal curl initialize:
 
 ```bash

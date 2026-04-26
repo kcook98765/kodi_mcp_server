@@ -53,6 +53,15 @@ First MCP checks:
 2. `bridge_health`
 3. `bridge_runtime_info`
 
+GUI MCP tools:
+
+- `kodi_gui_action`
+- `kodi_gui_screenshot`
+
+These wrap bridge addon endpoints for basic Kodi GUI navigation and screenshot capture.
+The bridge endpoints are live-smoked, but the running system `kodi-mcp.service`
+must be restarted with sudo before remote MCP clients see these new tools.
+
 ### Managed Addon Loop
 
 Preferred agent loop:
@@ -109,6 +118,11 @@ After installing the updated standalone bridge addon package into local Kodi and
 - Managed-addon smoke using `script.kodi_mcp_test` reached the expected first-install gate: package/upload/publish/stage succeeded, apply reported `requires_initial_user_install=true` because the test addon is not installed yet.
 - Attempted the bridge `InstallAddon(script.kodi_mcp_test)` builtin; Kodi accepted the request but the addon remained uninstalled after polling, so the Kodi UI first install is still required.
 - Rebuilt/reinstalled `service.kodi_mcp` after fixing its `mcp_token` setting metadata; bridge health and capabilities remained ok.
+- Added bridge GUI action/screenshot support and server MCP wrappers.
+- Live bridge smoke:
+  - `/gui/action` with `down` and `back`: ok
+  - `/gui/screenshot`: ok, returned a non-empty PNG under addon profile screenshots
+- The currently running MCP service still reported the old 21-tool list because `sudo systemctl restart kodi-mcp.service` requires interactive sudo.
 
 ## Bridge Addon Ownership
 

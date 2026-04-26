@@ -51,6 +51,12 @@ class BridgeTool:
     async def get_bridge_control_capabilities(self) -> ResponseMessage:
         return await self.client.get_control_capabilities()
 
+    async def gui_action(self, action: str) -> ResponseMessage:
+        return await self.client.gui_action(action=action)
+
+    async def gui_screenshot(self, include_image: bool = False) -> ResponseMessage:
+        return await self.client.gui_screenshot(include_image=include_image)
+
     async def ensure_bridge_addon_enabled(self, addonid: str) -> ResponseMessage:
         return await self.client.ensure_addon_enabled(addonid=addonid)
 
