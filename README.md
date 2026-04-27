@@ -184,8 +184,14 @@ GUI helpers:
 - `kodi_gui_action` sends basic navigation actions (`up`, `down`, `left`, `right`, `select`, `back`, `home`, `context`, `info`) and the cleanup action `stop`.
 - `kodi_gui_screenshot` captures a Kodi GUI screenshot through the bridge addon, stores it on the MCP server by default, and returns a `/screenshots/<id>.png` URL.
 - `kodi_gui_state` returns compact Kodi window/control/player state for UI verification.
-- `addon_execute` launches an addon through Kodi JSON-RPC without using the legacy HTTP companion endpoint. It returns post-launch `gui_state` by default and can verify player startup with `expect_player` or UI state with `expect_window` / `expect_fullscreen`.
+- `addon_execute` launches an addon through Kodi JSON-RPC without using the legacy HTTP companion endpoint. It returns post-launch `gui_state` by default. Use `expect_window` / `expect_fullscreen` for UI or navigation addons; reserve `expect_player` for tasks that explicitly require media playback.
 - These can assist first-install UI navigation, but deterministic bridge/repo state checks should remain the primary workflow.
+
+Addon source and log triage helpers:
+- `addon_source_inspect` reads addon identity, extensions, Python entrypoints, tests, and `PROJECT_MAP.md` status from an allowlisted server-local source tree.
+- `addon_project_map_status` reports whether an addon source tree has `PROJECT_MAP.md`.
+- `addon_source_tree` returns a compact addon file tree for agent planning.
+- `bridge_log_recent_errors` filters recent bridge/Kodi log lines down to error-like entries, with an optional pattern.
 
 Playback helpers:
 - `kodi_player_active` returns active Kodi players.
@@ -265,10 +271,10 @@ Success signal (only reliable): `verification.apply_verified == true`
 For split-host agents that already built a zip, prefer the pathless artifact workflow:
 
 1. `artifact_upload_zip`
-2. `repo_publish_stage_apply_artifact`
+2. `repo_publish_stage_apply_artifact` or its agent-oriented alias `addon_dev_loop`
 3. `kodi_gui_state`, `kodi_gui_screenshot`, `kodi_player_*`, or addon-specific checks for visual/behavioral evidence
 
-`artifact_upload_zip` validates the zip structure and `addon.xml`; `repo_publish_stage_apply_artifact` publishes, stages, applies, and returns `apply_verified`, `installed_version_after`, `apply_status`, `can_retry`, and `failure_reason` in one response.
+`artifact_upload_zip` validates the zip structure and `addon.xml`; `repo_publish_stage_apply_artifact` / `addon_dev_loop` publishes, stages, applies, and returns `apply_verified`, `installed_version_after`, `apply_status`, `can_retry`, and `failure_reason` in one response.
 
 Retry behavior:
 - Retry only when `verification.can_retry == true`

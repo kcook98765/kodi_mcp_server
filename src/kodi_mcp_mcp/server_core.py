@@ -17,9 +17,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import re
 import time
 from pathlib import Path
 from typing import Any, Tuple
+from xml.etree import ElementTree
 
 from mcp.server import Server
 from mcp.server.models import InitializationOptions
@@ -204,6 +207,9 @@ async def _read_gui_state(bridge_tool: Any) -> dict[str, Any]:
 
 Runtime = dict[str, Any]
 
+SOURCE_TREE_EXCLUDES = {".git", "__pycache__", ".pytest_cache", "venv", ".venv", "node_modules"}
+LOG_ERROR_RE = re.compile(r"(error|exception|traceback|failed|failure|warning|timeout|refused)", re.IGNORECASE)
+
 
 def _as_dict(value: Any) -> Any:
     """Best-effort conversion for tool results.
@@ -215,6 +221,164 @@ def _as_dict(value: Any) -> Any:
     if hasattr(value, "to_dict") and callable(getattr(value, "to_dict")):
         return value.to_dict()
     return value
+
+
+def _source_roots() -> list[Path]:
+    configured = os.environ.get("KODI_MCP_SOURCE_ROOTS")
+    values = configured.split(":") if configured else ["/home/kyle/workspace", "/srv/agent-work", "/tmp"]
+    roots = []
+    for value in values:
+        if value.strip():
+            roots.append(Path(value).expanduser().resolve())
+    return roots
+
+
+def _resolve_allowed_source_path(source_path: str) -> Path:
+    if not source_path or not source_path.strip():
+        raise ValueError("source_path is required")
+    path = Path(source_path).expanduser().resolve()
+    roots = _source_roots()
+    if roots and not any(path == root or root in path.parents for root in roots):
+        raise ValueError(f"source_path is outside allowed roots: {path}")
+    return path
+
+
+def _addon_xml_path(source_path: str) -> Path:
+    path = _resolve_allowed_source_path(source_path)
+    if path.is_file() and path.name == "addon.xml":
+        return path
+    direct = path / "addon.xml"
+    if direct.exists():
+        return direct
+    matches = sorted(path.glob("*/addon.xml"))
+    if len(matches) == 1:
+        return matches[0]
+    raise FileNotFoundError(f"could not find a single addon.xml under {path}")
+
+
+def _addon_source_inspect(source_path: str) -> dict[str, Any]:
+    xml_path = _addon_xml_path(source_path)
+    root = ElementTree.parse(xml_path).getroot()
+    addon_dir = xml_path.parent
+    extensions = [
+        {
+            "point": extension.attrib.get("point"),
+            "library": extension.attrib.get("library"),
+            "provides": extension.attrib.get("provides"),
+        }
+        for extension in root.findall("extension")
+    ]
+    entrypoints = sorted(
+        str(path.relative_to(addon_dir))
+        for path in addon_dir.rglob("*.py")
+        if not any(part in SOURCE_TREE_EXCLUDES for part in path.parts)
+    )[:100]
+    tests = sorted(
+        str(path.relative_to(addon_dir))
+        for path in addon_dir.rglob("test*.py")
+        if not any(part in SOURCE_TREE_EXCLUDES for part in path.parts)
+    )[:100]
+    project_map = addon_dir / "PROJECT_MAP.md"
+    return {
+        "ok": True,
+        "addon_id": root.attrib.get("id", ""),
+        "name": root.attrib.get("name", ""),
+        "version": root.attrib.get("version", ""),
+        "provider_name": root.attrib.get("provider-name", ""),
+        "addon_dir": str(addon_dir),
+        "addon_xml": str(xml_path),
+        "extensions": extensions,
+        "entrypoints": entrypoints,
+        "tests": tests,
+        "project_map": {
+            "exists": project_map.exists(),
+            "path": str(project_map),
+            "size_bytes": project_map.stat().st_size if project_map.exists() else None,
+        },
+    }
+
+
+def _addon_project_map_status(source_path: str) -> dict[str, Any]:
+    xml_path = _addon_xml_path(source_path)
+    project_map = xml_path.parent / "PROJECT_MAP.md"
+    return {
+        "ok": True,
+        "addon_dir": str(xml_path.parent),
+        "project_map_exists": project_map.exists(),
+        "project_map_path": str(project_map),
+        "size_bytes": project_map.stat().st_size if project_map.exists() else None,
+    }
+
+
+def _addon_source_tree(source_path: str, max_entries: int = 200) -> dict[str, Any]:
+    xml_path = _addon_xml_path(source_path)
+    addon_dir = xml_path.parent
+    max_entries = max(1, min(1000, max_entries))
+    entries: list[dict[str, Any]] = []
+    truncated = False
+    for path in sorted(addon_dir.rglob("*")):
+        rel = path.relative_to(addon_dir)
+        if any(part in SOURCE_TREE_EXCLUDES for part in rel.parts):
+            if path.is_dir():
+                continue
+            continue
+        if len(entries) >= max_entries:
+            truncated = True
+            break
+        entries.append(
+            {
+                "path": rel.as_posix(),
+                "type": "dir" if path.is_dir() else "file",
+                "size_bytes": None if path.is_dir() else path.stat().st_size,
+            }
+        )
+    return {
+        "ok": True,
+        "addon_dir": str(addon_dir),
+        "max_entries": max_entries,
+        "truncated": truncated,
+        "entries": entries,
+    }
+
+
+async def _bridge_log_recent_errors(bridge_tool: Any, lines: int = 300, pattern: str | None = None) -> dict[str, Any]:
+    lines = max(1, min(1000, lines if isinstance(lines, int) else 300))
+    raw_result = await bridge_tool.get_bridge_log_tail(lines=lines)
+    raw_value = _as_dict(raw_result)
+    log_text = ""
+    result_value = raw_value.get("result") if isinstance(raw_value, dict) else raw_value
+    if isinstance(result_value, str):
+        log_text = result_value
+    elif isinstance(result_value, dict):
+        for key in ("log", "text", "tail", "lines"):
+            value = result_value.get(key)
+            if isinstance(value, str):
+                log_text = value
+                break
+            if isinstance(value, list):
+                log_text = "\n".join(str(item) for item in value)
+                break
+    elif isinstance(result_value, list):
+        log_text = "\n".join(str(item) for item in result_value)
+
+    pattern_re = re.compile(pattern, re.IGNORECASE) if isinstance(pattern, str) and pattern.strip() else None
+    matches = []
+    for line in log_text.splitlines():
+        if not LOG_ERROR_RE.search(line):
+            continue
+        if pattern_re and not pattern_re.search(line):
+            continue
+        matches.append(line)
+
+    return {
+        "ok": True,
+        "lines_requested": lines,
+        "lines_scanned": len(log_text.splitlines()),
+        "pattern": pattern if pattern_re else None,
+        "count": len(matches),
+        "matching_lines": matches[-100:],
+        "request_id": raw_value.get("request_id") if isinstance(raw_value, dict) else None,
+    }
 
 
 async def _kodi_status(runtime: Runtime) -> dict[str, Any]:
@@ -375,6 +539,27 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                 },
             ),
             Tool(
+                name="bridge_log_recent_errors",
+                description="Return only recent error-like bridge/Kodi log lines, optionally filtered by a pattern.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "lines": {
+                            "type": "integer",
+                            "description": "Number of recent log lines to scan.",
+                            "minimum": 1,
+                            "maximum": 1000,
+                            "default": 300,
+                        },
+                        "pattern": {
+                            "type": "string",
+                            "description": "Optional case-insensitive regex that matching error lines must also satisfy.",
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
                 name="bridge_write_log_marker",
                 description="Write a unique marker into the Kodi log to bracket experiments and verify an action occurred.",
                 inputSchema={
@@ -504,7 +689,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         "expect_player": {
                             "type": "boolean",
                             "default": False,
-                            "description": "If true, fail the tool call unless an active Kodi player appears after launch.",
+                            "description": "Use only when the requested addon behavior is media playback. If true, fail the tool call unless an active Kodi player appears after launch. For UI/navigation addons, leave false and inspect gui_state or use expect_window / expect_fullscreen instead.",
                         },
                         "expect_window": {
                             "type": "string",
@@ -524,7 +709,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                             "default": 2,
                             "minimum": 0,
                             "maximum": 60,
-                            "description": "Seconds to observe active-player state after launch even when expect_player is false. This makes dispatch-only success visible to agents.",
+                            "description": "Seconds to observe active-player state after launch even when expect_player is false. This makes dispatch-only success visible without requiring playback verification.",
                         },
                         "player_timeout_seconds": {
                             "type": "integer",
@@ -556,6 +741,60 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         },
                     },
                     "required": ["addonid"],
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="addon_source_inspect",
+                description=(
+                    "Inspect a server-local addon source tree containing addon.xml. "
+                    "Use this for agent preflight instead of shelling out for addon identity."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "source_path": {
+                            "type": "string",
+                            "description": "Server-local path under KODI_MCP_SOURCE_ROOTS; must contain addon.xml.",
+                        }
+                    },
+                    "required": ["source_path"],
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="addon_project_map_status",
+                description="Report whether PROJECT_MAP.md exists for a server-local addon source tree.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "source_path": {
+                            "type": "string",
+                            "description": "Server-local path under KODI_MCP_SOURCE_ROOTS; must contain addon.xml.",
+                        }
+                    },
+                    "required": ["source_path"],
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="addon_source_tree",
+                description="Return a compact file tree for a server-local addon source tree.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "source_path": {
+                            "type": "string",
+                            "description": "Server-local path under KODI_MCP_SOURCE_ROOTS; must contain addon.xml.",
+                        },
+                        "max_entries": {
+                            "type": "integer",
+                            "default": 200,
+                            "minimum": 1,
+                            "maximum": 1000,
+                        },
+                    },
+                    "required": ["source_path"],
                     "additionalProperties": False,
                 },
             ),
@@ -922,6 +1161,29 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                     "additionalProperties": False,
                 },
             ),
+            Tool(
+                name="addon_dev_loop",
+                description=(
+                    "Alias for the one-shot artifact dev loop: publish an uploaded addon zip artifact, stage the repo, "
+                    "apply the addon, and verify the installed version."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "artifact_id": {"type": "string"},
+                        "addon_id": {"type": "string"},
+                        "addon_name": {"type": "string"},
+                        "addon_version": {"type": "string"},
+                        "provider_name": {"type": "string", "default": "kodi_mcp"},
+                        "repo_version": {"type": "string"},
+                        "verify": {"type": "boolean", "default": True},
+                        "timeout_seconds": {"type": "integer", "default": 45, "minimum": 1},
+                        "poll_interval_seconds": {"type": "integer", "default": 4, "minimum": 1},
+                    },
+                    "required": ["artifact_id", "addon_id", "addon_name", "addon_version"],
+                    "additionalProperties": False,
+                },
+            ),
         ]
 
         return ServerResult(ListToolsResult(tools=tools))
@@ -938,9 +1200,13 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
             "bridge_runtime_info",
             "bridge_log_tail",
             "bridge_log_markers",
+            "bridge_log_recent_errors",
             "addon_list",
             "addon_details",
             "addon_execute",
+            "addon_source_inspect",
+            "addon_project_map_status",
+            "addon_source_tree",
             "kodi_player_active",
             "kodi_player_item",
             "kodi_player_seek",
@@ -963,6 +1229,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
             "repo_stage_current_dev_repo",
             "repo_stage_and_apply_addon",
             "repo_publish_stage_apply_artifact",
+            "addon_dev_loop",
         }:
             # Preserve exact normalized missing-arg behavior for addon_details.
             if tool_name in {"addon_details", "addon_execute"}:
@@ -1036,6 +1303,32 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         "latency_ms": 0,
                         "request_id": None,
                         "raw": {"arguments": args, "allowed": sorted(allowed_actions)},
+                    }
+                    text = json.dumps(envelope, indent=2, sort_keys=True)
+                    return ServerResult(
+                        CallToolResult(
+                            isError=True,
+                            content=[TextContent(type="text", text=text)],
+                        )
+                    )
+
+            if tool_name in {"addon_source_inspect", "addon_project_map_status", "addon_source_tree"}:
+                args = request.params.arguments or {}
+                if not isinstance(args, dict):
+                    args = {}
+
+                source_path = args.get("source_path")
+                if not isinstance(source_path, str) or not source_path.strip():
+                    envelope = {
+                        "ok": False,
+                        "tool": tool_name,
+                        "data": None,
+                        "error": "missing required argument: source_path",
+                        "error_type": "invalid_params",
+                        "error_code": None,
+                        "latency_ms": 0,
+                        "request_id": None,
+                        "raw": {"arguments": args},
                     }
                     text = json.dumps(envelope, indent=2, sort_keys=True)
                     return ServerResult(
@@ -1133,6 +1426,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                 "repo_publish_artifact",
                 "repo_stage_and_apply_addon",
                 "repo_publish_stage_apply_artifact",
+                "addon_dev_loop",
             }:
                 args = request.params.arguments or {}
                 if not isinstance(args, dict):
@@ -1205,7 +1499,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                             )
                         )
 
-                if tool_name == "repo_publish_stage_apply_artifact":
+                if tool_name in {"repo_publish_stage_apply_artifact", "addon_dev_loop"}:
                     for k in ("artifact_id", "addon_id", "addon_name", "addon_version"):
                         v = args.get(k)
                         if not isinstance(v, str) or not v.strip():
@@ -1384,6 +1678,18 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         raw_result = await runtime["bridge"].get_bridge_log_tail(lines=lines)
                     else:
                         raw_result = await runtime["bridge"].get_bridge_log_markers(lines=lines)
+                elif tool_name == "bridge_log_recent_errors":
+                    args = request.params.arguments or {}
+                    if not isinstance(args, dict):
+                        args = {}
+                    lines = args.get("lines", 300)
+                    lines = lines if isinstance(lines, int) else 300
+                    pattern = args.get("pattern")
+                    raw_result = await _bridge_log_recent_errors(
+                        runtime["bridge"],
+                        lines=lines,
+                        pattern=pattern if isinstance(pattern, str) and pattern.strip() else None,
+                    )
                 elif tool_name == "addon_list":
                     args = request.params.arguments or {}
                     if not isinstance(args, dict):
@@ -1484,10 +1790,17 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                     ok = execute_ok and (player_started if expect_player else True) and gui_matched
 
                     verification_errors = []
+                    verification_guidance = []
                     if expect_player and not player_started:
                         verification_errors.append("expected active player did not appear after addon_execute")
+                        verification_guidance.append(
+                            "expect_player is a playback-only assertion. This is a failed verification, not a successful UI-addon launch check. For UI/navigation addons, rerun without expect_player and use gui_state, expect_window, expect_fullscreen, or screenshot evidence."
+                        )
                     if gui_verification_required and not gui_matched:
                         verification_errors.append("expected GUI state did not appear after addon_execute")
+                        verification_guidance.append(
+                            "GUI verification failed. Compare gui_verification.last_gui_state/current_window with the expected window, then adjust the expectation or investigate the addon UI."
+                        )
                     raw_result = {
                         "ok": ok,
                         "addonid": addonid,
@@ -1504,6 +1817,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         },
                         "gui_state": gui_state,
                         "gui_verification": gui_verification,
+                        "verification_guidance": verification_guidance,
                         "note": (
                             "addon_execute dispatch succeeded; no active player was observed in the post-launch window"
                             if execute_ok and not player_started and not gui_verification_required
@@ -1514,6 +1828,23 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         "error_code": None,
                         "request_id": getattr(execute_result, "request_id", None),
                     }
+                elif tool_name == "addon_source_inspect":
+                    args = request.params.arguments or {}
+                    if not isinstance(args, dict):
+                        args = {}
+                    raw_result = _addon_source_inspect(str(args.get("source_path") or "").strip())
+                elif tool_name == "addon_project_map_status":
+                    args = request.params.arguments or {}
+                    if not isinstance(args, dict):
+                        args = {}
+                    raw_result = _addon_project_map_status(str(args.get("source_path") or "").strip())
+                elif tool_name == "addon_source_tree":
+                    args = request.params.arguments or {}
+                    if not isinstance(args, dict):
+                        args = {}
+                    max_entries = args.get("max_entries", 200)
+                    max_entries = max_entries if isinstance(max_entries, int) else 200
+                    raw_result = _addon_source_tree(str(args.get("source_path") or "").strip(), max_entries=max_entries)
                 elif tool_name == "kodi_player_active":
                     raw_result = await runtime["jsonrpc"].get_active_players()
                 elif tool_name == "kodi_player_item":
@@ -1939,7 +2270,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                             else None
                         ),
                     )
-                elif tool_name == "repo_publish_stage_apply_artifact":
+                elif tool_name in {"repo_publish_stage_apply_artifact", "addon_dev_loop"}:
                     args = request.params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}

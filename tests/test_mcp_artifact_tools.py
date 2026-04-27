@@ -30,6 +30,24 @@ def _zip_without_addon_xml() -> bytes:
     return buf.getvalue()
 
 
+def _write_source_addon(root: Path, *, addon_id: str = "script.kodi_mcp_test", version: str = "0.0.1") -> Path:
+    addon_dir = root / addon_id
+    addon_dir.mkdir(parents=True)
+    (addon_dir / "addon.xml").write_text(
+        (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+            f'<addon id="{addon_id}" name="Kodi MCP Test Script" version="{version}" provider-name="kodi_mcp">\n'
+            '  <requires><import addon="xbmc.python" version="3.0.0"/></requires>\n'
+            '  <extension point="xbmc.python.script" library="default.py"/>\n'
+            "</addon>\n"
+        ),
+        encoding="utf-8",
+    )
+    (addon_dir / "default.py").write_text("print('ok')\n", encoding="utf-8")
+    (addon_dir / "PROJECT_MAP.md").write_text("# Project Map\n", encoding="utf-8")
+    return addon_dir
+
+
 @pytest.mark.asyncio
 async def test_mcp_artifact_upload_and_publish(tmp_path: Path, monkeypatch):
     """Validate MCP tool surface for artifact upload + publish.
@@ -114,6 +132,116 @@ async def test_mcp_artifact_upload_and_publish(tmp_path: Path, monkeypatch):
     # Confirm repo metadata exists.
     addons_xml = (repo_root / "dev-repo" / "addons.xml").read_text(encoding="utf-8")
     assert 'id="script.kodi_mcp_test"' in addons_xml
+
+
+@pytest.mark.asyncio
+async def test_mcp_addon_source_tools_inspect_project_map_and_tree(tmp_path: Path, monkeypatch):
+    import json
+
+    source_dir = _write_source_addon(tmp_path / "source")
+    monkeypatch.setenv("KODI_MCP_SOURCE_ROOTS", str(tmp_path))
+
+    from kodi_mcp_mcp.server_core import build_mcp_server, build_runtime
+    from mcp.types import CallToolRequest, CallToolRequestParams
+
+    server, _ = build_mcp_server(build_runtime())
+
+    async def call(name: str, arguments: dict):
+        resp = await server.request_handlers[CallToolRequest](
+            CallToolRequest(
+                method="tools/call",
+                params=CallToolRequestParams(name=name, arguments=arguments),
+            )
+        )
+        return json.loads(resp.root.content[0].text)
+
+    inspect_env = await call("addon_source_inspect", {"source_path": str(source_dir)})
+    assert inspect_env["ok"] is True
+    assert inspect_env["data"]["addon_id"] == "script.kodi_mcp_test"
+    assert inspect_env["data"]["version"] == "0.0.1"
+    assert inspect_env["data"]["project_map"]["exists"] is True
+    assert "default.py" in inspect_env["data"]["entrypoints"]
+
+    map_env = await call("addon_project_map_status", {"source_path": str(source_dir)})
+    assert map_env["ok"] is True
+    assert map_env["data"]["project_map_exists"] is True
+
+    tree_env = await call("addon_source_tree", {"source_path": str(source_dir), "max_entries": 10})
+    assert tree_env["ok"] is True
+    assert {"path": "default.py", "type": "file", "size_bytes": 12} in tree_env["data"]["entries"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_bridge_log_recent_errors_filters_log_lines():
+    import json
+
+    from kodi_mcp_server.models.messages import ResponseMessage
+    from kodi_mcp_mcp.server_core import build_mcp_server
+    from mcp.types import CallToolRequest, CallToolRequestParams
+
+    class _Bridge:
+        async def get_bridge_log_tail(self, lines: int):
+            return ResponseMessage(
+                request_id="log",
+                result={"lines": ["INFO normal", "WARNING addon slow", "ERROR plugin failed", "Traceback details"]},
+                error=None,
+            )
+
+    server, _ = build_mcp_server({"bridge": _Bridge(), "jsonrpc": object(), "notifications": None})
+    resp = await server.request_handlers[CallToolRequest](
+        CallToolRequest(
+            method="tools/call",
+            params=CallToolRequestParams(
+                name="bridge_log_recent_errors",
+                arguments={"lines": 50, "pattern": "addon|plugin"},
+            ),
+        )
+    )
+    env = json.loads(resp.root.content[0].text)
+    assert env["ok"] is True
+    assert env["data"]["count"] == 2
+    assert env["data"]["matching_lines"] == ["WARNING addon slow", "ERROR plugin failed"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_addon_dev_loop_alias_dispatches_one_shot(monkeypatch):
+    import json
+
+    import kodi_mcp_mcp.server_core as server_core
+    from kodi_mcp_mcp.server_core import build_mcp_server
+    from mcp.types import CallToolRequest, CallToolRequestParams
+
+    called = {}
+
+    async def _fake_dev_loop(**kwargs):
+        called.update(kwargs)
+        return {"ok": True, "apply_verified": True, "installed_version_after": kwargs["addon_version"]}
+
+    monkeypatch.setattr(server_core, "_repo_publish_stage_apply_artifact", _fake_dev_loop)
+
+    server, _ = build_mcp_server({"bridge": object(), "jsonrpc": object(), "notifications": None})
+    resp = await server.request_handlers[CallToolRequest](
+        CallToolRequest(
+            method="tools/call",
+            params=CallToolRequestParams(
+                name="addon_dev_loop",
+                arguments={
+                    "artifact_id": "artifact-1",
+                    "addon_id": "script.kodi_mcp_test",
+                    "addon_name": "Kodi MCP Test Script",
+                    "addon_version": "0.0.5",
+                    "timeout_seconds": 7,
+                    "poll_interval_seconds": 1,
+                },
+            ),
+        )
+    )
+    env = json.loads(resp.root.content[0].text)
+    assert env["ok"] is True
+    assert env["data"]["apply_verified"] is True
+    assert called["artifact_id"] == "artifact-1"
+    assert called["runtime_bridge_tool"] is not None
+    assert called["runtime_jsonrpc_tool"] is not None
 
 
 @pytest.mark.parametrize(
@@ -472,6 +600,7 @@ async def test_mcp_addon_execute_verification_fails_when_player_missing():
     assert env["ok"] is False
     assert env["error_type"] == "verification_failed"
     assert env["data"]["player_verification"]["player_started"] is False
+    assert "playback-only assertion" in env["data"]["verification_guidance"][0]
 
 
 @pytest.mark.asyncio
