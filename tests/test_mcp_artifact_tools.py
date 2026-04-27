@@ -308,6 +308,97 @@ async def test_mcp_addon_execute_accepts_addon_id_alias():
 
 
 @pytest.mark.asyncio
+async def test_mcp_addon_execute_includes_gui_state_by_default():
+    import json
+
+    from kodi_mcp_server.models.messages import ResponseMessage
+    from kodi_mcp_mcp.server_core import build_mcp_server
+    from mcp.types import CallToolRequest, CallToolRequestParams
+
+    class _JsonRpc:
+        async def execute_addon(self, addonid: str, params=None, wait: bool = False):
+            return ResponseMessage(request_id="exec", result="OK", error=None)
+
+        async def get_active_players(self):
+            return ResponseMessage(request_id="active", result=[], error=None)
+
+    class _Bridge:
+        async def gui_state(self):
+            return ResponseMessage(
+                request_id="gui",
+                result={
+                    "current_window": "Videos",
+                    "current_control": "[..]",
+                    "conditions": {"fullscreen_video": False},
+                },
+                error=None,
+            )
+
+    server, _ = build_mcp_server({"bridge": _Bridge(), "jsonrpc": _JsonRpc(), "notifications": None})
+
+    resp = await server.request_handlers[CallToolRequest](
+        CallToolRequest(
+            method="tools/call",
+            params=CallToolRequestParams(
+                name="addon_execute",
+                arguments={"addonid": "plugin.kodi_world_poc", "observe_player_seconds": 0},
+            ),
+        )
+    )
+    env = json.loads(resp.root.content[0].text)
+    assert env["ok"] is True
+    assert env["data"]["gui_state"]["captured"] is True
+    assert env["data"]["gui_state"]["source"] == "kodi_gui_state"
+    assert env["data"]["gui_state"]["state"]["current_window"] == "Videos"
+    assert env["data"]["gui_state"]["request_id"] == "gui"
+
+
+@pytest.mark.asyncio
+async def test_mcp_addon_execute_can_disable_default_gui_state():
+    import json
+
+    from kodi_mcp_server.models.messages import ResponseMessage
+    from kodi_mcp_mcp.server_core import build_mcp_server
+    from mcp.types import CallToolRequest, CallToolRequestParams
+
+    class _JsonRpc:
+        async def execute_addon(self, addonid: str, params=None, wait: bool = False):
+            return ResponseMessage(request_id="exec", result="OK", error=None)
+
+        async def get_active_players(self):
+            return ResponseMessage(request_id="active", result=[], error=None)
+
+    class _Bridge:
+        async def gui_state(self):
+            raise AssertionError("gui_state should not be called when include_gui_state is false")
+
+    server, _ = build_mcp_server({"bridge": _Bridge(), "jsonrpc": _JsonRpc(), "notifications": None})
+
+    resp = await server.request_handlers[CallToolRequest](
+        CallToolRequest(
+            method="tools/call",
+            params=CallToolRequestParams(
+                name="addon_execute",
+                arguments={
+                    "addonid": "plugin.kodi_world_poc",
+                    "include_gui_state": False,
+                    "observe_player_seconds": 0,
+                },
+            ),
+        )
+    )
+    env = json.loads(resp.root.content[0].text)
+    assert env["ok"] is True
+    assert env["data"]["gui_state"] == {
+        "captured": False,
+        "source": "disabled",
+        "state": None,
+        "error": None,
+        "request_id": None,
+    }
+
+
+@pytest.mark.asyncio
 async def test_mcp_addon_execute_can_verify_player_started():
     import json
 
@@ -433,6 +524,8 @@ async def test_mcp_addon_execute_can_verify_window_state():
     assert env["data"]["gui_verification"]["matched"] is True
     assert env["data"]["gui_verification"]["window_matched"] is True
     assert env["data"]["gui_verification"]["fullscreen_matched"] is True
+    assert env["data"]["gui_state"]["source"] == "gui_verification"
+    assert env["data"]["gui_state"]["state"]["current_window"] == "Kodi World PoC Navigation"
 
 
 @pytest.mark.asyncio

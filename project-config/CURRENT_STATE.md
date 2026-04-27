@@ -60,7 +60,7 @@ GUI MCP tools:
 - `kodi_gui_state`
 - `addon_execute`
 
-These wrap bridge addon endpoints for basic Kodi GUI navigation and screenshot capture. Screenshot capture is remote-safe by default: the MCP server requests image data from the Kodi bridge, stores the PNG under the configured server screenshot store, serves it at `/screenshots/<id>.png`, and applies age/count cleanup using `KODI_SCREENSHOT_RETENTION_SECONDS` and `KODI_SCREENSHOT_MAX_FILES`.
+These wrap bridge addon endpoints for basic Kodi GUI navigation and screenshot capture. `addon_execute` includes post-launch `gui_state` by default and can enforce `expect_window` / `expect_fullscreen` checks. Screenshot capture is remote-safe by default: the MCP server requests image data from the Kodi bridge, stores the PNG under the configured server screenshot store, serves it at `/screenshots/<id>.png`, and applies age/count cleanup using `KODI_SCREENSHOT_RETENTION_SECONDS` and `KODI_SCREENSHOT_MAX_FILES`.
 
 Playback MCP tools:
 

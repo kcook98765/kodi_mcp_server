@@ -167,6 +167,41 @@ async def _observe_gui_state(
     }
 
 
+async def _read_gui_state(bridge_tool: Any) -> dict[str, Any]:
+    """Read Kodi GUI state once without making addon execution depend on it."""
+    gui_state = getattr(bridge_tool, "gui_state", None)
+    if not callable(gui_state):
+        return {
+            "captured": False,
+            "source": "kodi_gui_state",
+            "state": None,
+            "error": "bridge tool does not expose gui_state",
+            "request_id": None,
+        }
+
+    try:
+        gui_result = await gui_state()
+    except Exception as exc:  # pragma: no cover - defensive around live bridge transport
+        return {
+            "captured": False,
+            "source": "kodi_gui_state",
+            "state": None,
+            "error": str(exc),
+            "request_id": None,
+        }
+
+    gui_value = _as_dict(gui_result)
+    state = gui_value.get("result") if isinstance(gui_value, dict) and "result" in gui_value else gui_value
+    error = gui_value.get("error") if isinstance(gui_value, dict) else None
+    return {
+        "captured": error is None,
+        "source": "kodi_gui_state",
+        "state": state if error is None else None,
+        "error": error,
+        "request_id": getattr(gui_result, "request_id", None),
+    }
+
+
 Runtime = dict[str, Any]
 
 
@@ -478,6 +513,11 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         "expect_fullscreen": {
                             "type": "boolean",
                             "description": "If provided, fail unless Kodi fullscreen-video state matches this value after launch.",
+                        },
+                        "include_gui_state": {
+                            "type": "boolean",
+                            "default": True,
+                            "description": "Include one post-launch kodi_gui_state snapshot in the response. Enabled by default so agents can see window/control/player context without an extra tool call.",
                         },
                         "observe_player_seconds": {
                             "type": "integer",
@@ -1379,6 +1419,8 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                     expect_window = expect_window.strip() if isinstance(expect_window, str) and expect_window.strip() else None
                     expect_fullscreen = args.get("expect_fullscreen")
                     expect_fullscreen = expect_fullscreen if isinstance(expect_fullscreen, bool) else None
+                    include_gui_state = args.get("include_gui_state", True)
+                    include_gui_state = include_gui_state if isinstance(include_gui_state, bool) else True
                     timeout_seconds = args.get("player_timeout_seconds", 8)
                     timeout_seconds = timeout_seconds if isinstance(timeout_seconds, int) else 8
                     timeout_seconds = max(1, min(60, timeout_seconds))
@@ -1414,6 +1456,24 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                             timeout_seconds=window_timeout_seconds,
                             poll_interval_ms=window_poll_interval_ms,
                         )
+                    if gui_verification is not None:
+                        gui_state = {
+                            "captured": True,
+                            "source": "gui_verification",
+                            "state": gui_verification.get("last_gui_state"),
+                            "error": None,
+                            "request_id": None,
+                        }
+                    elif include_gui_state:
+                        gui_state = await _read_gui_state(runtime["bridge"])
+                    else:
+                        gui_state = {
+                            "captured": False,
+                            "source": "disabled",
+                            "state": None,
+                            "error": None,
+                            "request_id": None,
+                        }
                     gui_matched = bool((gui_verification or {}).get("matched", False)) if gui_verification_required else True
                     verification_required = bool(expect_player or gui_verification_required)
                     verified = (
@@ -1442,6 +1502,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                             "expected": expect_player,
                             **player_observation,
                         },
+                        "gui_state": gui_state,
                         "gui_verification": gui_verification,
                         "note": (
                             "addon_execute dispatch succeeded; no active player was observed in the post-launch window"

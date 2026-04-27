@@ -184,7 +184,7 @@ GUI helpers:
 - `kodi_gui_action` sends basic navigation actions (`up`, `down`, `left`, `right`, `select`, `back`, `home`, `context`, `info`) and the cleanup action `stop`.
 - `kodi_gui_screenshot` captures a Kodi GUI screenshot through the bridge addon, stores it on the MCP server by default, and returns a `/screenshots/<id>.png` URL.
 - `kodi_gui_state` returns compact Kodi window/control/player state for UI verification.
-- `addon_execute` launches an addon through Kodi JSON-RPC without using the legacy HTTP companion endpoint. It can verify player startup with `expect_player` or UI state with `expect_window` / `expect_fullscreen`.
+- `addon_execute` launches an addon through Kodi JSON-RPC without using the legacy HTTP companion endpoint. It returns post-launch `gui_state` by default and can verify player startup with `expect_player` or UI state with `expect_window` / `expect_fullscreen`.
 - These can assist first-install UI navigation, but deterministic bridge/repo state checks should remain the primary workflow.
 
 Playback helpers:
