@@ -28,6 +28,27 @@ class _FakeBridge:
             error=None,
         )
 
+    async def gui_state(self):
+        return ResponseMessage(
+            request_id="fake-gui-state",
+            result={
+                "ok": True,
+                "current_window": "Videos",
+                "current_window_id": 10025,
+                "current_dialog_id": 0,
+                "current_control": "Options",
+                "conditions": {
+                    "fullscreen_video": False,
+                    "player_has_media": False,
+                    "player_has_video": False,
+                    "player_playing": False,
+                    "player_paused": False,
+                },
+                "active_players": [],
+            },
+            error=None,
+        )
+
 
 class _FakeJsonRpc:
     async def execute_input_action(self, action: str):
@@ -90,6 +111,17 @@ async def test_gui_tools_dispatch_through_bridge():
         assert screenshot_env["data"]["content_type"] == "image/png"
         assert screenshot_env["data"]["image_base64"] == "ZmFrZQ=="
         assert screenshot_env["data"]["server_screenshot"]["url"] == "http://server/screenshots/shot-1.png"
+
+        state_resp = await server.request_handlers[CallToolRequest](
+            CallToolRequest(
+                method="tools/call",
+                params=CallToolRequestParams(name="kodi_gui_state", arguments={}),
+            )
+        )
+        state_env = json.loads(state_resp.root.content[0].text)
+        assert state_env["ok"] is True
+        assert state_env["data"]["current_window"] == "Videos"
+        assert state_env["data"]["conditions"]["fullscreen_video"] is False
     finally:
         monkeypatch.undo()
 

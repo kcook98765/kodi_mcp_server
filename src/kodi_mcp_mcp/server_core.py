@@ -106,6 +106,67 @@ async def _observe_active_players(
     }
 
 
+async def _observe_gui_state(
+    bridge_tool: Any,
+    *,
+    expect_window: str | None,
+    expect_fullscreen: bool | None,
+    timeout_seconds: int,
+    poll_interval_ms: int,
+) -> dict[str, Any]:
+    """Poll Kodi GUI state until all requested expectations match or timeout."""
+    timeout_seconds = max(1, min(60, timeout_seconds))
+    poll_interval_ms = max(100, min(5000, poll_interval_ms))
+    expected_window = (expect_window or "").strip()
+
+    last_gui_state: Any = None
+    checks = 0
+    deadline = time.monotonic() + timeout_seconds
+    window_matched = expected_window == ""
+    fullscreen_matched = expect_fullscreen is None
+
+    while True:
+        checks += 1
+        gui_result = await bridge_tool.gui_state()
+        gui_value = _as_dict(gui_result)
+        last_gui_state = gui_value.get("result") if isinstance(gui_value, dict) and "result" in gui_value else gui_value
+
+        current_window = ""
+        fullscreen_video = None
+        if isinstance(last_gui_state, dict):
+            current_window = str(last_gui_state.get("current_window") or "")
+            conditions = last_gui_state.get("conditions") or {}
+            if isinstance(conditions, dict):
+                fullscreen_video = conditions.get("fullscreen_video")
+
+        window_matched = (
+            True
+            if not expected_window
+            else expected_window.casefold() in current_window.casefold()
+        )
+        fullscreen_matched = (
+            True
+            if expect_fullscreen is None
+            else bool(fullscreen_video) is expect_fullscreen
+        )
+
+        if (window_matched and fullscreen_matched) or time.monotonic() >= deadline:
+            break
+        await asyncio.sleep(poll_interval_ms / 1000)
+
+    return {
+        "expected_window": expected_window or None,
+        "expected_fullscreen": expect_fullscreen,
+        "matched": bool(window_matched and fullscreen_matched),
+        "window_matched": bool(window_matched),
+        "fullscreen_matched": bool(fullscreen_matched),
+        "timeout_seconds": timeout_seconds,
+        "poll_interval_ms": poll_interval_ms,
+        "checks": checks,
+        "last_gui_state": last_gui_state,
+    }
+
+
 Runtime = dict[str, Any]
 
 
@@ -340,6 +401,15 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                 },
             ),
             Tool(
+                name="kodi_gui_state",
+                description="Return compact Kodi GUI/window/player state through the bridge addon for UI verification.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
                 name="addon_list",
                 description="List addons (optionally filtered by type and/or enabled) to confirm install/enable state during dev.",
                 inputSchema={
@@ -401,6 +471,14 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                             "default": False,
                             "description": "If true, fail the tool call unless an active Kodi player appears after launch.",
                         },
+                        "expect_window": {
+                            "type": "string",
+                            "description": "If provided, fail unless the current Kodi window contains this text after launch.",
+                        },
+                        "expect_fullscreen": {
+                            "type": "boolean",
+                            "description": "If provided, fail unless Kodi fullscreen-video state matches this value after launch.",
+                        },
                         "observe_player_seconds": {
                             "type": "integer",
                             "default": 2,
@@ -421,6 +499,20 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                             "minimum": 100,
                             "maximum": 5000,
                             "description": "Delay between active-player checks when expect_player is true.",
+                        },
+                        "window_timeout_seconds": {
+                            "type": "integer",
+                            "default": 8,
+                            "minimum": 1,
+                            "maximum": 60,
+                            "description": "Seconds to wait for GUI state expectations.",
+                        },
+                        "window_poll_interval_ms": {
+                            "type": "integer",
+                            "default": 500,
+                            "minimum": 100,
+                            "maximum": 5000,
+                            "description": "Delay between GUI state checks.",
                         },
                     },
                     "required": ["addonid"],
@@ -819,6 +911,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
             "bridge_write_log_marker",
             "kodi_gui_action",
             "kodi_gui_screenshot",
+            "kodi_gui_state",
             "managed_addon_register",
             "managed_addon_list",
             "managed_addon_get",
@@ -1282,6 +1375,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
 
                     expect_player = args.get("expect_player", False)
                     expect_player = expect_player if isinstance(expect_player, bool) else False
+                    expect_window = args.get("expect_window")
+                    expect_window = expect_window.strip() if isinstance(expect_window, str) and expect_window.strip() else None
+                    expect_fullscreen = args.get("expect_fullscreen")
+                    expect_fullscreen = expect_fullscreen if isinstance(expect_fullscreen, bool) else None
                     timeout_seconds = args.get("player_timeout_seconds", 8)
                     timeout_seconds = timeout_seconds if isinstance(timeout_seconds, int) else 8
                     timeout_seconds = max(1, min(60, timeout_seconds))
@@ -1291,6 +1388,12 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                     poll_interval_ms = args.get("poll_interval_ms", 500)
                     poll_interval_ms = poll_interval_ms if isinstance(poll_interval_ms, int) else 500
                     poll_interval_ms = max(100, min(5000, poll_interval_ms))
+                    window_timeout_seconds = args.get("window_timeout_seconds", 8)
+                    window_timeout_seconds = window_timeout_seconds if isinstance(window_timeout_seconds, int) else 8
+                    window_timeout_seconds = max(1, min(60, window_timeout_seconds))
+                    window_poll_interval_ms = args.get("window_poll_interval_ms", 500)
+                    window_poll_interval_ms = window_poll_interval_ms if isinstance(window_poll_interval_ms, int) else 500
+                    window_poll_interval_ms = max(100, min(5000, window_poll_interval_ms))
 
                     execute_value = _as_dict(execute_result)
                     execute_ok = not (isinstance(execute_value, dict) and execute_value.get("error") is not None)
@@ -1301,8 +1404,30 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         poll_interval_ms=poll_interval_ms,
                     )
                     player_started = bool(player_observation["player_started"])
-                    verified = player_started if expect_player else None
-                    ok = execute_ok and (player_started if expect_player else True)
+                    gui_verification_required = expect_window is not None or expect_fullscreen is not None
+                    gui_verification = None
+                    if gui_verification_required:
+                        gui_verification = await _observe_gui_state(
+                            runtime["bridge"],
+                            expect_window=expect_window,
+                            expect_fullscreen=expect_fullscreen,
+                            timeout_seconds=window_timeout_seconds,
+                            poll_interval_ms=window_poll_interval_ms,
+                        )
+                    gui_matched = bool((gui_verification or {}).get("matched", False)) if gui_verification_required else True
+                    verification_required = bool(expect_player or gui_verification_required)
+                    verified = (
+                        (player_started if expect_player else True) and gui_matched
+                        if verification_required
+                        else None
+                    )
+                    ok = execute_ok and (player_started if expect_player else True) and gui_matched
+
+                    verification_errors = []
+                    if expect_player and not player_started:
+                        verification_errors.append("expected active player did not appear after addon_execute")
+                    if gui_verification_required and not gui_matched:
+                        verification_errors.append("expected GUI state did not appear after addon_execute")
                     raw_result = {
                         "ok": ok,
                         "addonid": addonid,
@@ -1311,22 +1436,19 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         "execute": execute_value,
                         "dispatch_ok": execute_ok,
                         "verified": verified,
-                        "verification_required": expect_player,
+                        "verification_required": verification_required,
                         "player_observation": player_observation,
                         "player_verification": {
                             "expected": expect_player,
                             **player_observation,
                         },
+                        "gui_verification": gui_verification,
                         "note": (
                             "addon_execute dispatch succeeded; no active player was observed in the post-launch window"
-                            if execute_ok and not player_started
+                            if execute_ok and not player_started and not gui_verification_required
                             else None
                         ),
-                        "error": (
-                            None
-                            if ok
-                            else "expected active player did not appear after addon_execute"
-                        ),
+                        "error": None if ok else "; ".join(verification_errors) or "addon_execute verification failed",
                         "error_type": None if ok else "verification_failed",
                         "error_code": None,
                         "request_id": getattr(execute_result, "request_id", None),
@@ -1518,6 +1640,8 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                     if isinstance(raw_value, dict) and isinstance(bridge_result, dict):
                         raw_value["result"] = bridge_result
                     raw_result = raw_value
+                elif tool_name == "kodi_gui_state":
+                    raw_result = await runtime["bridge"].gui_state()
                 elif tool_name == "managed_addon_register":
                     args = request.params.arguments or {}
                     if not isinstance(args, dict):

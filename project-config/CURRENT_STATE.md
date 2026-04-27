@@ -57,6 +57,7 @@ GUI MCP tools:
 
 - `kodi_gui_action`
 - `kodi_gui_screenshot`
+- `kodi_gui_state`
 - `addon_execute`
 
 These wrap bridge addon endpoints for basic Kodi GUI navigation and screenshot capture. Screenshot capture is remote-safe by default: the MCP server requests image data from the Kodi bridge, stores the PNG under the configured server screenshot store, serves it at `/screenshots/<id>.png`, and applies age/count cleanup using `KODI_SCREENSHOT_RETENTION_SECONDS` and `KODI_SCREENSHOT_MAX_FILES`.
@@ -87,7 +88,7 @@ Preferred split-host artifact loop:
 
 1. `artifact_upload_zip`
 2. `repo_publish_stage_apply_artifact`
-3. `kodi_gui_screenshot`, `kodi_player_*`, or addon-specific verification
+3. `kodi_gui_state`, `kodi_gui_screenshot`, `kodi_player_*`, or addon-specific verification
 
 Artifact upload validates addon zips before they reach the repo. The one-shot artifact workflow returns `apply_verified`, `installed_version_after`, `apply_status`, `can_retry`, and `failure_reason` so agents do not need to infer success from a raw apply attempt.
 

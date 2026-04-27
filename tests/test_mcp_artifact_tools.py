@@ -384,6 +384,110 @@ async def test_mcp_addon_execute_verification_fails_when_player_missing():
 
 
 @pytest.mark.asyncio
+async def test_mcp_addon_execute_can_verify_window_state():
+    import json
+
+    from kodi_mcp_server.models.messages import ResponseMessage
+    from kodi_mcp_mcp.server_core import build_mcp_server
+    from mcp.types import CallToolRequest, CallToolRequestParams
+
+    class _JsonRpc:
+        async def execute_addon(self, addonid: str, params=None, wait: bool = False):
+            return ResponseMessage(request_id="exec", result="OK", error=None)
+
+        async def get_active_players(self):
+            return ResponseMessage(request_id="active", result=[], error=None)
+
+    class _Bridge:
+        async def gui_state(self):
+            return ResponseMessage(
+                request_id="gui",
+                result={
+                    "current_window": "Kodi World PoC Navigation",
+                    "conditions": {"fullscreen_video": False},
+                },
+                error=None,
+            )
+
+    server, _ = build_mcp_server({"bridge": _Bridge(), "jsonrpc": _JsonRpc(), "notifications": None})
+
+    resp = await server.request_handlers[CallToolRequest](
+        CallToolRequest(
+            method="tools/call",
+            params=CallToolRequestParams(
+                name="addon_execute",
+                arguments={
+                    "addonid": "plugin.kodi_world_poc",
+                    "expect_window": "world poc",
+                    "expect_fullscreen": False,
+                    "window_timeout_seconds": 1,
+                    "window_poll_interval_ms": 100,
+                    "observe_player_seconds": 0,
+                },
+            ),
+        )
+    )
+    env = json.loads(resp.root.content[0].text)
+    assert env["ok"] is True
+    assert env["data"]["verified"] is True
+    assert env["data"]["gui_verification"]["matched"] is True
+    assert env["data"]["gui_verification"]["window_matched"] is True
+    assert env["data"]["gui_verification"]["fullscreen_matched"] is True
+
+
+@pytest.mark.asyncio
+async def test_mcp_addon_execute_window_verification_fails_when_window_missing():
+    import json
+
+    from kodi_mcp_server.models.messages import ResponseMessage
+    from kodi_mcp_mcp.server_core import build_mcp_server
+    from mcp.types import CallToolRequest, CallToolRequestParams
+
+    class _JsonRpc:
+        async def execute_addon(self, addonid: str, params=None, wait: bool = False):
+            return ResponseMessage(request_id="exec", result="OK", error=None)
+
+        async def get_active_players(self):
+            return ResponseMessage(request_id="active", result=[], error=None)
+
+    class _Bridge:
+        async def gui_state(self):
+            return ResponseMessage(
+                request_id="gui",
+                result={
+                    "current_window": "Videos",
+                    "conditions": {"fullscreen_video": False},
+                },
+                error=None,
+            )
+
+    server, _ = build_mcp_server({"bridge": _Bridge(), "jsonrpc": _JsonRpc(), "notifications": None})
+
+    resp = await server.request_handlers[CallToolRequest](
+        CallToolRequest(
+            method="tools/call",
+            params=CallToolRequestParams(
+                name="addon_execute",
+                arguments={
+                    "addonid": "plugin.kodi_world_poc",
+                    "expect_window": "navigation",
+                    "window_timeout_seconds": 1,
+                    "window_poll_interval_ms": 100,
+                    "observe_player_seconds": 0,
+                },
+            ),
+        )
+    )
+    env = json.loads(resp.root.content[0].text)
+    assert env["ok"] is False
+    assert env["error_type"] == "verification_failed"
+    assert env["data"]["dispatch_ok"] is True
+    assert env["data"]["verified"] is False
+    assert env["data"]["gui_verification"]["matched"] is False
+    assert env["data"]["gui_verification"]["last_gui_state"]["current_window"] == "Videos"
+
+
+@pytest.mark.asyncio
 async def test_repo_publish_stage_apply_artifact_reports_installed_version_mismatch(tmp_path: Path, monkeypatch):
     import importlib
     import json

@@ -269,6 +269,18 @@ class HttpBridgeClient:
             latency_ms=result.latency_ms,
         )
 
+    async def gui_state(self) -> ResponseMessage:
+        request_id = "bridge-gui-state"
+        result = self._make_request("GET", "/gui/state")
+        return self._response(
+            request_id=request_id,
+            result=result.result,
+            error=result.error,
+            error_type=result.error_type,
+            error_code=result.error_code,
+            latency_ms=result.latency_ms,
+        )
+
     async def ensure_addon_enabled(self, addonid: str) -> ResponseMessage:
         request_id = "bridge-ensure-addon-enabled"
         result = self._make_request("POST", "/addon/ensure-enabled", query={"addonid": addonid}, payload={})
