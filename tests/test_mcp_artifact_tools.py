@@ -172,6 +172,37 @@ async def test_mcp_addon_source_tools_inspect_project_map_and_tree(tmp_path: Pat
 
 
 @pytest.mark.asyncio
+async def test_mcp_addon_source_tools_translate_agent_workspace_paths(tmp_path: Path, monkeypatch):
+    import json
+
+    source_dir = _write_source_addon(tmp_path / "agent_mcp_probe_script" / "addon")
+    monkeypatch.setenv("KODI_MCP_SOURCE_ROOTS", str(tmp_path))
+
+    import kodi_mcp_mcp.server_core as server_core
+    from kodi_mcp_mcp.server_core import build_mcp_server, build_runtime
+    from mcp.types import CallToolRequest, CallToolRequestParams
+
+    def _test_translate(source_path: str) -> str:
+        return source_path.replace("/srv/workspaces/", f"{tmp_path}/", 1)
+
+    monkeypatch.setattr(server_core, "_translate_agent_source_path", _test_translate)
+    server, _ = build_mcp_server(build_runtime())
+    resp = await server.request_handlers[CallToolRequest](
+        CallToolRequest(
+            method="tools/call",
+            params=CallToolRequestParams(
+                name="addon_source_inspect",
+                arguments={"source_path": "/srv/workspaces/agent_mcp_probe_script/addon/script.kodi_mcp_test"},
+            ),
+        )
+    )
+    env = json.loads(resp.root.content[0].text)
+    assert env["ok"] is True
+    assert env["data"]["addon_id"] == "script.kodi_mcp_test"
+    assert env["data"]["addon_dir"] == str(source_dir)
+
+
+@pytest.mark.asyncio
 async def test_mcp_bridge_log_recent_errors_filters_log_lines():
     import json
 

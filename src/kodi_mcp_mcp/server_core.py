@@ -233,10 +233,24 @@ def _source_roots() -> list[Path]:
     return roots
 
 
+def _translate_agent_source_path(source_path: str) -> str:
+    """Translate known agent-container mounts to MCP-server host paths."""
+    path = source_path.strip()
+    mappings = (
+        ("/srv/workspaces/kodi_3d_pov/", "/home/kyle/workspace/kodi_3d_pov/"),
+        ("/srv/workspaces/", "/srv/agent-work/"),
+        ("/srv/knowledge/kodi_3d_pov/", "/home/kyle/workspace/kodi_3d_pov/"),
+    )
+    for prefix, replacement in mappings:
+        if path.startswith(prefix):
+            return replacement + path[len(prefix):]
+    return path
+
+
 def _resolve_allowed_source_path(source_path: str) -> Path:
     if not source_path or not source_path.strip():
         raise ValueError("source_path is required")
-    path = Path(source_path).expanduser().resolve()
+    path = Path(_translate_agent_source_path(source_path)).expanduser().resolve()
     roots = _source_roots()
     if roots and not any(path == root or root in path.parents for root in roots):
         raise ValueError(f"source_path is outside allowed roots: {path}")
@@ -747,7 +761,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
             Tool(
                 name="addon_source_inspect",
                 description=(
-                    "Inspect a server-local addon source tree containing addon.xml. "
+                    "Inspect a server-local or known agent-mounted addon source tree containing addon.xml. "
                     "Use this for agent preflight instead of shelling out for addon identity."
                 ),
                 inputSchema={
@@ -755,7 +769,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                     "properties": {
                         "source_path": {
                             "type": "string",
-                            "description": "Server-local path under KODI_MCP_SOURCE_ROOTS; must contain addon.xml.",
+                            "description": "Server-local path under KODI_MCP_SOURCE_ROOTS, or a known agent mount such as /srv/workspaces/...; must contain addon.xml.",
                         }
                     },
                     "required": ["source_path"],
@@ -764,13 +778,13 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
             ),
             Tool(
                 name="addon_project_map_status",
-                description="Report whether PROJECT_MAP.md exists for a server-local addon source tree.",
+                description="Report whether PROJECT_MAP.md exists for a server-local or known agent-mounted addon source tree.",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "source_path": {
                             "type": "string",
-                            "description": "Server-local path under KODI_MCP_SOURCE_ROOTS; must contain addon.xml.",
+                            "description": "Server-local path under KODI_MCP_SOURCE_ROOTS, or a known agent mount such as /srv/workspaces/...; must contain addon.xml.",
                         }
                     },
                     "required": ["source_path"],
@@ -779,13 +793,13 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
             ),
             Tool(
                 name="addon_source_tree",
-                description="Return a compact file tree for a server-local addon source tree.",
+                description="Return a compact file tree for a server-local or known agent-mounted addon source tree.",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "source_path": {
                             "type": "string",
-                            "description": "Server-local path under KODI_MCP_SOURCE_ROOTS; must contain addon.xml.",
+                            "description": "Server-local path under KODI_MCP_SOURCE_ROOTS, or a known agent mount such as /srv/workspaces/...; must contain addon.xml.",
                         },
                         "max_entries": {
                             "type": "integer",

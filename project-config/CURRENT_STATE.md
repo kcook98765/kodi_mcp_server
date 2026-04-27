@@ -80,6 +80,7 @@ Agent source/log MCP tools:
 - `bridge_log_recent_errors`
 
 These cover common addon-work preflight and triage needs without sending agents to direct shell, raw bridge HTTP, or broad log dumps. Source paths are constrained by `KODI_MCP_SOURCE_ROOTS`.
+Known agent mount paths such as `/srv/workspaces/...` are translated to their host equivalents before the source-root check.
 
 Vision-analysis tools are intentionally not exposed unless a future vision model integration is explicitly configured with `KODI_VISION_MODEL_URL` and `KODI_VISION_MODEL_NAME`; without that config, only screenshot capture is offered.
 The bridge endpoints and remote MCP wrappers are live-smoked; the running system

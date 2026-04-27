@@ -188,7 +188,7 @@ GUI helpers:
 - These can assist first-install UI navigation, but deterministic bridge/repo state checks should remain the primary workflow.
 
 Addon source and log triage helpers:
-- `addon_source_inspect` reads addon identity, extensions, Python entrypoints, tests, and `PROJECT_MAP.md` status from an allowlisted server-local source tree.
+- `addon_source_inspect` reads addon identity, extensions, Python entrypoints, tests, and `PROJECT_MAP.md` status from an allowlisted server-local source tree or known agent mount such as `/srv/workspaces/...`.
 - `addon_project_map_status` reports whether an addon source tree has `PROJECT_MAP.md`.
 - `addon_source_tree` returns a compact addon file tree for agent planning.
 - `bridge_log_recent_errors` filters recent bridge/Kodi log lines down to error-like entries, with an optional pattern.
