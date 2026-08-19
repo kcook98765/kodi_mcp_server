@@ -4,16 +4,25 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+import pytest
+
 from kodi_mcp_server import config
 from kodi_mcp_server.config import validate_config
 
 
-def test_validate_config_success_with_all_values():
+def test_validate_config_success_with_all_values(monkeypatch):
     """validate_config() succeeds when all required values present."""
-    # This test verifies that validation passes with valid config
-    # Note: The .env file in project/ is loaded at module import time
-    # This test assumes the workspace has valid KODI_JSONRPC_URL and KODI_BRIDGE_BASE_URL
+    monkeypatch.setattr(config, "KODI_JSONRPC_URL", "http://test:8080/jsonrpc")
+    monkeypatch.setattr(config, "KODI_BRIDGE_BASE_URL", "http://test:8765")
     validate_config()  # Should not raise
+
+
+def test_validate_config_raises_when_values_missing(monkeypatch):
+    """validate_config() raises ConfigError when required values are missing."""
+    monkeypatch.setattr(config, "KODI_JSONRPC_URL", "")
+    monkeypatch.setattr(config, "KODI_BRIDGE_BASE_URL", "")
+    with pytest.raises(config.ConfigError, match="Missing required configuration"):
+        validate_config()
 
 
 def test_load_dotenv_supports_repo_root_env(tmp_path, monkeypatch):
