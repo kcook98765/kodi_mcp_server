@@ -351,6 +351,12 @@ async def test_mcp_repo_stage_current_dev_repo_builds_and_calls_bridge(tmp_path:
     import kodi_mcp_server.config as config
     importlib.reload(config)
 
+    # build_dev_repo_zip (used by repo_stage_current_dev_repo) reads
+    # managed_addons' module-level AUTHORITATIVE_REPO_ROOT, which is not
+    # refreshed by importlib.reload(config) unless we re-execute the module.
+    import kodi_mcp_server.managed_addons as managed_addons
+    importlib.reload(managed_addons)
+
     # Monkeypatch the actual bridge stage helper so no Kodi is required.
     import kodi_mcp_server.milestone_a_bridge as milestone
 
@@ -755,6 +761,17 @@ async def test_repo_publish_stage_apply_artifact_reports_installed_version_misma
     import kodi_mcp_server.config as config
 
     importlib.reload(config)
+
+    # The apply flow reads module-level path constants that are NOT refreshed
+    # by importlib.reload(config):
+    # - managed_addons.build_dev_repo_zip (staging step) reads its module-level
+    #   AUTHORITATIVE_REPO_ROOT
+    # - addon_ops.update_addon (apply step) reads its module-level REPO_ROOT
+    # Re-execute those consumer modules so they pick up the repointed roots.
+    import kodi_mcp_server.managed_addons as managed_addons
+    import kodi_mcp_server.tools.addon_ops as addon_ops
+    importlib.reload(managed_addons)
+    importlib.reload(addon_ops)
 
     from kodi_mcp_server.artifact_store import ArtifactStore
     from kodi_mcp_server.models.messages import ResponseMessage
