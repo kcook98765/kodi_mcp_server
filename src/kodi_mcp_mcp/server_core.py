@@ -2269,8 +2269,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         runtime_bridge_tool=runtime["bridge"],
                         runtime_jsonrpc_tool=runtime["jsonrpc"],
                     )
-                else:
+                elif tool_name == "kodi_status":
                     raw_result = await _kodi_status(runtime)
+                else:
+                    raise NotImplementedError(f"no dispatch implementation for whitelisted tool {tool_name!r}")
 
                 raw_value = _as_dict(raw_result)
                 latency_ms = int((time.time() - start) * 1000)

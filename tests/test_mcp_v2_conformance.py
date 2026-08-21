@@ -270,3 +270,83 @@ def test_v2_streamable_http_initialize_and_tool_listing():
         assert tools_body["id"] == 2
         tool_names = {t["name"] for t in tools_body["result"]["tools"]}
         assert "kodi_status" in tool_names
+
+
+@pytest.mark.asyncio
+async def test_mcp_dispatch_gate_invariant():
+    """Pins the invariant that every name in the dispatch gate set has an
+    explicit branch in the if/elif chain and that the terminal else raises
+    instead of calling _kodi_status.
+
+    This prevents silent fall-through: if a future developer adds a name
+    to the 36-name gate literal without adding a corresponding elif branch,
+    the terminal else will raise NotImplementedError instead of silently
+    calling _kodi_status (which would produce the wrong envelope).
+    """
+    import re
+    from pathlib import Path
+
+    # Read the server_core.py source
+    repo_root = Path(__file__).resolve().parents[1]
+    server_core_path = repo_root / "src" / "kodi_mcp_mcp" / "server_core.py"
+    source = server_core_path.read_text()
+
+    # Extract gate names: the set literal after `if tool_name in {`
+    gate_pattern = r'if tool_name in \{([^}]+)\}'
+    gate_match = re.search(gate_pattern, source)
+    assert gate_match, "dispatch gate set literal not found"
+    gate_text = gate_match.group(1)
+    gate_names = {
+        name.strip().strip('"').strip("'")
+        for name in gate_text.split(",")
+        if name.strip()
+    }
+
+    # Extract branch names: all `if/elif tool_name == "X"` or `elif tool_name in {A, B}`
+    # at 16-space indent between the `try:` at ~line 1628 and the terminal `else:`
+    lines = source.splitlines()
+    branch_names = set()
+    in_dispatch_chain = False
+    terminal_else_found = False
+    for i, line in enumerate(lines):
+        # Detect start of dispatch chain (after `try:` around line 1628)
+        if "try:" in line and i > 1600 and i < 1650:
+            in_dispatch_chain = True
+            continue
+        # Detect terminal else (the one we patched)
+        if in_dispatch_chain and line.strip().startswith("else:") and i > 2200 and i < 2300:
+            terminal_else_found = True
+            # Check the next line contains raise, not _kodi_status
+            next_line = lines[i + 1] if i + 1 < len(lines) else ""
+            assert next_line.strip().startswith("raise "), (
+                "terminal else must raise NotImplementedError, not call _kodi_status"
+            )
+            assert "_kodi_status(" not in next_line, (
+                "terminal else must not call _kodi_status"
+            )
+            break
+        # Capture branch names while in dispatch chain
+        if in_dispatch_chain:
+            # Match `elif tool_name == "X":` or `if tool_name == "X":`
+            eq_match = re.search(r' tool_name == "([^"]+)"', line)
+            if eq_match:
+                branch_names.add(eq_match.group(1))
+            # Match `elif tool_name in {"A", "B", ...}` or single name
+            in_match = re.search(r' tool_name in \{([^}]+)\}', line)
+            if in_match:
+                branch_names.update(
+                    name.strip().strip('"').strip("'")
+                    for name in in_match.group(1).split(",")
+                    if name.strip()
+                )
+
+    assert terminal_else_found, "terminal else block not found in expected location"
+
+    # Assert gate and branch name sets are equal
+    assert gate_names == branch_names, (
+        f"dispatch gate and branch name sets must match:\n"
+        f"  gate ({len(gate_names)} names): {sorted(gate_names)}\n"
+        f"  branches ({len(branch_names)} names): {sorted(branch_names)}\n"
+        f"  missing from branches: {gate_names - branch_names}\n"
+        f"  extra in branches: {branch_names - gate_names}"
+    )
