@@ -25,21 +25,14 @@ from typing import Any, Tuple
 from xml.etree import ElementTree
 
 from mcp.server import Server
-from mcp.server.models import InitializationOptions
 from mcp.types import (
-    CallToolRequest,
+    CallToolRequestParams,
     CallToolResult,
     ErrorData,
-    Implementation,
-    InitializeRequest,
-    InitializeResult,
-    ListToolsRequest,
     ListToolsResult,
-    ServerCapabilities,
-    ServerResult,
+    PaginatedRequestParams,
     TextContent,
     Tool,
-    ToolsCapability,
 )
 
 from kodi_mcp_server.composition import (
@@ -459,25 +452,22 @@ def build_runtime() -> Runtime:
     }
 
 
-def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
+def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
     """Build a configured MCP server and its InitializationOptions.
 
     The returned Server is transport-agnostic; callers are responsible for
     running it over stdio or a remote HTTP transport.
+
+    MCP 2.x: request handlers are registered via the public
+    ``add_request_handler(method, params_type, handler)`` API and
+    ``initialize`` is answered by the SDK runner from
+    ``server.create_initialization_options()`` (server name/version/instructions
+    come from the ``Server`` constructor; capabilities are derived from the
+    registered handlers). The second return value is that
+    ``InitializationOptions`` so transports keep a single source of truth.
     """
 
-    async def _handle_initialize(_: InitializeRequest) -> ServerResult:
-        """MCP initialize handler."""
-
-        result = InitializeResult(
-            protocolVersion="2025-11-25",
-            capabilities=ServerCapabilities(tools=ToolsCapability()),
-            serverInfo=Implementation(name=SERVER_NAME, version=SERVER_VERSION),
-            instructions="Kodi MCP server for Kodi status, bridge diagnostics, GUI navigation, screenshots, and managed addon workflows.",
-        )
-        return ServerResult(result)
-
-    async def _handle_list_tools(_: ListToolsRequest) -> ServerResult:
+    async def _handle_list_tools(ctx, params: PaginatedRequestParams | None) -> ListToolsResult:
         """Return the tool list."""
 
         tools: list[Tool] = [
@@ -1200,12 +1190,12 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
             ),
         ]
 
-        return ServerResult(ListToolsResult(tools=tools))
+        return ListToolsResult(tools=tools)
 
-    async def _handle_call_tool(request: CallToolRequest) -> ServerResult:
+    async def _handle_call_tool(ctx, params: CallToolRequestParams) -> CallToolResult:
         """Dispatch a tool call."""
 
-        tool_name = request.params.name
+        tool_name = params.name
 
         if tool_name in {
             "kodi_status",
@@ -1247,7 +1237,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
         }:
             # Preserve exact normalized missing-arg behavior for addon_details.
             if tool_name in {"addon_details", "addon_execute"}:
-                args = request.params.arguments or {}
+                args = params.arguments or {}
                 if not isinstance(args, dict):
                     args = {}
 
@@ -1265,16 +1255,14 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         "raw": {"arguments": args, "accepted_aliases": ["addonid", "addon_id"]},
                     }
                     text = json.dumps(envelope, indent=2, sort_keys=True)
-                    return ServerResult(
-                        CallToolResult(
-                            isError=True,
+                    return                         CallToolResult(
+                            is_error=True,
                             content=[TextContent(type="text", text=text)],
                         )
-                    )
 
             # Preserve exact normalized missing-arg behavior for bridge_write_log_marker.
             if tool_name == "bridge_write_log_marker":
-                args = request.params.arguments or {}
+                args = params.arguments or {}
                 if not isinstance(args, dict):
                     args = {}
 
@@ -1292,15 +1280,13 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         "raw": {"arguments": args},
                     }
                     text = json.dumps(envelope, indent=2, sort_keys=True)
-                    return ServerResult(
-                        CallToolResult(
-                            isError=True,
+                    return                         CallToolResult(
+                            is_error=True,
                             content=[TextContent(type="text", text=text)],
                         )
-                    )
 
             if tool_name == "kodi_gui_action":
-                args = request.params.arguments or {}
+                args = params.arguments or {}
                 if not isinstance(args, dict):
                     args = {}
 
@@ -1319,15 +1305,13 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         "raw": {"arguments": args, "allowed": sorted(allowed_actions)},
                     }
                     text = json.dumps(envelope, indent=2, sort_keys=True)
-                    return ServerResult(
-                        CallToolResult(
-                            isError=True,
+                    return                         CallToolResult(
+                            is_error=True,
                             content=[TextContent(type="text", text=text)],
                         )
-                    )
 
             if tool_name in {"addon_source_inspect", "addon_project_map_status", "addon_source_tree"}:
-                args = request.params.arguments or {}
+                args = params.arguments or {}
                 if not isinstance(args, dict):
                     args = {}
 
@@ -1345,15 +1329,13 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         "raw": {"arguments": args},
                     }
                     text = json.dumps(envelope, indent=2, sort_keys=True)
-                    return ServerResult(
-                        CallToolResult(
-                            isError=True,
+                    return                         CallToolResult(
+                            is_error=True,
                             content=[TextContent(type="text", text=text)],
                         )
-                    )
 
             if tool_name in {"kodi_player_item", "kodi_player_seek", "kodi_player_pause", "kodi_player_stop"}:
-                args = request.params.arguments or {}
+                args = params.arguments or {}
                 if not isinstance(args, dict):
                     args = {}
 
@@ -1371,12 +1353,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         "raw": {"arguments": args},
                     }
                     text = json.dumps(envelope, indent=2, sort_keys=True)
-                    return ServerResult(
-                        CallToolResult(
-                            isError=True,
+                    return                         CallToolResult(
+                            is_error=True,
                             content=[TextContent(type="text", text=text)],
                         )
-                    )
 
                 if tool_name == "kodi_player_seek":
                     seconds = args.get("seconds")
@@ -1393,12 +1373,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                             "raw": {"arguments": args},
                         }
                         text = json.dumps(envelope, indent=2, sort_keys=True)
-                        return ServerResult(
-                            CallToolResult(
-                                isError=True,
+                        return                             CallToolResult(
+                                is_error=True,
                                 content=[TextContent(type="text", text=text)],
                             )
-                        )
 
             # Managed addon required-arg checks.
             if tool_name in {
@@ -1408,7 +1386,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                 "managed_addon_build_publish_stage_and_apply",
                 "managed_addon_validate_state",
             }:
-                args = request.params.arguments or {}
+                args = params.arguments or {}
                 if not isinstance(args, dict):
                     args = {}
 
@@ -1427,12 +1405,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                             "raw": {"arguments": args},
                         }
                         text = json.dumps(envelope, indent=2, sort_keys=True)
-                        return ServerResult(
-                            CallToolResult(
-                                isError=True,
+                        return                             CallToolResult(
+                                is_error=True,
                                 content=[TextContent(type="text", text=text)],
                             )
-                        )
 
             # Agent-safe artifact tools required-arg checks.
             if tool_name in {
@@ -1442,7 +1418,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                 "repo_publish_stage_apply_artifact",
                 "addon_dev_loop",
             }:
-                args = request.params.arguments or {}
+                args = params.arguments or {}
                 if not isinstance(args, dict):
                     args = {}
 
@@ -1461,12 +1437,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                             "raw": {"arguments": args},
                         }
                         text = json.dumps(envelope, indent=2, sort_keys=True)
-                        return ServerResult(
-                            CallToolResult(
-                                isError=True,
+                        return                             CallToolResult(
+                                is_error=True,
                                 content=[TextContent(type="text", text=text)],
                             )
-                        )
 
                 if tool_name == "repo_publish_artifact":
                     for k in ("artifact_id", "addon_id", "addon_name", "addon_version"):
@@ -1484,12 +1458,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                                 "raw": {"arguments": args},
                             }
                             text = json.dumps(envelope, indent=2, sort_keys=True)
-                            return ServerResult(
-                                CallToolResult(
-                                    isError=True,
+                            return                                 CallToolResult(
+                                    is_error=True,
                                     content=[TextContent(type="text", text=text)],
                                 )
-                            )
 
                 if tool_name == "repo_stage_and_apply_addon":
                     addonid = args.get("addonid")
@@ -1506,12 +1478,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                             "raw": {"arguments": args},
                         }
                         text = json.dumps(envelope, indent=2, sort_keys=True)
-                        return ServerResult(
-                            CallToolResult(
-                                isError=True,
+                        return                             CallToolResult(
+                                is_error=True,
                                 content=[TextContent(type="text", text=text)],
                             )
-                        )
 
                 if tool_name in {"repo_publish_stage_apply_artifact", "addon_dev_loop"}:
                     for k in ("artifact_id", "addon_id", "addon_name", "addon_version"):
@@ -1529,12 +1499,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                                 "raw": {"arguments": args},
                             }
                             text = json.dumps(envelope, indent=2, sort_keys=True)
-                            return ServerResult(
-                                CallToolResult(
-                                    isError=True,
+                            return                                 CallToolResult(
+                                    is_error=True,
                                     content=[TextContent(type="text", text=text)],
                                 )
-                            )
 
                 if tool_name == "managed_addon_get":
                     managed_addon_id = args.get("managed_addon_id")
@@ -1551,12 +1519,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                             "raw": {"arguments": args},
                         }
                         text = json.dumps(envelope, indent=2, sort_keys=True)
-                        return ServerResult(
-                            CallToolResult(
-                                isError=True,
+                        return                             CallToolResult(
+                                is_error=True,
                                 content=[TextContent(type="text", text=text)],
                             )
-                        )
 
                 if tool_name == "managed_addon_validate_state":
                     managed_addon_id = args.get("managed_addon_id")
@@ -1573,12 +1539,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                             "raw": {"arguments": args},
                         }
                         text = json.dumps(envelope, indent=2, sort_keys=True)
-                        return ServerResult(
-                            CallToolResult(
-                                isError=True,
+                        return                             CallToolResult(
+                                is_error=True,
                                 content=[TextContent(type="text", text=text)],
                             )
-                        )
 
                 if tool_name == "managed_addon_build_publish_and_stage":
                     managed_addon_id = args.get("managed_addon_id")
@@ -1596,12 +1560,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                             "raw": {"arguments": args},
                         }
                         text = json.dumps(envelope, indent=2, sort_keys=True)
-                        return ServerResult(
-                            CallToolResult(
-                                isError=True,
+                        return                             CallToolResult(
+                                is_error=True,
                                 content=[TextContent(type="text", text=text)],
                             )
-                        )
                     if version_policy not in {"use_addon_xml", "bump_patch", "set_explicit"}:
                         envelope = {
                             "ok": False,
@@ -1615,12 +1577,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                             "raw": {"arguments": args, "allowed": ["use_addon_xml", "bump_patch", "set_explicit"]},
                         }
                         text = json.dumps(envelope, indent=2, sort_keys=True)
-                        return ServerResult(
-                            CallToolResult(
-                                isError=True,
+                        return                             CallToolResult(
+                                is_error=True,
                                 content=[TextContent(type="text", text=text)],
                             )
-                        )
 
                 if tool_name == "managed_addon_build_publish_stage_and_apply":
                     managed_addon_id = args.get("managed_addon_id")
@@ -1638,12 +1598,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                             "raw": {"arguments": args},
                         }
                         text = json.dumps(envelope, indent=2, sort_keys=True)
-                        return ServerResult(
-                            CallToolResult(
-                                isError=True,
+                        return                             CallToolResult(
+                                is_error=True,
                                 content=[TextContent(type="text", text=text)],
                             )
-                        )
                     if version_policy not in {"use_addon_xml", "bump_patch", "set_explicit"}:
                         envelope = {
                             "ok": False,
@@ -1660,12 +1618,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                             },
                         }
                         text = json.dumps(envelope, indent=2, sort_keys=True)
-                        return ServerResult(
-                            CallToolResult(
-                                isError=True,
+                        return                             CallToolResult(
+                                is_error=True,
                                 content=[TextContent(type="text", text=text)],
                             )
-                        )
 
             start = time.time()
             envelope: dict[str, Any]
@@ -1677,7 +1633,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                 elif tool_name == "bridge_runtime_info":
                     raw_result = await runtime["bridge"].get_bridge_runtime_info()
                 elif tool_name in {"bridge_log_tail", "bridge_log_markers"}:
-                    args = request.params.arguments or {}
+                    args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
 
@@ -1693,7 +1649,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                     else:
                         raw_result = await runtime["bridge"].get_bridge_log_markers(lines=lines)
                 elif tool_name == "bridge_log_recent_errors":
-                    args = request.params.arguments or {}
+                    args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
                     lines = args.get("lines", 300)
@@ -1705,7 +1661,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         pattern=pattern if isinstance(pattern, str) and pattern.strip() else None,
                     )
                 elif tool_name == "addon_list":
-                    args = request.params.arguments or {}
+                    args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
 
@@ -1717,13 +1673,13 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         enabled=enabled if isinstance(enabled, bool) else None,
                     )
                 elif tool_name == "addon_details":
-                    args = request.params.arguments or {}
+                    args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
                     addonid = args.get("addonid")
                     raw_result = await runtime["jsonrpc"].get_addon_details(addonid=addonid)
                 elif tool_name == "addon_execute":
-                    args = request.params.arguments or {}
+                    args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
                     addonid = str(args.get("addonid") or args.get("addon_id") or "").strip()
@@ -1843,17 +1799,17 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         "request_id": getattr(execute_result, "request_id", None),
                     }
                 elif tool_name == "addon_source_inspect":
-                    args = request.params.arguments or {}
+                    args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
                     raw_result = _addon_source_inspect(str(args.get("source_path") or "").strip())
                 elif tool_name == "addon_project_map_status":
-                    args = request.params.arguments or {}
+                    args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
                     raw_result = _addon_project_map_status(str(args.get("source_path") or "").strip())
                 elif tool_name == "addon_source_tree":
-                    args = request.params.arguments or {}
+                    args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
                     max_entries = args.get("max_entries", 200)
@@ -1862,26 +1818,26 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                 elif tool_name == "kodi_player_active":
                     raw_result = await runtime["jsonrpc"].get_active_players()
                 elif tool_name == "kodi_player_item":
-                    args = request.params.arguments or {}
+                    args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
                     playerid = args.get("playerid", 1)
                     raw_result = await runtime["jsonrpc"].get_player_item(playerid=playerid)
                 elif tool_name == "kodi_player_seek":
-                    args = request.params.arguments or {}
+                    args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
                     playerid = args.get("playerid", 1)
                     seconds = args.get("seconds")
                     raw_result = await runtime["jsonrpc"].seek_player_to_seconds(playerid=playerid, seconds=float(seconds))
                 elif tool_name == "kodi_player_pause":
-                    args = request.params.arguments or {}
+                    args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
                     playerid = args.get("playerid", 1)
                     raw_result = await runtime["jsonrpc"].pause_player(playerid=playerid)
                 elif tool_name == "kodi_player_stop":
-                    args = request.params.arguments or {}
+                    args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
                     playerid = args.get("playerid", 1)
@@ -1957,7 +1913,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                             "request_id": getattr(stop_result, "request_id", None),
                         }
                 elif tool_name == "jsonrpc_introspect":
-                    args = request.params.arguments or {}
+                    args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
 
@@ -1979,7 +1935,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                     if runtime.get("notifications") is None:
                         raise RuntimeError("notifications probe unavailable (missing optional dependency: websockets)")
 
-                    args = request.params.arguments or {}
+                    args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
 
@@ -2000,13 +1956,13 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         listen_seconds=listen_seconds,
                     )
                 elif tool_name == "bridge_write_log_marker":
-                    args = request.params.arguments or {}
+                    args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
                     message = args.get("message")
                     raw_result = await runtime["bridge"].write_bridge_log_marker(message=message)
                 elif tool_name == "kodi_gui_action":
-                    args = request.params.arguments or {}
+                    args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
                     action = str(args.get("action") or "").strip()
@@ -2027,7 +1983,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                     else:
                         raw_result = await runtime["bridge"].gui_action(action=action)
                 elif tool_name == "kodi_gui_screenshot":
-                    args = request.params.arguments or {}
+                    args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
                     include_image = args.get("include_image", False)
@@ -2049,19 +2005,19 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                 elif tool_name == "kodi_gui_state":
                     raw_result = await runtime["bridge"].gui_state()
                 elif tool_name == "managed_addon_register":
-                    args = request.params.arguments or {}
+                    args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
                     raw_result = managed_addon_register(source_path=str(args.get("source_path") or "").strip())
                 elif tool_name == "managed_addon_list":
                     raw_result = managed_addon_list()
                 elif tool_name == "managed_addon_get":
-                    args = request.params.arguments or {}
+                    args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
                     raw_result = managed_addon_get(managed_addon_id=str(args.get("managed_addon_id") or "").strip())
                 elif tool_name == "managed_addon_build_publish_and_stage":
-                    args = request.params.arguments or {}
+                    args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
                     verify = args.get("verify", True)
@@ -2083,7 +2039,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         verify=verify,
                     )
                 elif tool_name == "managed_addon_build_publish_stage_and_apply":
-                    args = request.params.arguments or {}
+                    args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
                     verify = args.get("verify", True)
@@ -2107,7 +2063,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         jsonrpc_tool=runtime["jsonrpc"],
                     )
                 elif tool_name == "managed_addon_validate_state":
-                    args = request.params.arguments or {}
+                    args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
                     managed_addon_id = str(args.get("managed_addon_id") or "").strip()
@@ -2222,7 +2178,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         },
                     }
                 elif tool_name == "artifact_upload_zip":
-                    args = request.params.arguments or {}
+                    args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
                     raw_result = _artifact_upload_zip(
@@ -2232,7 +2188,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         version=(str(args.get("version") or "").strip() if args.get("version") is not None else None),
                     )
                 elif tool_name == "repo_publish_artifact":
-                    args = request.params.arguments or {}
+                    args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
                     raw_result = _repo_publish_artifact(
@@ -2245,7 +2201,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         ),
                     )
                 elif tool_name == "repo_stage_current_dev_repo":
-                    args = request.params.arguments or {}
+                    args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
                     verify = args.get("verify", True)
@@ -2257,7 +2213,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         verify=verify,
                     )
                 elif tool_name == "repo_stage_and_apply_addon":
-                    args = request.params.arguments or {}
+                    args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
                     verify = args.get("verify", True)
@@ -2285,7 +2241,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                         ),
                     )
                 elif tool_name in {"repo_publish_stage_apply_artifact", "addon_dev_loop"}:
-                    args = request.params.arguments or {}
+                    args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
                     verify = args.get("verify", True)
@@ -2364,30 +2320,32 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, InitializationOptions]:
                 }
 
             text = json.dumps(envelope, indent=2, sort_keys=True)
-            return ServerResult(
-                CallToolResult(
-                    isError=not envelope.get("ok", False),
+            return                 CallToolResult(
+                    is_error=not envelope.get("ok", False),
                     content=[TextContent(type="text", text=text)],
                 )
-            )
 
         payload = ErrorData(code=0, message=f"Tool not implemented: {tool_name}", data=None)
-        return ServerResult(
-            CallToolResult(
-                isError=True,
+        return             CallToolResult(
+                is_error=True,
                 content=[TextContent(type="text", text=payload.model_dump_json(indent=2))],
             )
-        )
 
-    server = Server(SERVER_NAME, version=SERVER_VERSION)
-    server.request_handlers[InitializeRequest] = _handle_initialize
-    server.request_handlers[ListToolsRequest] = _handle_list_tools
-    server.request_handlers[CallToolRequest] = _handle_call_tool
-
-    init_options = InitializationOptions(
-        server_name=SERVER_NAME,
-        server_version=SERVER_VERSION,
-        capabilities=ServerCapabilities(tools=ToolsCapability()),
+    server = Server(
+        SERVER_NAME,
+        version=SERVER_VERSION,
+        instructions=(
+            "Kodi MCP server for Kodi status, bridge diagnostics, GUI navigation, "
+            "screenshots, and managed addon workflows."
+        ),
     )
+    # MCP 2.x: register low-level request handlers through the public API.
+    # ``initialize`` is answered by the SDK runner from the initialization
+    # options below; the dual-era connection loop serves both legacy
+    # handshake-era clients and the modern 2026-07-28 protocol.
+    server.add_request_handler("tools/list", PaginatedRequestParams, _handle_list_tools)
+    server.add_request_handler("tools/call", CallToolRequestParams, _handle_call_tool)
+
+    init_options = server.create_initialization_options()
 
     return server, init_options
