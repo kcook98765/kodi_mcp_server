@@ -199,3 +199,74 @@ async def test_v2_legacy_handshake_era_still_served():
             result = await client.list_tools()
             names = {t.name for t in result.tools}
             assert "kodi_status" in names
+
+
+def test_v2_streamable_http_initialize_and_tool_listing():
+    """The remote StreamableHTTP transport (the real
+    ``StreamableHTTPSessionManager`` + ``handle_request`` path mounted at
+    ``/mcp``) initializes a legacy-era session and lists tools end-to-end.
+
+    This exercises the HTTP/server path that the unit tests cannot reach
+    (session-manager lifespan + ASGI request routing + Mcp-Session-Id).
+    Responses are SSE-framed (``json_response=False``), so the JSON-RPC
+    payload lives on the ``data:`` line of each ``message`` event.
+    """
+    import json
+
+    from starlette.testclient import TestClient
+    from fastapi import FastAPI
+
+    from kodi_mcp_server.remote_mcp_app import create_remote_mcp
+
+    remote_asgi_app, remote_lifespan = create_remote_mcp()
+
+    async def lifespan(_: FastAPI):
+        async with remote_lifespan():
+            yield
+
+    app = FastAPI(lifespan=lifespan)
+    app.mount("/mcp", remote_asgi_app)
+
+    def sse_payload(response):
+        """Extract the JSON-RPC message from an SSE ``event: message`` frame."""
+        assert response.status_code == 200
+        assert response.headers.get("content-type", "").startswith("text/event-stream")
+        data_lines = [
+            line[len("data:"):].strip()
+            for line in response.text.splitlines()
+            if line.startswith("data:")
+        ]
+        assert data_lines, f"expected SSE data frame, got: {response.text!r}"
+        return json.loads(data_lines[0])
+
+    with TestClient(app) as tc:
+        init = tc.post(
+            "/mcp/",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": {"name": "conformance", "version": "0"},
+                },
+            },
+        )
+        session_id = init.headers.get("mcp-session-id")
+        assert session_id, "legacy-era session must issue a Mcp-Session-Id"
+        init_body = sse_payload(init)
+        assert init_body["id"] == 1
+        assert init_body["result"]["serverInfo"]["name"] == "kodi-mcp"
+        assert init_body["result"]["protocolVersion"] == "2025-11-25"
+        assert "tools" in init_body["result"]["capabilities"]
+
+        tools = tc.post(
+            "/mcp/",
+            json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+            headers={"mcp-session-id": session_id, "mcp-protocol-version": "2025-11-25"},
+        )
+        tools_body = sse_payload(tools)
+        assert tools_body["id"] == 2
+        tool_names = {t["name"] for t in tools_body["result"]["tools"]}
+        assert "kodi_status" in tool_names
