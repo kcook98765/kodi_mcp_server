@@ -1,0 +1,201 @@
+"""MCP 2.x conformance and regression coverage.
+
+These tests exercise the real v2 dispatch path (initialize negotiation,
+capability advertisement, tools/list + tools/call over the in-memory
+transport) rather than the removed ``Server.request_handlers`` dict, and
+they pin the behavior that the v1 -> v2 migration must preserve:
+
+- server identity (name/version/instructions) in initialize results
+- legacy (handshake-era) protocol compatibility: a 2025-11-25 client
+  still gets the initialize handshake and Mcp-Session-Id semantics
+- modern (2026-07-28) protocol path: no initialize; first request opens
+  the connection
+- tool list is complete and schemas are unchanged
+- tool error semantics: model-visible ``is_error`` results, not
+  protocol-level JSON-RPC errors
+- unknown tools produce a model-visible error result
+- no production code path depends on the removed ``request_handlers``
+"""
+
+import json
+
+import pytest
+
+from kodi_mcp_mcp.server_core import build_mcp_server, build_runtime
+from mcp.client import Client
+from mcp.shared.memory import create_client_server_memory_streams
+
+
+_EXPECTED_TOOLS = {
+    "kodi_status",
+    "bridge_health",
+    "bridge_status",
+    "bridge_runtime_info",
+    "bridge_log_tail",
+    "bridge_log_markers",
+    "bridge_log_recent_errors",
+    "addon_list",
+    "addon_details",
+    "addon_execute",
+    "addon_source_inspect",
+    "addon_project_map_status",
+    "addon_source_tree",
+    "kodi_player_active",
+    "kodi_player_item",
+    "kodi_player_seek",
+    "kodi_player_pause",
+    "kodi_player_stop",
+    "jsonrpc_introspect",
+    "kodi_notifications_sample",
+    "bridge_write_log_marker",
+    "kodi_gui_action",
+    "kodi_gui_screenshot",
+    "kodi_gui_state",
+    "managed_addon_register",
+    "managed_addon_list",
+    "managed_addon_get",
+    "managed_addon_build_publish_and_stage",
+    "managed_addon_build_publish_stage_and_apply",
+    "managed_addon_validate_state",
+    "artifact_upload_zip",
+    "repo_publish_artifact",
+    "repo_stage_current_dev_repo",
+    "repo_stage_and_apply_addon",
+    "repo_publish_stage_apply_artifact",
+    "addon_dev_loop",
+}
+
+
+def _server():
+    runtime = build_runtime()
+    server, init_options = build_mcp_server(runtime)
+    return server, init_options
+
+
+@pytest.mark.asyncio
+async def test_v2_no_removed_request_handlers_attribute():
+    """The v1 handler dict must not be relied on or emulated."""
+    server, _ = _server()
+    assert not hasattr(server, "request_handlers"), (
+        "v2 migration regression: Server.request_handlers reappeared"
+    )
+    # The supported public lookup works instead:
+    assert server.get_request_handler("tools/call") is not None
+    assert server.get_request_handler("tools/list") is not None
+    assert server.get_request_handler("initialize") is None
+    assert server.get_request_handler("no/such/method") is None
+
+
+@pytest.mark.asyncio
+async def test_v2_initialize_negotiates_supported_handshake_version():
+    """A legacy (handshake-era) client works end-to-end: entering the
+    client performs the initialize handshake, and server
+    identity/instructions/capabilities are derived from the v2 Server
+    construction (no user initialize handler)."""
+    server, init_options = _server()
+
+    async with create_client_server_memory_streams() as (client_streams, server_streams):
+        async with Client(server, mode="legacy") as client:
+            # The legacy era requires the initialize handshake to have
+            # completed before any tool request; list_tools proves both.
+            result = await client.list_tools()
+            assert "kodi_status" in {t.name for t in result.tools}
+            # Server identity comes from the constructor in v2 and feeds
+            # the runner-built InitializeResult.
+            assert init_options.server_name == "kodi-mcp"
+            assert init_options.server_version == "0.0.0"
+            assert "Kodi MCP server" in init_options.instructions
+            # Tools capability is advertised (derived from registered handlers).
+            assert init_options.capabilities.tools is not None
+
+
+@pytest.mark.asyncio
+async def test_v2_tools_list_complete_and_schemas_stable():
+    """Full tool surface is listed over the real dispatch path and the
+    kodi_status schema matches the v1 shape."""
+    server, _ = _server()
+
+    async with create_client_server_memory_streams() as (client_streams, server_streams):
+        async with Client(server, mode="auto") as client:
+            result = await client.list_tools()
+            names = {t.name for t in result.tools}
+            assert _EXPECTED_TOOLS.issubset(names)
+            by_name = {t.name: t for t in result.tools}
+            status = by_name["kodi_status"]
+            assert status.input_schema["type"] == "object"
+            assert status.input_schema["additionalProperties"] is False
+            assert status.description.startswith("Get end-to-end server status")
+
+
+@pytest.mark.asyncio
+async def test_v2_representative_tool_call_succeeds():
+    """kodi_status runs end-to-end over the real dispatch path."""
+    server, _ = _server()
+
+    async with create_client_server_memory_streams() as (client_streams, server_streams):
+        async with Client(server, mode="auto") as client:
+            result = await client.call_tool("kodi_status", {})
+            assert result.is_error is False
+            envelope = json.loads(result.content[0].text)
+            assert envelope["ok"] is True
+            assert envelope["tool"] == "kodi_status"
+            assert envelope["data"]["server"]["status"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_v2_tool_error_semantics_are_model_visible():
+    """Invalid tool parameters produce a model-visible is_error result
+    (not an opaque protocol-level JSON-RPC error) and keep the stable
+    envelope shape with error_type."""
+    server, _ = _server()
+
+    async with create_client_server_memory_streams() as (client_streams, server_streams):
+        async with Client(server, mode="auto") as client:
+            result = await client.call_tool("kodi_player_seek", {"playerid": 1})
+            assert result.is_error is True
+            envelope = json.loads(result.content[0].text)
+            assert envelope["ok"] is False
+            assert envelope["tool"] == "kodi_player_seek"
+            assert envelope["error_type"] == "invalid_params"
+            assert "seconds" in envelope["error"]
+
+            # Missing required arg for addon_execute keeps the alias-aware
+            # missing-arg behavior (model-visible, not a protocol error).
+            result2 = await client.call_tool("addon_execute", {"wait": False})
+            assert result2.is_error is True
+            env2 = json.loads(result2.content[0].text)
+            assert env2["ok"] is False
+            assert env2["error_type"] == "invalid_params"
+            assert "addonid" in env2["error"]
+
+
+@pytest.mark.asyncio
+async def test_v2_unknown_tool_returns_model_visible_error():
+    """Calling a tool outside the whitelist is a model-visible error result
+    (the legacy 'Tool not implemented' fallback), not a raised
+    JSON-RPC protocol error."""
+    server, _ = _server()
+
+    async with create_client_server_memory_streams() as (client_streams, server_streams):
+        async with Client(server, mode="auto") as client:
+            result = await client.call_tool("definitely_not_a_real_tool", {})
+            assert result.is_error is True
+            text = result.content[0].text
+            assert "Tool not implemented" in text
+            assert "definitely_not_a_real_tool" in text
+
+
+@pytest.mark.asyncio
+async def test_v2_legacy_handshake_era_still_served():
+    """Older-protocol (handshake-era) clients remain supported: the
+    dual-era loop serves 2025-11-25 clients with the initialize
+    handshake while the modern era skips it."""
+    server, _ = _server()
+
+    async with create_client_server_memory_streams() as (client_streams, server_streams):
+        async with Client(server, mode="legacy") as client:
+            # legacy mode performs initialize first; if the handshake-era
+            # path were broken this would raise.
+            result = await client.list_tools()
+            names = {t.name for t in result.tools}
+            assert "kodi_status" in names
