@@ -63,7 +63,7 @@ class _FakeJsonRpc:
 async def test_gui_tools_dispatch_through_bridge():
     import kodi_mcp_mcp.server_core as server_core
     from kodi_mcp_mcp.server_core import build_mcp_server
-    from mcp.types import CallToolRequest, CallToolRequestParams
+    from mcp.types import CallToolRequestParams
 
     def _fake_store(image_base64: str):
         return {
@@ -79,46 +79,34 @@ async def test_gui_tools_dispatch_through_bridge():
     server, _ = build_mcp_server({"bridge": _FakeBridge(), "jsonrpc": _FakeJsonRpc(), "notifications": None})
 
     try:
-        action_resp = await server.request_handlers[CallToolRequest](
-            CallToolRequest(
-                method="tools/call",
-                params=CallToolRequestParams(name="kodi_gui_action", arguments={"action": "down"}),
-            )
+        action_resp = await server.get_request_handler("tools/call").handler(None,
+            CallToolRequestParams(name="kodi_gui_action", arguments={"action": "down"})
         )
-        action_env = json.loads(action_resp.root.content[0].text)
+        action_env = json.loads(action_resp.content[0].text)
         assert action_env["ok"] is True
         assert action_env["data"]["action"] == "down"
 
-        stop_resp = await server.request_handlers[CallToolRequest](
-            CallToolRequest(
-                method="tools/call",
-                params=CallToolRequestParams(name="kodi_gui_action", arguments={"action": "stop"}),
-            )
+        stop_resp = await server.get_request_handler("tools/call").handler(None,
+            CallToolRequestParams(name="kodi_gui_action", arguments={"action": "stop"})
         )
-        stop_env = json.loads(stop_resp.root.content[0].text)
+        stop_env = json.loads(stop_resp.content[0].text)
         assert stop_env["ok"] is True
         assert stop_env["data"]["action"] == "stop"
         assert stop_env["data"]["method"] == "Input.ExecuteAction"
 
-        screenshot_resp = await server.request_handlers[CallToolRequest](
-            CallToolRequest(
-                method="tools/call",
-                params=CallToolRequestParams(name="kodi_gui_screenshot", arguments={"include_image": True}),
-            )
+        screenshot_resp = await server.get_request_handler("tools/call").handler(None,
+            CallToolRequestParams(name="kodi_gui_screenshot", arguments={"include_image": True})
         )
-        screenshot_env = json.loads(screenshot_resp.root.content[0].text)
+        screenshot_env = json.loads(screenshot_resp.content[0].text)
         assert screenshot_env["ok"] is True
         assert screenshot_env["data"]["content_type"] == "image/png"
         assert screenshot_env["data"]["image_base64"] == "ZmFrZQ=="
         assert screenshot_env["data"]["server_screenshot"]["url"] == "http://server/screenshots/shot-1.png"
 
-        state_resp = await server.request_handlers[CallToolRequest](
-            CallToolRequest(
-                method="tools/call",
-                params=CallToolRequestParams(name="kodi_gui_state", arguments={}),
-            )
+        state_resp = await server.get_request_handler("tools/call").handler(None,
+            CallToolRequestParams(name="kodi_gui_state", arguments={})
         )
-        state_env = json.loads(state_resp.root.content[0].text)
+        state_env = json.loads(state_resp.content[0].text)
         assert state_env["ok"] is True
         assert state_env["data"]["current_window"] == "Videos"
         assert state_env["data"]["conditions"]["fullscreen_video"] is False
@@ -130,7 +118,7 @@ async def test_gui_tools_dispatch_through_bridge():
 async def test_gui_screenshot_defaults_to_server_stored_without_base64():
     import kodi_mcp_mcp.server_core as server_core
     from kodi_mcp_mcp.server_core import build_mcp_server
-    from mcp.types import CallToolRequest, CallToolRequestParams
+    from mcp.types import CallToolRequestParams
 
     def _fake_store(image_base64: str):
         return {
@@ -146,13 +134,10 @@ async def test_gui_screenshot_defaults_to_server_stored_without_base64():
     server, _ = build_mcp_server({"bridge": _FakeBridge(), "jsonrpc": _FakeJsonRpc(), "notifications": None})
 
     try:
-        screenshot_resp = await server.request_handlers[CallToolRequest](
-            CallToolRequest(
-                method="tools/call",
-                params=CallToolRequestParams(name="kodi_gui_screenshot", arguments={}),
-            )
+        screenshot_resp = await server.get_request_handler("tools/call").handler(None,
+            CallToolRequestParams(name="kodi_gui_screenshot", arguments={})
         )
-        screenshot_env = json.loads(screenshot_resp.root.content[0].text)
+        screenshot_env = json.loads(screenshot_resp.content[0].text)
         assert screenshot_env["ok"] is True
         assert screenshot_env["data"]["server_screenshot"]["url"] == "http://server/screenshots/shot-2.png"
         assert "image_base64" not in screenshot_env["data"]
@@ -163,18 +148,15 @@ async def test_gui_screenshot_defaults_to_server_stored_without_base64():
 @pytest.mark.asyncio
 async def test_gui_action_rejects_invalid_action():
     from kodi_mcp_mcp.server_core import build_mcp_server
-    from mcp.types import CallToolRequest, CallToolRequestParams
+    from mcp.types import CallToolRequestParams
 
     server, _ = build_mcp_server({"bridge": _FakeBridge(), "jsonrpc": _FakeJsonRpc(), "notifications": None})
 
-    resp = await server.request_handlers[CallToolRequest](
-        CallToolRequest(
-            method="tools/call",
-            params=CallToolRequestParams(name="kodi_gui_action", arguments={"action": "launch"}),
-        )
+    resp = await server.get_request_handler("tools/call").handler(None,
+        CallToolRequestParams(name="kodi_gui_action", arguments={"action": "launch"})
     )
-    env = json.loads(resp.root.content[0].text)
-    assert resp.root.isError is True
+    env = json.loads(resp.content[0].text)
+    assert resp.is_error is True
     assert env["ok"] is False
     assert env["error_type"] == "invalid_params"
     assert "stop" in env["raw"]["allowed"]
