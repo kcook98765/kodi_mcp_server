@@ -261,6 +261,17 @@ async def install_file(filename: str):
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
 
+    # Bounded serving: the resolved path must stay inside the published
+    # package location. Rejects path-escape attempts (e.g. encoded "../")
+    # that would otherwise resolve to files outside repo-addon/.
+    try:
+        resolved_root = repo_addon_path.resolve()
+        resolved_file = file_path.resolve()
+    except OSError:
+        raise HTTPException(status_code=404, detail="File not found")
+    if not resolved_file.is_relative_to(resolved_root):
+        raise HTTPException(status_code=404, detail="File not found")
+
     return FileResponse(
         file_path,
         media_type="application/zip",
@@ -271,57 +282,63 @@ async def install_file(filename: str):
 def mount_repo_static(app):
     """Mount the project repo directory as static files.
 
-    Mounts the dev-repo subdirectory at /repo/content/ for Kodi access.
-    This serves addons.xml.gz, addons.xml, and all package files.
-    """
-    dev_repo = REPO_ROOT / "dev-repo"
-    if dev_repo.exists():
-        # Mount at /repo/content to serve dev-repo files
-        # Use html=False to prevent directory listing, check_dir=True for validation
-        from starlette.requests import Request
-        from starlette.responses import FileResponse, PlainTextResponse
-        from fastapi.responses import RedirectResponse
+    Registers the /repo/content/ routes once, but resolves the served repo
+    root at request time. This keeps repo content available when the
+    authoritative repo tree (dev-repo/) is staged after server startup,
+    without requiring a restart.
 
-        @app.get("/repo/content/", include_in_schema=False)
-        async def repo_content_root(request: Request):
-            """Redirect /repo/content/ to /repo/content/addons.xml.gz for Kodi."""
+    Layout priority is preserved from the original boot-time branches:
+    serve REPO_ROOT/dev-repo when it exists (with the addons.xml.gz ->
+    addons.xml -> plain-text metadata redirect), otherwise fall back to
+    the REPO_ROOT itself.
+
+    Serves addons.xml.gz, addons.xml, and all package files.
+    """
+    from starlette.requests import Request
+    from starlette.responses import FileResponse, PlainTextResponse
+    from fastapi import HTTPException
+    from fastapi.responses import RedirectResponse
+
+    def _resolve_dev_repo():
+        """Resolve the dev-repo tree at request time, or None when absent."""
+        dev_repo = REPO_ROOT / "dev-repo"
+        return dev_repo if dev_repo.exists() else None
+
+    @app.get("/repo/content/", include_in_schema=False)
+    async def repo_content_root(request: Request):
+        """Redirect /repo/content/ to the preferred metadata file for Kodi."""
+        dev_repo = _resolve_dev_repo()
+        if dev_repo is not None:
             addons_gz = dev_repo / "addons.xml.gz"
             if addons_gz.exists():
                 return RedirectResponse(url="/repo/content/addons.xml.gz")
-            addons_xml = dev_repo / "addons.xml"
-            if addons_xml.exists():
+            if (dev_repo / "addons.xml").exists():
                 return RedirectResponse(url="/repo/content/addons.xml")
-            return PlainTextResponse("Kodi MCP Repository", status_code=200)
+        return PlainTextResponse("Kodi MCP Repository", status_code=200)
 
-        @app.get("/repo/content/{path:path}", include_in_schema=False)
-        async def repo_content_file(path: str, request: Request):
-            """Serve files from dev-repo directory."""
-            file_path = dev_repo / path
-            if not file_path.exists():
-                from fastapi import HTTPException
-                raise HTTPException(status_code=404, detail="File not found")
-            if file_path.is_dir():
-                return PlainTextResponse("Directory listing not available", status_code=404)
-            return FileResponse(file_path)
-    else:
-        # Fallback: mount the repo root itself
-        repo_dir = REPO_ROOT
-        if repo_dir.exists():
-            from fastapi import Request
-            from fastapi.responses import FileResponse, RedirectResponse, PlainTextResponse
-
-            @app.get("/repo/content/", include_in_schema=False)
-            async def repo_content_root_fallback(request: Request):
-                """Fallback redirect for /repo/content/."""
-                return PlainTextResponse("Kodi MCP Repository", status_code=200)
-
-            @app.get("/repo/content/{path:path}", include_in_schema=False)
-            async def repo_content_file_fallback(path: str, request: Request):
-                """Fallback: serve files from repo root."""
-                file_path = repo_dir / path
-                if not file_path.exists():
-                    from fastapi import HTTPException
-                    raise HTTPException(status_code=404, detail="File not found")
-                if file_path.is_dir():
-                    return PlainTextResponse("Directory listing not available", status_code=404)
-                return FileResponse(file_path)
+    @app.get("/repo/content/{path:path}", include_in_schema=False)
+    async def repo_content_file(path: str, request: Request):
+        """Serve files from the authoritative repo directory."""
+        dev_repo = _resolve_dev_repo()
+        served_root = dev_repo if dev_repo is not None else (
+            REPO_ROOT if REPO_ROOT.exists() else None
+        )
+        if served_root is None:
+            raise HTTPException(status_code=404, detail="File not found")
+        file_path = served_root / path
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+        # Bounded serving: the resolved path must stay inside the served root.
+        # Rejects path-escape attempts (e.g. encoded "../" or a symlink whose
+        # target lives outside the served root) that would otherwise read files
+        # outside the repository tree.
+        try:
+            resolved_root = served_root.resolve()
+            resolved_file = file_path.resolve()
+        except OSError:
+            raise HTTPException(status_code=404, detail="File not found")
+        if not resolved_file.is_relative_to(resolved_root):
+            raise HTTPException(status_code=404, detail="File not found")
+        if file_path.is_dir():
+            return PlainTextResponse("Directory listing not available", status_code=404)
+        return FileResponse(file_path)

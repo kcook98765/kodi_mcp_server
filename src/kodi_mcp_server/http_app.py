@@ -61,9 +61,7 @@ async def _addon_registration_loop(*, stop_event: asyncio.Event) -> None:
                 else:
                     result = (state_view.envelope or {}).get("result") if state_view.envelope else {}
                     derived = result.get("derived") if isinstance(result, dict) else None
-                    state_obj = result.get("state") if isinstance(result, dict) else None
-                    reg_obj = (state_obj or {}).get("registration") if isinstance(state_obj, dict) else None
-                    repo_obj = (state_obj or {}).get("repo_zip") if isinstance(state_obj, dict) else None
+                    reg_obj = result.get("registration") if isinstance(result, dict) else None
                     if isinstance(reg_obj, dict):
                         try:
                             ttl_seconds = int(reg_obj.get("applied_ttl_seconds") or ttl_seconds)
@@ -77,16 +75,24 @@ async def _addon_registration_loop(*, stop_event: asyncio.Event) -> None:
                     )
                     status = "healthy" if healthy else f"unhealthy: derived={derived}"
 
-                    # If registration is healthy but repo zip isn't ready, attempt to stage it.
-                    # This is best-effort and bounded to avoid tight loops.
+                    # If registration is healthy but no usable repo zip is staged,
+                    # attempt to stage it. This is best-effort and bounded to
+                    # avoid tight loops.
                     if healthy and isinstance(derived, dict):
                         repo_ready = bool(derived.get("dev_setup_available") is True)
                         repo_present = bool(derived.get("repo_zip_file_exists") is True)
-                        repo_size = int(repo_obj.get("size_bytes") or 0) if isinstance(repo_obj, dict) else 0
 
-                        # Stage if missing OR if the staged artifact looks obviously wrong (too small).
-                        # First-time onboarding requires an installable repository add-on zip.
-                        repo_needs_stage = ((not repo_ready) and (not repo_present)) or (repo_present and repo_size < 1024)
+                        # Stage only when the addon has no usable staged repo zip
+                        # at all (first-time onboarding). Do NOT re-stage based on
+                        # byte size: a structurally valid, installable Kodi
+                        # repository addon zip (addon.xml + service.py + root
+                        # addons.xml) compresses to ~1000 bytes, so any fixed
+                        # threshold misfired on the legitimate artifact and
+                        # re-staged it every reconciliation cycle. The
+                        # addon-side ``repo_zip_file_exists`` (real on-disk check)
+                        # and ``dev_setup_available`` are the authoritative
+                        # readiness signals.
+                        repo_needs_stage = (not repo_ready) and (not repo_present)
 
                         now_mono = asyncio.get_running_loop().time()
                         if repo_needs_stage and now_mono >= next_stage_attempt_at:

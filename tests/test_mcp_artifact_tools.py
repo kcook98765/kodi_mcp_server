@@ -71,7 +71,7 @@ async def test_mcp_artifact_upload_and_publish(tmp_path: Path, monkeypatch):
 
     # Build MCP server runtime (no network calls made for these tools).
     from kodi_mcp_mcp.server_core import build_mcp_server, build_runtime
-    from mcp.types import CallToolRequest, CallToolRequestParams
+    from mcp.types import CallToolRequestParams
 
     runtime = build_runtime()
     server, _ = build_mcp_server(runtime)
@@ -79,9 +79,7 @@ async def test_mcp_artifact_upload_and_publish(tmp_path: Path, monkeypatch):
     zip_bytes = _addon_zip_bytes()
     zip_b64 = base64.b64encode(zip_bytes).decode("ascii")
 
-    upload_req = CallToolRequest(
-        method="tools/call",
-        params=CallToolRequestParams(
+    upload_req = CallToolRequestParams(
             name="artifact_upload_zip",
             arguments={
                 "zip_base64": zip_b64,
@@ -89,11 +87,10 @@ async def test_mcp_artifact_upload_and_publish(tmp_path: Path, monkeypatch):
                 "addon_id": "script.kodi_mcp_test",
                 "version": "0.0.1",
             },
-        ),
-    )
+        )
 
-    upload_result = await server.request_handlers[CallToolRequest](upload_req)
-    payload = upload_result.root.model_dump()
+    upload_result = await server.get_request_handler("tools/call").handler(None, upload_req)
+    payload = upload_result.model_dump(by_alias=True)
     assert payload["isError"] is False
     text = payload["content"][0]["text"]
 
@@ -108,9 +105,7 @@ async def test_mcp_artifact_upload_and_publish(tmp_path: Path, monkeypatch):
     assert env["data"]["artifact"]["addon_name"] == "Kodi MCP Test Script"
 
     # Publish that artifact into dev repo.
-    pub_req = CallToolRequest(
-        method="tools/call",
-        params=CallToolRequestParams(
+    pub_req = CallToolRequestParams(
             name="repo_publish_artifact",
             arguments={
                 "artifact_id": artifact_id,
@@ -119,10 +114,9 @@ async def test_mcp_artifact_upload_and_publish(tmp_path: Path, monkeypatch):
                 "addon_version": "0.0.1",
                 "provider_name": "kodi_mcp",
             },
-        ),
-    )
-    pub_result = await server.request_handlers[CallToolRequest](pub_req)
-    pub_payload = json.loads(pub_result.root.content[0].text)
+        )
+    pub_result = await server.get_request_handler("tools/call").handler(None, pub_req)
+    pub_payload = json.loads(pub_result.content[0].text)
     assert pub_payload["ok"] is True
     # Ensure we did not leak absolute server paths.
     result = pub_payload["data"]
@@ -142,18 +136,15 @@ async def test_mcp_addon_source_tools_inspect_project_map_and_tree(tmp_path: Pat
     monkeypatch.setenv("KODI_MCP_SOURCE_ROOTS", str(tmp_path))
 
     from kodi_mcp_mcp.server_core import build_mcp_server, build_runtime
-    from mcp.types import CallToolRequest, CallToolRequestParams
+    from mcp.types import CallToolRequestParams
 
     server, _ = build_mcp_server(build_runtime())
 
     async def call(name: str, arguments: dict):
-        resp = await server.request_handlers[CallToolRequest](
-            CallToolRequest(
-                method="tools/call",
-                params=CallToolRequestParams(name=name, arguments=arguments),
-            )
+        resp = await server.get_request_handler("tools/call").handler(None,
+            CallToolRequestParams(name=name, arguments=arguments)
         )
-        return json.loads(resp.root.content[0].text)
+        return json.loads(resp.content[0].text)
 
     inspect_env = await call("addon_source_inspect", {"source_path": str(source_dir)})
     assert inspect_env["ok"] is True
@@ -180,23 +171,20 @@ async def test_mcp_addon_source_tools_translate_agent_workspace_paths(tmp_path: 
 
     import kodi_mcp_mcp.server_core as server_core
     from kodi_mcp_mcp.server_core import build_mcp_server, build_runtime
-    from mcp.types import CallToolRequest, CallToolRequestParams
+    from mcp.types import CallToolRequestParams
 
     def _test_translate(source_path: str) -> str:
         return source_path.replace("/srv/workspaces/", f"{tmp_path}/", 1)
 
     monkeypatch.setattr(server_core, "_translate_agent_source_path", _test_translate)
     server, _ = build_mcp_server(build_runtime())
-    resp = await server.request_handlers[CallToolRequest](
-        CallToolRequest(
-            method="tools/call",
-            params=CallToolRequestParams(
+    resp = await server.get_request_handler("tools/call").handler(None,
+        CallToolRequestParams(
                 name="addon_source_inspect",
                 arguments={"source_path": "/srv/workspaces/agent_mcp_probe_script/addon/script.kodi_mcp_test"},
-            ),
-        )
+            )
     )
-    env = json.loads(resp.root.content[0].text)
+    env = json.loads(resp.content[0].text)
     assert env["ok"] is True
     assert env["data"]["addon_id"] == "script.kodi_mcp_test"
     assert env["data"]["addon_dir"] == str(source_dir)
@@ -208,7 +196,7 @@ async def test_mcp_bridge_log_recent_errors_filters_log_lines():
 
     from kodi_mcp_server.models.messages import ResponseMessage
     from kodi_mcp_mcp.server_core import build_mcp_server
-    from mcp.types import CallToolRequest, CallToolRequestParams
+    from mcp.types import CallToolRequestParams
 
     class _Bridge:
         async def get_bridge_log_tail(self, lines: int):
@@ -219,16 +207,13 @@ async def test_mcp_bridge_log_recent_errors_filters_log_lines():
             )
 
     server, _ = build_mcp_server({"bridge": _Bridge(), "jsonrpc": object(), "notifications": None})
-    resp = await server.request_handlers[CallToolRequest](
-        CallToolRequest(
-            method="tools/call",
-            params=CallToolRequestParams(
+    resp = await server.get_request_handler("tools/call").handler(None,
+        CallToolRequestParams(
                 name="bridge_log_recent_errors",
                 arguments={"lines": 50, "pattern": "addon|plugin"},
-            ),
-        )
+            )
     )
-    env = json.loads(resp.root.content[0].text)
+    env = json.loads(resp.content[0].text)
     assert env["ok"] is True
     assert env["data"]["count"] == 2
     assert env["data"]["matching_lines"] == ["WARNING addon slow", "ERROR plugin failed"]
@@ -240,7 +225,7 @@ async def test_mcp_addon_dev_loop_alias_dispatches_one_shot(monkeypatch):
 
     import kodi_mcp_mcp.server_core as server_core
     from kodi_mcp_mcp.server_core import build_mcp_server
-    from mcp.types import CallToolRequest, CallToolRequestParams
+    from mcp.types import CallToolRequestParams
 
     called = {}
 
@@ -251,10 +236,8 @@ async def test_mcp_addon_dev_loop_alias_dispatches_one_shot(monkeypatch):
     monkeypatch.setattr(server_core, "_repo_publish_stage_apply_artifact", _fake_dev_loop)
 
     server, _ = build_mcp_server({"bridge": object(), "jsonrpc": object(), "notifications": None})
-    resp = await server.request_handlers[CallToolRequest](
-        CallToolRequest(
-            method="tools/call",
-            params=CallToolRequestParams(
+    resp = await server.get_request_handler("tools/call").handler(None,
+        CallToolRequestParams(
                 name="addon_dev_loop",
                 arguments={
                     "artifact_id": "artifact-1",
@@ -264,10 +247,9 @@ async def test_mcp_addon_dev_loop_alias_dispatches_one_shot(monkeypatch):
                     "timeout_seconds": 7,
                     "poll_interval_seconds": 1,
                 },
-            ),
-        )
+            )
     )
-    env = json.loads(resp.root.content[0].text)
+    env = json.loads(resp.content[0].text)
     assert env["ok"] is True
     assert env["data"]["apply_verified"] is True
     assert called["artifact_id"] == "artifact-1"
@@ -300,7 +282,7 @@ async def test_mcp_artifact_upload_validates_addon_zip(tmp_path: Path, monkeypat
     importlib.reload(config)
 
     from kodi_mcp_mcp.server_core import build_mcp_server, build_runtime
-    from mcp.types import CallToolRequest, CallToolRequestParams
+    from mcp.types import CallToolRequestParams
 
     runtime = build_runtime()
     server, _ = build_mcp_server(runtime)
@@ -310,14 +292,11 @@ async def test_mcp_artifact_upload_validates_addon_zip(tmp_path: Path, monkeypat
         "filename": "upload.zip",
         **args,
     }
-    resp = await server.request_handlers[CallToolRequest](
-        CallToolRequest(
-            method="tools/call",
-            params=CallToolRequestParams(name="artifact_upload_zip", arguments=upload_args),
-        )
+    resp = await server.get_request_handler("tools/call").handler(None,
+        CallToolRequestParams(name="artifact_upload_zip", arguments=upload_args)
     )
-    env = json.loads(resp.root.content[0].text)
-    assert resp.root.isError is True
+    env = json.loads(resp.content[0].text)
+    assert resp.is_error is True
     assert env["ok"] is False
     assert error_fragment in env["error"]
 
@@ -351,6 +330,12 @@ async def test_mcp_repo_stage_current_dev_repo_builds_and_calls_bridge(tmp_path:
     import kodi_mcp_server.config as config
     importlib.reload(config)
 
+    # build_dev_repo_zip (used by repo_stage_current_dev_repo) reads
+    # managed_addons' module-level AUTHORITATIVE_REPO_ROOT, which is not
+    # refreshed by importlib.reload(config) unless we re-execute the module.
+    import kodi_mcp_server.managed_addons as managed_addons
+    importlib.reload(managed_addons)
+
     # Monkeypatch the actual bridge stage helper so no Kodi is required.
     import kodi_mcp_server.milestone_a_bridge as milestone
 
@@ -363,20 +348,17 @@ async def test_mcp_repo_stage_current_dev_repo_builds_and_calls_bridge(tmp_path:
     monkeypatch.setattr(milestone, "stage_dev_repo_zip", _fake_stage)
 
     from kodi_mcp_mcp.server_core import build_mcp_server, build_runtime
-    from mcp.types import CallToolRequest, CallToolRequestParams
+    from mcp.types import CallToolRequestParams
 
     runtime = build_runtime()
     server, _ = build_mcp_server(runtime)
 
-    req = CallToolRequest(
-        method="tools/call",
-        params=CallToolRequestParams(
+    req = CallToolRequestParams(
             name="repo_stage_current_dev_repo",
             arguments={"repo_version": "test", "verify": True},
-        ),
-    )
-    resp = await server.request_handlers[CallToolRequest](req)
-    env = json.loads(resp.root.content[0].text)
+        )
+    resp = await server.get_request_handler("tools/call").handler(None, req)
+    env = json.loads(resp.content[0].text)
     assert env["ok"] is True
     data = env["data"]
     assert data["ok"] is True
@@ -390,7 +372,7 @@ async def test_mcp_addon_execute_dispatches_jsonrpc():
 
     from kodi_mcp_server.models.messages import ResponseMessage
     from kodi_mcp_mcp.server_core import build_mcp_server
-    from mcp.types import CallToolRequest, CallToolRequestParams
+    from mcp.types import CallToolRequestParams
 
     class _JsonRpc:
         def __init__(self):
@@ -406,10 +388,8 @@ async def test_mcp_addon_execute_dispatches_jsonrpc():
     jsonrpc = _JsonRpc()
     server, _ = build_mcp_server({"bridge": object(), "jsonrpc": jsonrpc, "notifications": None})
 
-    resp = await server.request_handlers[CallToolRequest](
-        CallToolRequest(
-            method="tools/call",
-            params=CallToolRequestParams(
+    resp = await server.get_request_handler("tools/call").handler(None,
+        CallToolRequestParams(
                 name="addon_execute",
                 arguments={
                     "addonid": "plugin.kodi_world_poc",
@@ -417,10 +397,9 @@ async def test_mcp_addon_execute_dispatches_jsonrpc():
                     "params": {"mode": "test"},
                     "observe_player_seconds": 0,
                 },
-            ),
-        )
+            )
     )
-    env = json.loads(resp.root.content[0].text)
+    env = json.loads(resp.content[0].text)
     assert env["ok"] is True
     assert env["data"]["dispatch_ok"] is True
     assert env["data"]["verified"] is None
@@ -435,7 +414,7 @@ async def test_mcp_addon_execute_accepts_addon_id_alias():
 
     from kodi_mcp_server.models.messages import ResponseMessage
     from kodi_mcp_mcp.server_core import build_mcp_server
-    from mcp.types import CallToolRequest, CallToolRequestParams
+    from mcp.types import CallToolRequestParams
 
     class _JsonRpc:
         def __init__(self):
@@ -451,16 +430,13 @@ async def test_mcp_addon_execute_accepts_addon_id_alias():
     jsonrpc = _JsonRpc()
     server, _ = build_mcp_server({"bridge": object(), "jsonrpc": jsonrpc, "notifications": None})
 
-    resp = await server.request_handlers[CallToolRequest](
-        CallToolRequest(
-            method="tools/call",
-            params=CallToolRequestParams(
+    resp = await server.get_request_handler("tools/call").handler(None,
+        CallToolRequestParams(
                 name="addon_execute",
                 arguments={"addon_id": "plugin.kodi_world_poc", "observe_player_seconds": 0},
-            ),
-        )
+            )
     )
-    env = json.loads(resp.root.content[0].text)
+    env = json.loads(resp.content[0].text)
     assert env["ok"] is True
     assert env["data"]["addonid"] == "plugin.kodi_world_poc"
     assert jsonrpc.calls == [{"addonid": "plugin.kodi_world_poc", "params": {}, "wait": False}]
@@ -472,7 +448,7 @@ async def test_mcp_addon_execute_includes_gui_state_by_default():
 
     from kodi_mcp_server.models.messages import ResponseMessage
     from kodi_mcp_mcp.server_core import build_mcp_server
-    from mcp.types import CallToolRequest, CallToolRequestParams
+    from mcp.types import CallToolRequestParams
 
     class _JsonRpc:
         async def execute_addon(self, addonid: str, params=None, wait: bool = False):
@@ -495,16 +471,13 @@ async def test_mcp_addon_execute_includes_gui_state_by_default():
 
     server, _ = build_mcp_server({"bridge": _Bridge(), "jsonrpc": _JsonRpc(), "notifications": None})
 
-    resp = await server.request_handlers[CallToolRequest](
-        CallToolRequest(
-            method="tools/call",
-            params=CallToolRequestParams(
+    resp = await server.get_request_handler("tools/call").handler(None,
+        CallToolRequestParams(
                 name="addon_execute",
                 arguments={"addonid": "plugin.kodi_world_poc", "observe_player_seconds": 0},
-            ),
-        )
+            )
     )
-    env = json.loads(resp.root.content[0].text)
+    env = json.loads(resp.content[0].text)
     assert env["ok"] is True
     assert env["data"]["gui_state"]["captured"] is True
     assert env["data"]["gui_state"]["source"] == "kodi_gui_state"
@@ -518,7 +491,7 @@ async def test_mcp_addon_execute_can_disable_default_gui_state():
 
     from kodi_mcp_server.models.messages import ResponseMessage
     from kodi_mcp_mcp.server_core import build_mcp_server
-    from mcp.types import CallToolRequest, CallToolRequestParams
+    from mcp.types import CallToolRequestParams
 
     class _JsonRpc:
         async def execute_addon(self, addonid: str, params=None, wait: bool = False):
@@ -533,20 +506,17 @@ async def test_mcp_addon_execute_can_disable_default_gui_state():
 
     server, _ = build_mcp_server({"bridge": _Bridge(), "jsonrpc": _JsonRpc(), "notifications": None})
 
-    resp = await server.request_handlers[CallToolRequest](
-        CallToolRequest(
-            method="tools/call",
-            params=CallToolRequestParams(
+    resp = await server.get_request_handler("tools/call").handler(None,
+        CallToolRequestParams(
                 name="addon_execute",
                 arguments={
                     "addonid": "plugin.kodi_world_poc",
                     "include_gui_state": False,
                     "observe_player_seconds": 0,
                 },
-            ),
-        )
+            )
     )
-    env = json.loads(resp.root.content[0].text)
+    env = json.loads(resp.content[0].text)
     assert env["ok"] is True
     assert env["data"]["gui_state"] == {
         "captured": False,
@@ -563,7 +533,7 @@ async def test_mcp_addon_execute_can_verify_player_started():
 
     from kodi_mcp_server.models.messages import ResponseMessage
     from kodi_mcp_mcp.server_core import build_mcp_server
-    from mcp.types import CallToolRequest, CallToolRequestParams
+    from mcp.types import CallToolRequestParams
 
     class _JsonRpc:
         async def execute_addon(self, addonid: str, params=None, wait: bool = False):
@@ -574,10 +544,8 @@ async def test_mcp_addon_execute_can_verify_player_started():
 
     server, _ = build_mcp_server({"bridge": object(), "jsonrpc": _JsonRpc(), "notifications": None})
 
-    resp = await server.request_handlers[CallToolRequest](
-        CallToolRequest(
-            method="tools/call",
-            params=CallToolRequestParams(
+    resp = await server.get_request_handler("tools/call").handler(None,
+        CallToolRequestParams(
                 name="addon_execute",
                 arguments={
                     "addonid": "plugin.kodi_world_poc",
@@ -587,10 +555,9 @@ async def test_mcp_addon_execute_can_verify_player_started():
                     "player_timeout_seconds": 1,
                     "poll_interval_ms": 100,
                 },
-            ),
-        )
+            )
     )
-    env = json.loads(resp.root.content[0].text)
+    env = json.loads(resp.content[0].text)
     assert env["ok"] is True
     assert env["data"]["player_verification"]["player_started"] is True
     assert env["data"]["player_verification"]["active_players"] == [{"playerid": 1, "type": "video"}]
@@ -602,7 +569,7 @@ async def test_mcp_addon_execute_verification_fails_when_player_missing():
 
     from kodi_mcp_server.models.messages import ResponseMessage
     from kodi_mcp_mcp.server_core import build_mcp_server
-    from mcp.types import CallToolRequest, CallToolRequestParams
+    from mcp.types import CallToolRequestParams
 
     class _JsonRpc:
         async def execute_addon(self, addonid: str, params=None, wait: bool = False):
@@ -613,10 +580,8 @@ async def test_mcp_addon_execute_verification_fails_when_player_missing():
 
     server, _ = build_mcp_server({"bridge": object(), "jsonrpc": _JsonRpc(), "notifications": None})
 
-    resp = await server.request_handlers[CallToolRequest](
-        CallToolRequest(
-            method="tools/call",
-            params=CallToolRequestParams(
+    resp = await server.get_request_handler("tools/call").handler(None,
+        CallToolRequestParams(
                 name="addon_execute",
                 arguments={
                     "addonid": "plugin.kodi_world_poc",
@@ -624,10 +589,9 @@ async def test_mcp_addon_execute_verification_fails_when_player_missing():
                     "player_timeout_seconds": 1,
                     "poll_interval_ms": 100,
                 },
-            ),
-        )
+            )
     )
-    env = json.loads(resp.root.content[0].text)
+    env = json.loads(resp.content[0].text)
     assert env["ok"] is False
     assert env["error_type"] == "verification_failed"
     assert env["data"]["player_verification"]["player_started"] is False
@@ -640,7 +604,7 @@ async def test_mcp_addon_execute_can_verify_window_state():
 
     from kodi_mcp_server.models.messages import ResponseMessage
     from kodi_mcp_mcp.server_core import build_mcp_server
-    from mcp.types import CallToolRequest, CallToolRequestParams
+    from mcp.types import CallToolRequestParams
 
     class _JsonRpc:
         async def execute_addon(self, addonid: str, params=None, wait: bool = False):
@@ -662,10 +626,8 @@ async def test_mcp_addon_execute_can_verify_window_state():
 
     server, _ = build_mcp_server({"bridge": _Bridge(), "jsonrpc": _JsonRpc(), "notifications": None})
 
-    resp = await server.request_handlers[CallToolRequest](
-        CallToolRequest(
-            method="tools/call",
-            params=CallToolRequestParams(
+    resp = await server.get_request_handler("tools/call").handler(None,
+        CallToolRequestParams(
                 name="addon_execute",
                 arguments={
                     "addonid": "plugin.kodi_world_poc",
@@ -675,10 +637,9 @@ async def test_mcp_addon_execute_can_verify_window_state():
                     "window_poll_interval_ms": 100,
                     "observe_player_seconds": 0,
                 },
-            ),
-        )
+            )
     )
-    env = json.loads(resp.root.content[0].text)
+    env = json.loads(resp.content[0].text)
     assert env["ok"] is True
     assert env["data"]["verified"] is True
     assert env["data"]["gui_verification"]["matched"] is True
@@ -694,7 +655,7 @@ async def test_mcp_addon_execute_window_verification_fails_when_window_missing()
 
     from kodi_mcp_server.models.messages import ResponseMessage
     from kodi_mcp_mcp.server_core import build_mcp_server
-    from mcp.types import CallToolRequest, CallToolRequestParams
+    from mcp.types import CallToolRequestParams
 
     class _JsonRpc:
         async def execute_addon(self, addonid: str, params=None, wait: bool = False):
@@ -716,10 +677,8 @@ async def test_mcp_addon_execute_window_verification_fails_when_window_missing()
 
     server, _ = build_mcp_server({"bridge": _Bridge(), "jsonrpc": _JsonRpc(), "notifications": None})
 
-    resp = await server.request_handlers[CallToolRequest](
-        CallToolRequest(
-            method="tools/call",
-            params=CallToolRequestParams(
+    resp = await server.get_request_handler("tools/call").handler(None,
+        CallToolRequestParams(
                 name="addon_execute",
                 arguments={
                     "addonid": "plugin.kodi_world_poc",
@@ -728,10 +687,9 @@ async def test_mcp_addon_execute_window_verification_fails_when_window_missing()
                     "window_poll_interval_ms": 100,
                     "observe_player_seconds": 0,
                 },
-            ),
-        )
+            )
     )
-    env = json.loads(resp.root.content[0].text)
+    env = json.loads(resp.content[0].text)
     assert env["ok"] is False
     assert env["error_type"] == "verification_failed"
     assert env["data"]["dispatch_ok"] is True
@@ -756,10 +714,21 @@ async def test_repo_publish_stage_apply_artifact_reports_installed_version_misma
 
     importlib.reload(config)
 
+    # The apply flow reads module-level path constants that are NOT refreshed
+    # by importlib.reload(config):
+    # - managed_addons.build_dev_repo_zip (staging step) reads its module-level
+    #   AUTHORITATIVE_REPO_ROOT
+    # - addon_ops.update_addon (apply step) reads its module-level REPO_ROOT
+    # Re-execute those consumer modules so they pick up the repointed roots.
+    import kodi_mcp_server.managed_addons as managed_addons
+    import kodi_mcp_server.tools.addon_ops as addon_ops
+    importlib.reload(managed_addons)
+    importlib.reload(addon_ops)
+
     from kodi_mcp_server.artifact_store import ArtifactStore
     from kodi_mcp_server.models.messages import ResponseMessage
     from kodi_mcp_mcp.server_core import build_mcp_server
-    from mcp.types import CallToolRequest, CallToolRequestParams
+    from mcp.types import CallToolRequestParams
 
     store = ArtifactStore(root_dir=tmp_path / "artifacts")
     record = store.register_bytes(
@@ -789,10 +758,8 @@ async def test_repo_publish_stage_apply_artifact_reports_installed_version_misma
             return ResponseMessage(request_id="builtin", result={"ok": True}, error=None)
 
     server, _ = build_mcp_server({"bridge": _Bridge(), "jsonrpc": object(), "notifications": None})
-    resp = await server.request_handlers[CallToolRequest](
-        CallToolRequest(
-            method="tools/call",
-            params=CallToolRequestParams(
+    resp = await server.get_request_handler("tools/call").handler(None,
+        CallToolRequestParams(
                 name="repo_publish_stage_apply_artifact",
                 arguments={
                     "artifact_id": record.artifact_id,
@@ -802,10 +769,9 @@ async def test_repo_publish_stage_apply_artifact_reports_installed_version_misma
                     "timeout_seconds": 1,
                     "poll_interval_seconds": 1,
                 },
-            ),
-        )
+            )
     )
-    env = json.loads(resp.root.content[0].text)
+    env = json.loads(resp.content[0].text)
     assert env["ok"] is False
     assert env["data"]["ok"] is False
     assert env["data"]["apply_verified"] is False

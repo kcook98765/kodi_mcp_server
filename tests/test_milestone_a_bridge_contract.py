@@ -11,7 +11,7 @@ def test_parse_envelope_accepts_flat_result_shape():
             "transport": {"ok": True, "bridge": "service.kodi_mcp"},
             "result": {
                 "ok": True,
-                "state": {"repo_zip": {"saved_path": "/tmp/dev-repo.zip"}},
+                "repo_zip": {"saved_path": "/tmp/dev-repo.zip"},
                 "derived": {"dev_setup_available": True},
             },
         }
@@ -52,9 +52,7 @@ async def test_stage_dev_repo_zip_reports_install_hint(tmp_path: Path, monkeypat
                 "transport": {"ok": True},
                 "result": {
                     "ok": True,
-                    "state": {
-                        "repo_zip": {"saved_path": "/profile/repo_stage/dev-repo.zip"},
-                    },
+                    "repo_zip": {"saved_path": "/profile/repo_stage/dev-repo.zip"},
                     "derived": {"dev_setup_available": True},
                     "install_hint": {
                         "action": "Kodi UI: Add-ons > Install from repository",
