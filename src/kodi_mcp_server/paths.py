@@ -9,7 +9,7 @@ These helpers make ownership explicit:
 
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PROJECT_DIR = PROJECT_ROOT / "project"
 KODI_ADDON_PACKAGES_ROOT = PROJECT_DIR
 LEGACY_ADDON_ARTIFACTS_ROOT = PROJECT_ROOT / "addon"
