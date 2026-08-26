@@ -4,6 +4,7 @@ HTTP JSON-RPC transport for Kodi MCP Server.
 Minimal real transport for executing Kodi JSON-RPC commands over HTTP.
 """
 
+import asyncio
 import base64
 import json
 import socket
@@ -78,48 +79,65 @@ class HttpJsonRpcTransport(Transport):
         )
 
     async def _retry_wrapper(self, request: RequestMessage, start_time: float, max_retries: int = 1) -> ResponseMessage:
-        """Wrapper that retries on network errors (max 1 retry) for safe methods only."""
+        """Wrapper that retries on network errors (max 1 retry) for safe methods only.
+
+        Retryability is decided two ways so both contracts hold:
+        - the legacy exception path (``socket.timeout`` / ``URLError`` escaping
+          ``_send_once``), and
+        - the real response path, where ``_send_once`` converts those same
+          transient failures into typed error ``ResponseMessage``s
+          (``socket.timeout`` -> TIMEOUT, other ``URLError`` -> NETWORK_ERROR)
+          instead of re-raising.
+        Only TIMEOUT / NETWORK_ERROR are retried; that is exactly the transient
+        network class and never broadens the method-safety policy.
+        """
         method = request.args.get("method", "")
         if not is_safe_to_retry(method):
             # Not a safe method, don't retry
             return await self._send_once(request, start_time)
 
-        last_error = None
-        for attempt in range(max_retries + 1):
+        attempts_left = max_retries + 1
+        while True:
             try:
-                return await self._send_once(request, start_time)
-            except socket.timeout as exc:
-                last_error = exc
-                latency_ms = int((time.time() - start_time) * 1000)
-                if attempt == max_retries:
+                response = await self._send_once(request, start_time)
+            except socket.timeout:
+                if attempts_left == 1:
                     # Final attempt failed
                     return self._error_response(
                         request.request_id,
                         "request timeout",
                         ErrorType.TIMEOUT,
-                        latency_ms=latency_ms,
+                        latency_ms=int((time.time() - start_time) * 1000),
                     )
-                # Retry: loop again
+                attempts_left -= 1
+                continue
             except URLError as exc:
-                last_error = exc
-                latency_ms = int((time.time() - start_time) * 1000)
-                if attempt == max_retries:
+                if attempts_left == 1:
                     # Final attempt failed
                     if isinstance(exc.reason, socket.timeout):
                         return self._error_response(
                             request.request_id,
                             "request timeout",
                             ErrorType.TIMEOUT,
-                            latency_ms=latency_ms,
+                            latency_ms=int((time.time() - start_time) * 1000),
                         )
                     else:
                         return self._error_response(
                             request.request_id,
                             f"connection error: {exc.reason}",
                             ErrorType.NETWORK_ERROR,
-                            latency_ms=latency_ms,
+                            latency_ms=int((time.time() - start_time) * 1000),
                         )
-                # Retry: loop again
+                attempts_left -= 1
+                continue
+
+            # Real path: _send_once returns typed error responses (rather than
+            # re-raising) for transient network failures; retry on those only.
+            is_transient = response.error_type in (ErrorType.TIMEOUT, ErrorType.NETWORK_ERROR)
+            if is_transient and attempts_left > 1:
+                attempts_left -= 1
+                continue
+            return response
 
     async def _send_once(self, request: RequestMessage, start_time: float) -> ResponseMessage:
         """Send a single request without retry logic."""
@@ -146,8 +164,11 @@ class HttpJsonRpcTransport(Transport):
         )
 
         try:
-            with urllib_request.urlopen(http_request, timeout=self.timeout) as response:
-                raw_body = response.read().decode("utf-8")
+            def _do_http():
+                with urllib_request.urlopen(http_request, timeout=self.timeout) as response:
+                    return response.read().decode("utf-8")
+
+            raw_body = await asyncio.to_thread(_do_http)
         except HTTPError as exc:
             latency_ms = int((time.time() - start_time) * 1000)
             # Map HTTP status codes to error types
