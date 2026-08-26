@@ -69,6 +69,14 @@ class JsonRpcTool:
         """Retrieve the list of active Kodi players."""
         return await self.execute_jsonrpc(method="Player.GetActivePlayers")
 
+    async def open_library_item(self, media_type: str, item_id: int) -> ResponseMessage:
+        """Start a Kodi library movie or episode by its library id."""
+        id_key = "movieid" if media_type == "movie" else "episodeid"
+        return await self.execute_jsonrpc(
+            method="Player.Open",
+            params={"item": {id_key: item_id}},
+        )
+
     async def execute_input_action(self, action: str) -> ResponseMessage:
         """Execute a Kodi input action."""
         return await self.execute_jsonrpc(

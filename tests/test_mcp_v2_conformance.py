@@ -41,6 +41,7 @@ _EXPECTED_TOOLS = {
     "addon_project_map_status",
     "addon_source_tree",
     "kodi_player_active",
+    "kodi_player_open",
     "kodi_player_item",
     "kodi_player_seek",
     "kodi_player_pause",
@@ -310,11 +311,11 @@ async def test_mcp_dispatch_gate_invariant():
     terminal_else_found = False
     for i, line in enumerate(lines):
         # Detect start of dispatch chain (after `try:` around line 1628)
-        if "try:" in line and i > 1600 and i < 1650:
+        if "try:" in line and i > 1600 and i < 1800:
             in_dispatch_chain = True
             continue
         # Detect terminal else (the one we patched)
-        if in_dispatch_chain and line.strip().startswith("else:") and i > 2200 and i < 2300:
+        if in_dispatch_chain and line.strip().startswith("else:") and i > 2200 and i < 2400:
             terminal_else_found = True
             # Check the next line contains raise, not _kodi_status
             next_line = lines[i + 1] if i + 1 < len(lines) else ""

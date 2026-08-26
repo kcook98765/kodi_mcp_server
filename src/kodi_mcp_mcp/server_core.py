@@ -817,6 +817,27 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 },
             ),
             Tool(
+                name="kodi_player_open",
+                description="Start playback of a known Kodi library movie or episode by its library id.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "media_type": {
+                            "type": "string",
+                            "enum": ["movie", "episode"],
+                            "description": "Kodi library item type.",
+                        },
+                        "item_id": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "Existing Kodi movieid or episodeid matching media_type.",
+                        },
+                    },
+                    "required": ["media_type", "item_id"],
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
                 name="kodi_player_item",
                 description="Return the current item for a Kodi player through MCP.",
                 inputSchema={
@@ -1217,6 +1238,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
             "addon_project_map_status",
             "addon_source_tree",
             "kodi_player_active",
+            "kodi_player_open",
             "kodi_player_item",
             "kodi_player_seek",
             "kodi_player_pause",
@@ -1338,6 +1360,35 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                             is_error=True,
                             content=[TextContent(type="text", text=text)],
                         )
+
+            if tool_name == "kodi_player_open":
+                args = params.arguments or {}
+                if not isinstance(args, dict):
+                    args = {}
+                media_type = args.get("media_type")
+                item_id = args.get("item_id")
+                if media_type not in {"movie", "episode"}:
+                    error = "missing or invalid required argument: media_type"
+                elif not isinstance(item_id, int) or isinstance(item_id, bool) or item_id < 0:
+                    error = "missing or invalid required argument: item_id"
+                else:
+                    error = None
+                if error is not None:
+                    envelope = {
+                        "ok": False,
+                        "tool": tool_name,
+                        "data": None,
+                        "error": error,
+                        "error_type": "invalid_params",
+                        "error_code": None,
+                        "latency_ms": 0,
+                        "request_id": None,
+                        "raw": {"arguments": args},
+                    }
+                    return CallToolResult(
+                        is_error=True,
+                        content=[TextContent(type="text", text=json.dumps(envelope, indent=2, sort_keys=True))],
+                    )
 
             if tool_name in {"kodi_player_item", "kodi_player_seek", "kodi_player_pause", "kodi_player_stop"}:
                 args = params.arguments or {}
@@ -1822,6 +1873,12 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     raw_result = _addon_source_tree(str(args.get("source_path") or "").strip(), max_entries=max_entries)
                 elif tool_name == "kodi_player_active":
                     raw_result = await runtime["jsonrpc"].get_active_players()
+                elif tool_name == "kodi_player_open":
+                    args = params.arguments or {}
+                    raw_result = await runtime["jsonrpc"].open_library_item(
+                        media_type=args["media_type"],
+                        item_id=args["item_id"],
+                    )
                 elif tool_name == "kodi_player_item":
                     args = params.arguments or {}
                     if not isinstance(args, dict):
