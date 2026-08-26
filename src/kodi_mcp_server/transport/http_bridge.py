@@ -55,35 +55,34 @@ class HttpBridgeClient:
         return {"X-Kodi-MCP-Token": self.token}
 
     async def _retry_wrapper(self, method, *args, request_id: str, max_retries: int = 1, **kwargs) -> ResponseMessage:
-        """Wrapper that retries on network errors (max 1 retry).
+        """Wrapper that retries on transient transport failures (max 1 retry).
 
         Runs the provided (potentially blocking) method in a threadpool so the
-        asyncio event loop is not blocked by stdlib blocking calls. Retries on
-        URLError/socket.timeout with a simple backoff.
+        asyncio event loop is not blocked by stdlib blocking calls. The
+        blocking method converts URLError/socket.timeout into typed
+        ResponseMessages instead of raising, so a retryable transient failure
+        is detected from the returned error_type (NETWORK_ERROR or TIMEOUT)
+        and retried with a simple backoff.
         """
         import asyncio
 
-        start_time = time.time()
-        last_error = None
-        for attempt in range(max_retries + 1):
-            try:
-                # Run blocking method in a thread to avoid blocking the event loop.
-                result = await asyncio.to_thread(method, *args, **kwargs)
-                return self._response(
-                    request_id=request_id,
-                    result=result.result,  # result is already ResponseMessage
-                    error=result.error,
-                    error_type=result.error_type,
-                    error_code=result.error_code,
-                    latency_ms=result.latency_ms,
-                )
-            except (URLError, socket.timeout) as exc:
-                last_error = exc
-                if attempt == max_retries:
-                    # Final attempt failed, return error response
-                    return _url_error_to_response(exc, request_id)
-                # small exponential backoff before retrying
-                await asyncio.sleep(0.25 * (2 ** attempt))
+        # Run blocking method in a thread to avoid blocking the event loop.
+        result = await asyncio.to_thread(method, *args, **kwargs)
+        for attempt in range(max_retries):
+            transient = result.error_type in (ErrorType.NETWORK_ERROR, ErrorType.TIMEOUT)
+            if not transient:
+                break
+            # small exponential backoff before retrying
+            await asyncio.sleep(0.25 * (2 ** attempt))
+            result = await asyncio.to_thread(method, *args, **kwargs)
+        return self._response(
+            request_id=request_id,
+            result=result.result,  # result is already ResponseMessage
+            error=result.error,
+            error_type=result.error_type,
+            error_code=result.error_code,
+            latency_ms=result.latency_ms,
+        )
 
     def _response(
         self,
@@ -206,8 +205,15 @@ class HttpBridgeClient:
         )
 
     async def get_file(self, path: str) -> ResponseMessage:
+        import asyncio
+
         request_id = "bridge-file-read"
-        result = self._make_request("GET", "/files/read", query={"path": path})
+        # Run the blocking HTTP call off the event loop so a slow bridge
+        # response does not freeze concurrent async work (mirrors
+        # ``_retry_wrapper``'s use of ``asyncio.to_thread``).
+        result = await asyncio.to_thread(
+            self._make_request, "GET", "/files/read", query={"path": path}
+        )
         return self._response(request_id=request_id, result=result.result, error=result.error, error_type=result.error_type, error_code=result.error_code, latency_ms=result.latency_ms)
 
     async def get_addon_info(self, addonid: str) -> ResponseMessage:
@@ -229,8 +235,13 @@ class HttpBridgeClient:
         )
 
     async def write_log_marker(self, message: str) -> ResponseMessage:
+        import asyncio
+
         request_id = "bridge-log-marker"
-        result = self._make_request("POST", "/log/marker", payload={"message": message})
+        # Offload the blocking HTTP call off the event loop (mirrors get_file).
+        result = await asyncio.to_thread(
+            self._make_request, "POST", "/log/marker", payload={"message": message}
+        )
         return self._response(request_id=request_id, result=result.result, error=result.error, error_type=result.error_type, error_code=result.error_code, latency_ms=result.latency_ms)
 
     async def debug_ping(self) -> ResponseMessage:
@@ -246,8 +257,13 @@ class HttpBridgeClient:
         )
 
     async def gui_action(self, action: str) -> ResponseMessage:
+        import asyncio
+
         request_id = "bridge-gui-action"
-        result = self._make_request("POST", "/gui/action", payload={"action": action})
+        # Offload the blocking HTTP call off the event loop (mirrors get_file).
+        result = await asyncio.to_thread(
+            self._make_request, "POST", "/gui/action", payload={"action": action}
+        )
         return self._response(
             request_id=request_id,
             result=result.result,
@@ -258,8 +274,16 @@ class HttpBridgeClient:
         )
 
     async def gui_screenshot(self, include_image: bool = False) -> ResponseMessage:
+        import asyncio
+
         request_id = "bridge-gui-screenshot"
-        result = self._make_request("GET", "/gui/screenshot", query={"include_image": "true" if include_image else "false"})
+        # Offload the blocking HTTP call off the event loop (mirrors get_file).
+        result = await asyncio.to_thread(
+            self._make_request,
+            "GET",
+            "/gui/screenshot",
+            query={"include_image": "true" if include_image else "false"},
+        )
         return self._response(
             request_id=request_id,
             result=result.result,
@@ -270,8 +294,13 @@ class HttpBridgeClient:
         )
 
     async def gui_state(self) -> ResponseMessage:
+        import asyncio
+
         request_id = "bridge-gui-state"
-        result = self._make_request("GET", "/gui/state")
+        # Offload the blocking HTTP call off the event loop (mirrors get_file).
+        result = await asyncio.to_thread(
+            self._make_request, "GET", "/gui/state"
+        )
         return self._response(
             request_id=request_id,
             result=result.result,
@@ -282,32 +311,68 @@ class HttpBridgeClient:
         )
 
     async def ensure_addon_enabled(self, addonid: str) -> ResponseMessage:
+        import asyncio
+
         request_id = "bridge-ensure-addon-enabled"
-        result = self._make_request("POST", "/addon/ensure-enabled", query={"addonid": addonid}, payload={})
+        # Offload the blocking HTTP call off the event loop (mirrors get_file).
+        result = await asyncio.to_thread(
+            self._make_request,
+            "POST",
+            "/addon/ensure-enabled",
+            query={"addonid": addonid},
+            payload={},
+        )
         return self._response(request_id=request_id, result=result.result, error=result.error, error_type=result.error_type, error_code=result.error_code, latency_ms=result.latency_ms)
 
     async def execute_addon(self, addonid: str) -> ResponseMessage:
+        import asyncio
+
         request_id = "bridge-execute-addon"
-        result = self._make_request("POST", "/addon/execute", query={"addonid": addonid}, payload={})
+        # Offload the blocking HTTP call off the event loop (mirrors get_file).
+        result = await asyncio.to_thread(
+            self._make_request,
+            "POST",
+            "/addon/execute",
+            query={"addonid": addonid},
+            payload={},
+        )
         return self._response(request_id=request_id, result=result.result, error=result.error, error_type=result.error_type, error_code=result.error_code, latency_ms=result.latency_ms)
 
     async def check_addon_version(self, addonid: str, expected_version: str) -> ResponseMessage:
+        import asyncio
+
         request_id = "bridge-addon-version-check"
-        result = self._make_request("GET", "/addon/version-check", query={"addonid": addonid, "expected_version": expected_version})
+        # Offload the blocking HTTP call off the event loop (mirrors get_file).
+        result = await asyncio.to_thread(
+            self._make_request,
+            "GET",
+            "/addon/version-check",
+            query={"addonid": addonid, "expected_version": expected_version},
+        )
         return self._response(request_id=request_id, result=result.result, error=result.error, error_type=result.error_type, error_code=result.error_code, latency_ms=result.latency_ms)
 
     async def execute_builtin(self, command: str, addonid: str | None = None) -> ResponseMessage:
+        import asyncio
+
         request_id = "bridge-execute-builtin"
         query = {"command": command}
         if addonid:
             query["addonid"] = addonid
-        result = self._make_request("POST", "/execute_builtin", query=query, payload={})
+        # Offload the blocking HTTP call off the event loop (mirrors get_file).
+        result = await asyncio.to_thread(
+            self._make_request, "POST", "/execute_builtin", query=query, payload={}
+        )
         return self._response(request_id=request_id, result=result.result, error=result.error, error_type=result.error_type, error_code=result.error_code, latency_ms=result.latency_ms)
 
     async def refresh_repo(self) -> ResponseMessage:
         """Trigger a Kodi repository refresh via the bridge addon."""
+        import asyncio
+
         request_id = "bridge-repo-refresh"
-        result = self._make_request("POST", "/repo/refresh", payload={})
+        # Offload the blocking HTTP call off the event loop (mirrors get_file).
+        result = await asyncio.to_thread(
+            self._make_request, "POST", "/repo/refresh", payload={}
+        )
         return self._response(
             request_id=request_id,
             result=result.result,
@@ -317,7 +382,13 @@ class HttpBridgeClient:
             latency_ms=result.latency_ms,
         )
 
-    async def upload_addon_zip(self, local_zip_path: str) -> ResponseMessage:
+    def _upload_addon_zip_blocking(self, local_zip_path: str) -> ResponseMessage:
+        """Synchronous body of ``upload_addon_zip`` (local file I/O + urllib).
+
+        Kept fully synchronous so the async wrapper can hand it to
+        ``asyncio.to_thread``; the error taxonomy and response construction
+        are exactly the ones this method always had.
+        """
         request_id = "bridge-addon-upload"
         try:
             zip_path = Path(local_zip_path)
@@ -365,11 +436,23 @@ class HttpBridgeClient:
                 latency_ms=latency_ms,
             )
 
+    async def upload_addon_zip(self, local_zip_path: str) -> ResponseMessage:
+        import asyncio
+
+        # Offload the entire blocking region (local file read + urllib POST)
+        # off the event loop (mirrors get_file) so a slow upload does not
+        # freeze concurrent async work.
+        return await asyncio.to_thread(self._upload_addon_zip_blocking, local_zip_path)
+
     async def mcp_register(self, payload: dict) -> ResponseMessage:
         """POST /mcp/register (Milestone A) and return the standard envelope as result."""
+        import asyncio
 
         request_id = "bridge-mcp-register"
-        result = self._make_request("POST", "/mcp/register", payload=payload)
+        # Offload the blocking HTTP call off the event loop (mirrors get_file).
+        result = await asyncio.to_thread(
+            self._make_request, "POST", "/mcp/register", payload=payload
+        )
         return self._response(
             request_id=request_id,
             result=result.result,
@@ -381,9 +464,13 @@ class HttpBridgeClient:
 
     async def mcp_state(self) -> ResponseMessage:
         """GET /mcp/state (Milestone A) and return the standard envelope as result."""
+        import asyncio
 
         request_id = "bridge-mcp-state"
-        result = self._make_request("GET", "/mcp/state")
+        # Offload the blocking HTTP call off the event loop (mirrors get_file).
+        result = await asyncio.to_thread(
+            self._make_request, "GET", "/mcp/state"
+        )
         return self._response(
             request_id=request_id,
             result=result.result,
@@ -407,7 +494,33 @@ class HttpBridgeClient:
             - Uses http.client to stream without loading the entire zip into memory.
             - Returns the addon standard envelope JSON as result.
         """
+        import asyncio
 
+        # Offload the whole blocking region (local stat + http.client
+        # streaming upload + response read) off the event loop (mirrors
+        # upload_addon_zip) so a slow stage upload does not freeze
+        # concurrent async work.
+        return await asyncio.to_thread(
+            self._repo_stage_upload_blocking,
+            repo_id, zip_path, mode, repo_version, sha256,
+        )
+
+    def _repo_stage_upload_blocking(
+        self,
+        repo_id: str,
+        zip_path: str,
+        mode: str = "overwrite",
+        repo_version: str | None = None,
+        sha256: str | None = None,
+    ) -> ResponseMessage:
+        """Synchronous body of ``repo_stage_upload`` (local stat + http.client
+        streaming).
+
+        Kept fully synchronous so the async wrapper can hand it to
+        ``asyncio.to_thread``; the request path/method, headers, chunking,
+        error taxonomy, and connection cleanup are exactly the ones this
+        method always had.
+        """
         request_id = "bridge-repo-stage"
         try:
             path_obj = Path(zip_path)
