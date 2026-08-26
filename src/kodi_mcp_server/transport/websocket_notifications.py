@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import socket
 from collections.abc import Awaitable, Callable
 
 import websockets
@@ -30,10 +31,18 @@ class WebSocketNotificationProbe:
             return self.websocket_url
         return f"ws://{self.tcp_host}:{self.tcp_port}/jsonrpc"
 
-    def _classify_error(self, error_text: str) -> str:
+    def _classify_error(self, exc: BaseException) -> str:
         """Return a likely failure cause for the current error."""
-        lowered = error_text.lower()
-        if "connection refused" in lowered or "timed out" in lowered:
+        # Timeout and DNS failures carry no stable distinguishing text
+        # (``str(TimeoutError())`` is empty; ``gaierror`` text is
+        # platform-dependent), so classify them by type; everything else
+        # falls back to message text.
+        if isinstance(exc, TimeoutError):
+            return "connection to Kodi timed out"
+        if isinstance(exc, socket.gaierror):
+            return "DNS/name resolution failure"
+        lowered = str(exc).lower()
+        if "connection refused" in lowered:
             return "Kodi TCP control not enabled or wrong TCP port"
         if "401" in lowered or "403" in lowered or "unauthorized" in lowered:
             return "auth/handshake mismatch"
@@ -76,7 +85,13 @@ class WebSocketNotificationProbe:
                         message = await asyncio.wait_for(websocket.recv(), timeout=remaining)
                     except asyncio.TimeoutError:
                         break
-                    messages.append(json.loads(message))
+                    try:
+                        messages.append(json.loads(message))
+                    except json.JSONDecodeError:
+                        # Skip frames that are not valid JSON: a parse
+                        # problem on one frame is not a WebSocket
+                        # connection failure, so collection continues.
+                        continue
 
                 return ResponseMessage(
                     request_id="websocket-notifications",
@@ -105,7 +120,7 @@ class WebSocketNotificationProbe:
                     "message_count": 0,
                     "listen_seconds": listen_seconds,
                     "event_trigger_used": trigger_name,
-                    "likely_cause": self._classify_error(error_text),
+                    "likely_cause": self._classify_error(exc),
                 },
                 error=error_text,
             )
