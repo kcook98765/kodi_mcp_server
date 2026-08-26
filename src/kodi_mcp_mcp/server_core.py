@@ -56,7 +56,7 @@ from kodi_mcp_server.dev_loop_artifacts import (
 )
 from kodi_mcp_server.kodi_apply import managed_addon_build_publish_stage_and_apply
 from kodi_mcp_server.milestone_a_bridge import read_addon_state
-from kodi_mcp_server.paths import AUTHORITATIVE_REPO_ROOT
+from kodi_mcp_server.paths import AUTHORITATIVE_REPO_ROOT, PROJECT_ROOT
 from kodi_mcp_server.screenshot_store import store_screenshot_from_base64
 
 
@@ -218,7 +218,12 @@ def _as_dict(value: Any) -> Any:
 
 def _source_roots() -> list[Path]:
     configured = os.environ.get("KODI_MCP_SOURCE_ROOTS")
-    values = configured.split(":") if configured else ["/home/kyle/workspace", "/srv/agent-work", "/tmp"]
+    values = configured.split(":") if configured else [
+        "/home/kyle/workspace",
+        "/srv/agent-work",
+        str(PROJECT_ROOT.parent),
+        "/tmp",
+    ]
     roots = []
     for value in values:
         if value.strip():
@@ -231,7 +236,7 @@ def _translate_agent_source_path(source_path: str) -> str:
     path = source_path.strip()
     mappings = (
         ("/srv/workspaces/kodi_3d_pov/", "/home/kyle/workspace/kodi_3d_pov/"),
-        ("/srv/workspaces/", "/srv/agent-work/"),
+        ("/srv/workspaces/", f"{PROJECT_ROOT.parent}/"),
         ("/srv/knowledge/kodi_3d_pov/", "/home/kyle/workspace/kodi_3d_pov/"),
     )
     for prefix, replacement in mappings:

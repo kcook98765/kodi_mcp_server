@@ -162,6 +162,22 @@ async def test_mcp_addon_source_tools_inspect_project_map_and_tree(tmp_path: Pat
     assert {"path": "default.py", "type": "file", "size_bytes": 12} in tree_env["data"]["entries"]
 
 
+def test_source_paths_allow_current_workspace_and_reject_outside_path(monkeypatch):
+    import kodi_mcp_mcp.server_core as server_core
+
+    monkeypatch.delenv("KODI_MCP_SOURCE_ROOTS", raising=False)
+    monkeypatch.setattr(server_core, "PROJECT_ROOT", Path("/workspaces/kodi_mcp_server"), raising=False)
+
+    assert server_core._resolve_allowed_source_path("/workspaces/kodi_mcp_addon") == Path(
+        "/workspaces/kodi_mcp_addon"
+    )
+    assert server_core._translate_agent_source_path("/srv/workspaces/kodi_mcp_addon") == (
+        "/workspaces/kodi_mcp_addon"
+    )
+    with pytest.raises(ValueError, match="source_path is outside allowed roots"):
+        server_core._resolve_allowed_source_path("/etc")
+
+
 @pytest.mark.asyncio
 async def test_mcp_addon_source_tools_translate_agent_workspace_paths(tmp_path: Path, monkeypatch):
     import json
