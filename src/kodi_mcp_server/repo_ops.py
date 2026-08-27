@@ -9,6 +9,8 @@ Artifact flow:
 import hashlib
 import re
 import shutil
+import zipfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from .artifacts import AddonArtifact
@@ -48,12 +50,11 @@ class RepoPublisher:
                 '</addons>\n'
             )
 
-        new_addon_entry = self.create_addon_entry(
-            addon_id=artifact.addon_id,
-            addon_name=artifact.addon_name,
-            addon_version=artifact.addon_version,
-            provider_name=artifact.provider_name,
-        )
+        with zipfile.ZipFile(addon_zip_path) as archive:
+            addon_root = ET.fromstring(
+                archive.read(f"{artifact.addon_id}/addon.xml")
+            )
+            new_addon_entry = ET.tostring(addon_root, encoding="unicode")
 
         if f'id="{artifact.addon_id}"' in addons_xml_content:
             pattern = rf'<addon id="{re.escape(artifact.addon_id)}"[^>]*>.*?</addon>'
@@ -110,24 +111,3 @@ class RepoPublisher:
             build_root=Path(addon_zip_path).resolve().parent,
         )
         return self.publish_addon_artifact(artifact)
-
-    @staticmethod
-    def create_addon_entry(
-        addon_id: str,
-        addon_name: str,
-        addon_version: str,
-        provider_name: str,
-    ) -> str:
-        """Create an addon XML entry."""
-        return f'''<addon id="{addon_id}" name="{addon_name}" version="{addon_version}" provider-name="{provider_name}">
-    <requires>
-        <import addon="xbmc.python" version="3.0.0"/>
-    </requires>
-    <extension point="xbmc.python.script" library="default.py"/>
-    <extension point="xbmc.addon.metadata">
-        <summary>{addon_name}</summary>
-        <description>Kodi MCP test addon</description>
-        <platform>all</platform>
-        <license>MIT</license>
-    </extension>
-</addon>'''
