@@ -21,6 +21,7 @@ from kodi_mcp_server.models.requests import (
     UploadAddonZipRequest,
     WriteLogMarkerRequest,
 )
+from kodi_mcp_server.runtime_identity import STARTUP_RUNTIME_IDENTITY, source_fingerprint
 from kodi_mcp_server.tools.service_ops import ServiceOpsTool
 
 
@@ -41,8 +42,18 @@ def configure_mcp_app(app):
             KODI_JSONRPC_USERNAME,
         )
 
+        current_fingerprint = source_fingerprint()
         result = {
-            "server": {"status": "running"},
+            "server": {
+                "status": "running",
+                "identity": {
+                    **STARTUP_RUNTIME_IDENTITY,
+                    "running_files_match_current_source": (
+                        STARTUP_RUNTIME_IDENTITY["source_fingerprint_sha256"] == current_fingerprint
+                    ),
+                    "current_source_fingerprint_sha256": current_fingerprint,
+                },
+            },
             "config": {"loaded": bool(KODI_JSONRPC_URL and KODI_BRIDGE_BASE_URL)},
             "jsonrpc": {"status": "unknown", "url": KODI_JSONRPC_URL},
             "bridge": {"status": "unknown", "url": KODI_BRIDGE_BASE_URL},

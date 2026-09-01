@@ -16,6 +16,7 @@ NOTE: This file is intentionally a refactor/extraction from
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import re
@@ -24,17 +25,20 @@ from pathlib import Path
 from typing import Any, Tuple
 from xml.etree import ElementTree
 
+from jsonschema import Draft202012Validator
 from mcp.server import Server
 from mcp.types import (
     CallToolRequestParams,
     CallToolResult,
     ErrorData,
+    ImageContent,
     ListToolsResult,
     PaginatedRequestParams,
     TextContent,
     Tool,
 )
 
+from kodi_mcp_server import __version__
 from kodi_mcp_server.composition import (
     build_bridge_tool,
     build_jsonrpc_tool,
@@ -57,11 +61,126 @@ from kodi_mcp_server.dev_loop_artifacts import (
 from kodi_mcp_server.kodi_apply import managed_addon_build_publish_stage_and_apply
 from kodi_mcp_server.milestone_a_bridge import read_addon_state
 from kodi_mcp_server.paths import AUTHORITATIVE_REPO_ROOT, PROJECT_ROOT
-from kodi_mcp_server.screenshot_store import store_screenshot_from_base64
+from kodi_mcp_server.screenshot_store import (
+    inspect_screenshot_from_base64,
+    store_screenshot_from_base64,
+)
 
 
 SERVER_NAME = "kodi-mcp"
-SERVER_VERSION = "0.0.0"
+SERVER_VERSION = __version__
+SCREENSHOT_CAPTURE_MAX_ATTEMPTS = 5
+SCREENSHOT_RETRY_TIMEOUT_SECONDS = 2.0
+SCREENSHOT_RETRY_CONDITION = "effectively_uniform_black_home_without_active_media_or_dialog"
+
+# Kodi documents lowercase letters, numbers, periods, underscores, and dashes
+# for addon IDs. Kodi 20 also ships a language-resource ID containing ``@``
+# (resource.language.sr_rs@latin), so preserve that observed compatibility.
+# Require at least one alphanumeric character so separator-only values cannot
+# be interpreted as registry keys.
+ADDON_ID_PATTERN = r"^(?=.*[a-z0-9])[a-z0-9._@-]+$"
+
+
+def _addon_id_schema(description: str | None = None) -> dict[str, Any]:
+    schema: dict[str, Any] = {
+        "type": "string",
+        "minLength": 1,
+        "pattern": ADDON_ID_PATTERN,
+    }
+    if description:
+        schema["description"] = description
+    return schema
+
+
+def _invalid_params_result(
+    tool_name: str,
+    arguments: Any,
+    detail: str,
+    validation: list[dict[str, Any]] | None = None,
+) -> CallToolResult:
+    raw: dict[str, Any] = {"arguments": arguments}
+    if validation:
+        raw["validation"] = validation
+    envelope = {
+        "ok": False,
+        "tool": tool_name,
+        "data": None,
+        "error": detail,
+        "error_type": "invalid_params",
+        "error_code": None,
+        "latency_ms": 0,
+        "request_id": None,
+        "raw": raw,
+    }
+    return CallToolResult(
+        is_error=True,
+        content=[TextContent(type="text", text=json.dumps(envelope, indent=2, sort_keys=True))],
+    )
+
+
+def _validate_tool_arguments(
+    tool_name: str, arguments: Any, input_schema: dict[str, Any]
+) -> CallToolResult | None:
+    """Validate actual call arguments against the exact advertised schema."""
+
+    candidate = {} if arguments is None else arguments
+    errors = sorted(
+        Draft202012Validator(input_schema).iter_errors(candidate),
+        key=lambda error: (list(error.absolute_path), list(error.absolute_schema_path)),
+    )
+    if not errors:
+        return None
+
+    error = errors[0]
+    field = ".".join(str(part) for part in error.absolute_path)
+    detail = (
+        f"invalid argument {field}: {error.message}"
+        if field
+        else f"invalid arguments: {error.message}"
+    )
+    validation = [
+        {
+            "field": ".".join(str(part) for part in item.absolute_path) or None,
+            "message": item.message,
+            "validator": item.validator,
+        }
+        for item in errors
+    ]
+    return _invalid_params_result(tool_name, candidate, detail, validation)
+
+
+def _failure_fields(raw_value: dict[str, Any], tool_name: str) -> tuple[Any, Any]:
+    """Return nonempty error/error_type values for a failed plain-dict result."""
+
+    error = raw_value.get("error")
+    error_type = raw_value.get("error_type")
+    if error not in (None, ""):
+        return error, error_type or "operation_failed"
+
+    verification = raw_value.get("verification")
+    verification = verification if isinstance(verification, dict) else {}
+    reason = (
+        raw_value.get("message")
+        or raw_value.get("failure_reason")
+        or raw_value.get("apply_status")
+        or verification.get("apply_status")
+        or raw_value.get("error_code")
+        or "operation_failed"
+    )
+    identifiers = []
+    for key in ("managed_addon_id", "addon_id", "addonid", "artifact_id"):
+        value = raw_value.get(key)
+        if isinstance(value, str) and value:
+            identifiers.append(f"{key}={value!r}")
+    context = f" ({', '.join(identifiers)})" if identifiers else ""
+    hint = verification.get("retry_hint")
+    hint_text = f"; {hint}" if isinstance(hint, str) and hint.strip() else ""
+    normalized_error = f"{tool_name} failed: {reason}{context}{hint_text}"
+
+    code = raw_value.get("error_code")
+    if error_type in (None, "") and isinstance(code, str) and code:
+        error_type = code.lower()
+    return normalized_error, error_type or "operation_failed"
 
 
 async def _observe_active_players(
@@ -202,6 +321,98 @@ Runtime = dict[str, Any]
 
 SOURCE_TREE_EXCLUDES = {".git", "__pycache__", ".pytest_cache", "venv", ".venv", "node_modules"}
 LOG_ERROR_RE = re.compile(r"(error|exception|traceback|failed|failure|warning|timeout|refused)", re.IGNORECASE)
+LOG_DEFAULT_MAX_BYTES = 128 * 1024
+LOG_MAX_BYTES = 128 * 1024
+INLINE_SCREENSHOT_MAX_RAW_BYTES = 512 * 1024
+LOG_TOOL_NAMES = {"bridge_log_tail", "bridge_log_markers", "bridge_log_recent_errors"}
+
+
+def _utf8_tail(text: str, max_bytes: int) -> str:
+    """Return at most ``max_bytes`` from the end without splitting UTF-8."""
+
+    if max_bytes <= 0:
+        return ""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    tail = encoded[-max_bytes:]
+    while tail and tail[0] & 0xC0 == 0x80:
+        tail = tail[1:]
+    return tail.decode("utf-8")
+
+
+def _bound_log_lines(lines: list[Any], max_bytes: int) -> dict[str, Any]:
+    """Keep newest log content under a joined UTF-8 byte budget."""
+
+    normalized = [str(line) for line in lines]
+    available_bytes = len("\n".join(normalized).encode("utf-8"))
+    kept_reversed: list[str] = []
+    used = 0
+
+    for line in reversed(normalized):
+        separator = 1 if kept_reversed else 0
+        encoded_size = len(line.encode("utf-8"))
+        if used + separator + encoded_size <= max_bytes:
+            kept_reversed.append(line)
+            used += separator + encoded_size
+            continue
+
+        remaining = max_bytes - used - separator
+        if remaining > 0:
+            fragment = _utf8_tail(line, remaining)
+            if fragment:
+                kept_reversed.append(fragment)
+                used += separator + len(fragment.encode("utf-8"))
+        break
+
+    kept = list(reversed(kept_reversed))
+    truncated = kept != normalized
+    return {
+        "lines": kept,
+        "truncated": truncated,
+        "truncation_direction": "start" if truncated else None,
+        "max_bytes": max_bytes,
+        "available_lines": len(normalized),
+        "available_bytes": available_bytes,
+        "returned_lines": len(kept),
+        "returned_bytes": len("\n".join(kept).encode("utf-8")),
+    }
+
+
+def _bound_log_response(raw_result: Any, max_bytes: int) -> Any:
+    """Bound a bridge ResponseMessage-shaped log result."""
+
+    raw_value = _as_dict(raw_result)
+    if not isinstance(raw_value, dict):
+        return raw_value
+    result = raw_value.get("result")
+    if not isinstance(result, dict) or not isinstance(result.get("lines"), list):
+        return raw_value
+    bounded = _bound_log_lines(result["lines"], max_bytes)
+    result = {**result, **bounded}
+    raw_value["result"] = result
+    return raw_value
+
+
+def _compact_log_raw(raw_value: Any, data: Any) -> dict[str, Any]:
+    """Keep transport metadata without duplicating bounded log content."""
+
+    metadata_keys = (
+        "truncated",
+        "truncation_direction",
+        "max_bytes",
+        "available_lines",
+        "available_bytes",
+        "returned_lines",
+        "returned_bytes",
+    )
+    metadata = {key: data.get(key) for key in metadata_keys if isinstance(data, dict) and key in data}
+    compact = {"content_omitted": "see data", "result_metadata": metadata}
+    if isinstance(raw_value, dict):
+        for key in ("request_id", "error", "error_type", "error_code", "latency_ms"):
+            if key in raw_value:
+                compact[key] = raw_value.get(key)
+    return compact
 
 
 def _as_dict(value: Any) -> Any:
@@ -214,6 +425,152 @@ def _as_dict(value: Any) -> Any:
     if hasattr(value, "to_dict") and callable(getattr(value, "to_dict")):
         return value.to_dict()
     return value
+
+
+def _black_home_capture_is_retryable(gui_state: Any) -> bool:
+    """Return true only when a uniform black capture contradicts visible Home state."""
+
+    raw = _as_dict(gui_state)
+    state = raw.get("result") if isinstance(raw, dict) else None
+    if not isinstance(state, dict) or state.get("ok") is not True:
+        return False
+    conditions_value = state.get("conditions")
+    conditions = conditions_value if isinstance(conditions_value, dict) else {}
+    active_players = state.get("active_players")
+    dialog_id = state.get("current_dialog_id")
+    return (
+        state.get("current_window_id") == 10000
+        and isinstance(active_players, list)
+        and not active_players
+        and not any(
+            bool(conditions.get(key))
+            for key in (
+                "fullscreen_video",
+                "player_has_media",
+                "player_has_video",
+                "player_playing",
+                "player_paused",
+            )
+        )
+        and dialog_id in (0, 9999)
+    )
+
+
+async def _capture_screenshot_with_retry(bridge: Any, *, include_image: bool) -> Any:
+    """Capture until a Home frame is non-black, subject to strict attempt/time bounds."""
+
+    attempts: list[dict[str, Any]] = []
+    retry_deadline: float | None = None
+    loop = asyncio.get_running_loop()
+
+    def failure(reason: str) -> dict[str, Any]:
+        return {
+            "ok": False,
+            "error": reason,
+            "error_type": "screenshot_not_ready",
+            "error_code": "BLACK_FRAME",
+            "capture_validation": {
+                "status": "failed_black_frame",
+                "attempts": len(attempts),
+                "retries": max(0, len(attempts) - 1),
+                "max_attempts": SCREENSHOT_CAPTURE_MAX_ATTEMPTS,
+                "retry_timeout_seconds": SCREENSHOT_RETRY_TIMEOUT_SECONDS,
+                "retry_condition": SCREENSHOT_RETRY_CONDITION,
+                "attempt_diagnostics": attempts,
+            },
+        }
+
+    while len(attempts) < SCREENSHOT_CAPTURE_MAX_ATTEMPTS:
+        try:
+            if retry_deadline is None:
+                raw_result = await bridge.gui_screenshot(include_image=include_image)
+            else:
+                remaining = retry_deadline - loop.time()
+                if remaining <= 0:
+                    return failure("screenshot capture remained black until the retry timeout expired")
+                raw_result = await asyncio.wait_for(
+                    bridge.gui_screenshot(include_image=include_image), timeout=remaining
+                )
+        except TimeoutError:
+            return failure("screenshot capture remained black until the retry timeout expired")
+
+        raw_value = _as_dict(raw_result)
+        bridge_result = raw_value.get("result") if isinstance(raw_value, dict) else None
+        if not isinstance(bridge_result, dict):
+            return raw_result
+        image_base64 = bridge_result.get("image_base64")
+        if not isinstance(image_base64, str) or not image_base64:
+            return raw_result
+
+        inspection = inspect_screenshot_from_base64(image_base64)
+        attempts.append(
+            {
+                key: inspection.get(key)
+                for key in (
+                    "size_bytes",
+                    "width",
+                    "height",
+                    "sha256",
+                    "pixel_analysis_supported",
+                    "effectively_uniform_black",
+                    "max_rgb_channel",
+                    "black_channel_max",
+                )
+                if key in inspection
+            }
+        )
+        if not inspection["effectively_uniform_black"]:
+            bridge_result["capture_validation"] = {
+                "status": "valid_after_retry" if len(attempts) > 1 else "valid",
+                "attempts": len(attempts),
+                "retries": len(attempts) - 1,
+                "max_attempts": SCREENSHOT_CAPTURE_MAX_ATTEMPTS,
+                "retry_timeout_seconds": SCREENSHOT_RETRY_TIMEOUT_SECONDS,
+                "retry_condition": SCREENSHOT_RETRY_CONDITION,
+            }
+            raw_value["result"] = bridge_result
+            return raw_value
+
+        if retry_deadline is None:
+            retry_deadline = loop.time() + SCREENSHOT_RETRY_TIMEOUT_SECONDS
+
+        gui_state_method = getattr(bridge, "gui_state", None)
+        if not callable(gui_state_method):
+            bridge_result["capture_validation"] = {
+                "status": "accepted_uniform_black_without_gui_context",
+                "attempts": len(attempts),
+                "retries": len(attempts) - 1,
+                "max_attempts": SCREENSHOT_CAPTURE_MAX_ATTEMPTS,
+                "retry_timeout_seconds": SCREENSHOT_RETRY_TIMEOUT_SECONDS,
+                "retry_condition": SCREENSHOT_RETRY_CONDITION,
+            }
+            raw_value["result"] = bridge_result
+            return raw_value
+
+        try:
+            remaining = retry_deadline - loop.time()
+            if remaining <= 0:
+                return failure("screenshot capture remained black until the retry timeout expired")
+            gui_state = await asyncio.wait_for(bridge.gui_state(), timeout=remaining)
+        except TimeoutError:
+            return failure("screenshot capture remained black until the retry timeout expired")
+
+        if not _black_home_capture_is_retryable(gui_state):
+            bridge_result["capture_validation"] = {
+                "status": "accepted_uniform_black_context_may_be_legitimate",
+                "attempts": len(attempts),
+                "retries": len(attempts) - 1,
+                "max_attempts": SCREENSHOT_CAPTURE_MAX_ATTEMPTS,
+                "retry_timeout_seconds": SCREENSHOT_RETRY_TIMEOUT_SECONDS,
+                "retry_condition": SCREENSHOT_RETRY_CONDITION,
+            }
+            raw_value["result"] = bridge_result
+            return raw_value
+
+    return failure(
+        "screenshot capture remained effectively black after %d attempts"
+        % SCREENSHOT_CAPTURE_MAX_ATTEMPTS
+    )
 
 
 def _source_roots() -> list[Path]:
@@ -353,42 +710,52 @@ def _addon_source_tree(source_path: str, max_entries: int = 200) -> dict[str, An
     }
 
 
-async def _bridge_log_recent_errors(bridge_tool: Any, lines: int = 300, pattern: str | None = None) -> dict[str, Any]:
+async def _bridge_log_recent_errors(
+    bridge_tool: Any,
+    lines: int = 300,
+    pattern: str | None = None,
+    max_bytes: int = LOG_DEFAULT_MAX_BYTES,
+) -> dict[str, Any]:
     lines = max(1, min(1000, lines if isinstance(lines, int) else 300))
     raw_result = await bridge_tool.get_bridge_log_tail(lines=lines)
     raw_value = _as_dict(raw_result)
-    log_text = ""
     result_value = raw_value.get("result") if isinstance(raw_value, dict) else raw_value
     if isinstance(result_value, str):
-        log_text = result_value
+        source_lines = result_value.splitlines()
     elif isinstance(result_value, dict):
+        source_lines = []
         for key in ("log", "text", "tail", "lines"):
             value = result_value.get(key)
             if isinstance(value, str):
-                log_text = value
+                source_lines = value.splitlines()
                 break
             if isinstance(value, list):
-                log_text = "\n".join(str(item) for item in value)
+                source_lines = [str(item) for item in value]
                 break
     elif isinstance(result_value, list):
-        log_text = "\n".join(str(item) for item in result_value)
+        source_lines = [str(item) for item in result_value]
+    else:
+        source_lines = []
 
     pattern_re = re.compile(pattern, re.IGNORECASE) if isinstance(pattern, str) and pattern.strip() else None
     matches = []
-    for line in log_text.splitlines():
+    for line in source_lines:
         if not LOG_ERROR_RE.search(line):
             continue
         if pattern_re and not pattern_re.search(line):
             continue
         matches.append(line)
 
+    bounded = _bound_log_lines(matches[-100:], max_bytes)
+    matching_lines = bounded.pop("lines")
     return {
         "ok": True,
         "lines_requested": lines,
-        "lines_scanned": len(log_text.splitlines()),
+        "lines_scanned": len(source_lines),
         "pattern": pattern if pattern_re else None,
         "count": len(matches),
-        "matching_lines": matches[-100:],
+        "matching_lines": matching_lines,
+        **bounded,
         "request_id": raw_value.get("request_id") if isinstance(raw_value, dict) else None,
     }
 
@@ -525,8 +892,16 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                             "type": "integer",
                             "description": "Number of log lines to return.",
                             "minimum": 1,
+                            "maximum": 1000,
                             "default": 50,
-                        }
+                        },
+                        "max_bytes": {
+                            "type": "integer",
+                            "description": "Maximum UTF-8 bytes of returned log content; truncation is reported explicitly.",
+                            "minimum": 1,
+                            "maximum": LOG_MAX_BYTES,
+                            "default": LOG_DEFAULT_MAX_BYTES,
+                        },
                     },
                     "additionalProperties": False,
                 },
@@ -541,8 +916,16 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                             "type": "integer",
                             "description": "Number of log lines to scan for markers.",
                             "minimum": 1,
+                            "maximum": 1000,
                             "default": 200,
-                        }
+                        },
+                        "max_bytes": {
+                            "type": "integer",
+                            "description": "Maximum UTF-8 bytes of returned marker content; truncation is reported explicitly.",
+                            "minimum": 1,
+                            "maximum": LOG_MAX_BYTES,
+                            "default": LOG_DEFAULT_MAX_BYTES,
+                        },
                     },
                     "additionalProperties": False,
                 },
@@ -564,6 +947,13 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                             "type": "string",
                             "description": "Optional case-insensitive regex that matching error lines must also satisfy.",
                         },
+                        "max_bytes": {
+                            "type": "integer",
+                            "description": "Maximum UTF-8 bytes of returned matching content; filtering occurs before truncation.",
+                            "minimum": 1,
+                            "maximum": LOG_MAX_BYTES,
+                            "default": LOG_DEFAULT_MAX_BYTES,
+                        },
                     },
                     "additionalProperties": False,
                 },
@@ -576,6 +966,8 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     "properties": {
                         "message": {
                             "type": "string",
+                            "minLength": 1,
+                            "pattern": r"\S",
                             "description": "Marker text to write into the log. Use a unique token for traceability.",
                         }
                     },
@@ -618,7 +1010,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         "include_image": {
                             "type": "boolean",
                             "default": False,
-                            "description": "If true, also include base64 PNG data in the tool result.",
+                            "description": "If true and the PNG is at most 524288 bytes, also return canonical MCP ImageContent. Larger images use stored-artifact mode or fail explicitly when store is false.",
                         },
                         "store": {
                             "type": "boolean",
@@ -662,10 +1054,9 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "addonid": {
-                            "type": "string",
-                            "description": "Kodi addon id (e.g. 'service.kodi_mcp').",
-                        }
+                        "addonid": _addon_id_schema(
+                            "Kodi addon id (e.g. 'service.kodi_mcp')."
+                        )
                     },
                     "required": ["addonid"],
                     "additionalProperties": False,
@@ -677,14 +1068,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "addonid": {
-                            "type": "string",
-                            "description": "Kodi addon id to execute.",
-                        },
-                        "addon_id": {
-                            "type": "string",
-                            "description": "Alias for addonid. Prefer addonid when possible.",
-                        },
+                        "addonid": _addon_id_schema("Kodi addon id to execute."),
+                        "addon_id": _addon_id_schema(
+                            "Alias for addonid. Prefer addonid when possible."
+                        ),
                         "wait": {
                             "type": "boolean",
                             "default": False,
@@ -749,7 +1136,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                             "description": "Delay between GUI state checks.",
                         },
                     },
-                    "required": ["addonid"],
+                    "anyOf": [
+                        {"required": ["addonid"]},
+                        {"required": ["addon_id"]},
+                    ],
                     "additionalProperties": False,
                 },
             ),
@@ -764,6 +1154,8 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     "properties": {
                         "source_path": {
                             "type": "string",
+                            "minLength": 1,
+                            "pattern": r"\S",
                             "description": "Server-local path under KODI_MCP_SOURCE_ROOTS, or a known agent mount such as /srv/workspaces/...; must contain addon.xml.",
                         }
                     },
@@ -779,6 +1171,8 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     "properties": {
                         "source_path": {
                             "type": "string",
+                            "minLength": 1,
+                            "pattern": r"\S",
                             "description": "Server-local path under KODI_MCP_SOURCE_ROOTS, or a known agent mount such as /srv/workspaces/...; must contain addon.xml.",
                         }
                     },
@@ -794,6 +1188,8 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     "properties": {
                         "source_path": {
                             "type": "string",
+                            "minLength": 1,
+                            "pattern": r"\S",
                             "description": "Server-local path under KODI_MCP_SOURCE_ROOTS, or a known agent mount such as /srv/workspaces/...; must contain addon.xml.",
                         },
                         "max_entries": {
@@ -1005,6 +1401,8 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     "properties": {
                         "source_path": {
                             "type": "string",
+                            "minLength": 1,
+                            "pattern": r"\S",
                             "description": "Local filesystem path to an addon root containing addon.xml.",
                         }
                     },
@@ -1027,10 +1425,9 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "managed_addon_id": {
-                            "type": "string",
-                            "description": "Managed addon id (key). Defaults to addon id.",
-                        }
+                        "managed_addon_id": _addon_id_schema(
+                            "Managed addon id (key). Defaults to addon id."
+                        )
                     },
                     "required": ["managed_addon_id"],
                     "additionalProperties": False,
@@ -1045,7 +1442,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "managed_addon_id": {"type": "string"},
+                        "managed_addon_id": _addon_id_schema(),
                         "version_policy": {
                             "type": "string",
                             "enum": ["use_addon_xml", "bump_patch", "set_explicit"],
@@ -1067,7 +1464,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "managed_addon_id": {"type": "string"},
+                        "managed_addon_id": _addon_id_schema(),
                         "version_policy": {
                             "type": "string",
                             "enum": ["use_addon_xml", "bump_patch", "set_explicit"],
@@ -1086,7 +1483,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "managed_addon_id": {"type": "string"},
+                        "managed_addon_id": _addon_id_schema(),
                     },
                     "required": ["managed_addon_id"],
                     "additionalProperties": False,
@@ -1103,9 +1500,9 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "zip_base64": {"type": "string", "description": "Base64-encoded zip bytes (optionally data: URI)."},
+                        "zip_base64": {"type": "string", "minLength": 1, "pattern": r"\S", "description": "Base64-encoded zip bytes (optionally data: URI)."},
                         "filename": {"type": "string", "default": "upload.zip"},
-                        "addon_id": {"type": "string"},
+                        "addon_id": _addon_id_schema(),
                         "version": {"type": "string"},
                     },
                     "required": ["zip_base64"],
@@ -1121,10 +1518,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "artifact_id": {"type": "string"},
-                        "addon_id": {"type": "string"},
-                        "addon_name": {"type": "string"},
-                        "addon_version": {"type": "string"},
+                        "artifact_id": {"type": "string", "minLength": 1, "pattern": r"\S"},
+                        "addon_id": _addon_id_schema(),
+                        "addon_name": {"type": "string", "minLength": 1, "pattern": r"\S"},
+                        "addon_version": {"type": "string", "minLength": 1, "pattern": r"\S"},
                         "provider_name": {"type": "string", "default": "kodi_mcp"},
                     },
                     "required": ["artifact_id", "addon_id", "addon_name", "addon_version"],
@@ -1154,7 +1551,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "addonid": {"type": "string"},
+                        "addonid": _addon_id_schema(),
                         "repo_version": {"type": "string"},
                         "target_version": {
                             "type": "string",
@@ -1177,10 +1574,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "artifact_id": {"type": "string"},
-                        "addon_id": {"type": "string"},
-                        "addon_name": {"type": "string"},
-                        "addon_version": {"type": "string"},
+                        "artifact_id": {"type": "string", "minLength": 1, "pattern": r"\S"},
+                        "addon_id": _addon_id_schema(),
+                        "addon_name": {"type": "string", "minLength": 1, "pattern": r"\S"},
+                        "addon_version": {"type": "string", "minLength": 1, "pattern": r"\S"},
                         "provider_name": {"type": "string", "default": "kodi_mcp"},
                         "repo_version": {"type": "string"},
                         "verify": {"type": "boolean", "default": True},
@@ -1200,10 +1597,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "artifact_id": {"type": "string"},
-                        "addon_id": {"type": "string"},
-                        "addon_name": {"type": "string"},
-                        "addon_version": {"type": "string"},
+                        "artifact_id": {"type": "string", "minLength": 1, "pattern": r"\S"},
+                        "addon_id": _addon_id_schema(),
+                        "addon_name": {"type": "string", "minLength": 1, "pattern": r"\S"},
+                        "addon_version": {"type": "string", "minLength": 1, "pattern": r"\S"},
                         "provider_name": {"type": "string", "default": "kodi_mcp"},
                         "repo_version": {"type": "string"},
                         "verify": {"type": "boolean", "default": True},
@@ -1679,6 +2076,19 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                                 content=[TextContent(type="text", text=text)],
                             )
 
+            # The MCP SDK validates only CallToolRequestParams itself. The
+            # custom low-level handler must enforce each listed tool schema.
+            listed_tools = await _handle_list_tools(ctx, None)
+            tool_schema = next(
+                tool.input_schema for tool in listed_tools.tools if tool.name == tool_name
+            )
+            validation_error = _validate_tool_arguments(
+                tool_name, params.arguments, tool_schema
+            )
+            if validation_error is not None:
+                return validation_error
+
+            pending_image_content: ImageContent | None = None
             start = time.time()
             envelope: dict[str, Any]
             try:
@@ -1699,22 +2109,29 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         lines = default_lines
                     if lines < 1:
                         lines = 1
+                    max_bytes = args.get("max_bytes", LOG_DEFAULT_MAX_BYTES)
+                    if not isinstance(max_bytes, int):
+                        max_bytes = LOG_DEFAULT_MAX_BYTES
 
                     if tool_name == "bridge_log_tail":
                         raw_result = await runtime["bridge"].get_bridge_log_tail(lines=lines)
                     else:
                         raw_result = await runtime["bridge"].get_bridge_log_markers(lines=lines)
+                    raw_result = _bound_log_response(raw_result, max_bytes)
                 elif tool_name == "bridge_log_recent_errors":
                     args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
                     lines = args.get("lines", 300)
                     lines = lines if isinstance(lines, int) else 300
+                    max_bytes = args.get("max_bytes", LOG_DEFAULT_MAX_BYTES)
+                    max_bytes = max_bytes if isinstance(max_bytes, int) else LOG_DEFAULT_MAX_BYTES
                     pattern = args.get("pattern")
                     raw_result = await _bridge_log_recent_errors(
                         runtime["bridge"],
                         lines=lines,
                         pattern=pattern if isinstance(pattern, str) and pattern.strip() else None,
+                        max_bytes=max_bytes,
                     )
                 elif tool_name == "addon_list":
                     args = params.arguments or {}
@@ -2052,18 +2469,56 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     store = args.get("store", True)
                     include_image = include_image if isinstance(include_image, bool) else False
                     store = store if isinstance(store, bool) else True
-                    raw_result = await runtime["bridge"].gui_screenshot(include_image=(include_image or store))
+                    raw_result = await _capture_screenshot_with_retry(
+                        runtime["bridge"], include_image=(include_image or store)
+                    )
                     raw_value = _as_dict(raw_result)
                     bridge_result = raw_value.get("result") if isinstance(raw_value, dict) else None
                     image_base64 = bridge_result.get("image_base64") if isinstance(bridge_result, dict) else None
-                    if store and isinstance(image_base64, str) and image_base64:
-                        stored = store_screenshot_from_base64(image_base64)
-                        bridge_result["server_screenshot"] = stored
-                        if not include_image:
-                            bridge_result.pop("image_base64", None)
-                    if isinstance(raw_value, dict) and isinstance(bridge_result, dict):
+                    payload_error = None
+                    if isinstance(image_base64, str) and image_base64:
+                        stored = None
+                        if store:
+                            stored = store_screenshot_from_base64(image_base64)
+                            bridge_result["server_screenshot"] = stored
+                            raw_size = int(stored["size_bytes"])
+                        else:
+                            raw_size = len(base64.b64decode(image_base64, validate=True))
+
+                        bridge_result.pop("image_base64", None)
+                        if include_image and raw_size <= INLINE_SCREENSHOT_MAX_RAW_BYTES:
+                            pending_image_content = ImageContent(
+                                type="image",
+                                data=image_base64,
+                                mimeType="image/png",
+                            )
+                            bridge_result["inline_image"] = {
+                                "included": True,
+                                "raw_size_bytes": raw_size,
+                                "max_raw_size_bytes": INLINE_SCREENSHOT_MAX_RAW_BYTES,
+                            }
+                        elif include_image and store:
+                            bridge_result["inline_image"] = {
+                                "included": False,
+                                "raw_size_bytes": raw_size,
+                                "max_raw_size_bytes": INLINE_SCREENSHOT_MAX_RAW_BYTES,
+                                "reason": "image exceeds inline MCP payload limit; use server_screenshot.url",
+                            }
+                        elif include_image:
+                            payload_error = {
+                                "ok": False,
+                                "error": "screenshot exceeds inline MCP payload limit; retry with store=true",
+                                "error_type": "payload_too_large",
+                                "error_code": None,
+                                "raw_size_bytes": raw_size,
+                                "max_raw_size_bytes": INLINE_SCREENSHOT_MAX_RAW_BYTES,
+                                "retry": {"store": True, "include_image": False},
+                            }
+                    if payload_error is not None:
+                        raw_result = payload_error
+                    elif isinstance(raw_value, dict) and isinstance(bridge_result, dict):
                         raw_value["result"] = bridge_result
-                    raw_result = raw_value
+                        raw_result = raw_value
                 elif tool_name == "kodi_gui_state":
                     raw_result = await runtime["bridge"].gui_state()
                 elif tool_name == "managed_addon_register":
@@ -2358,6 +2813,8 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     error = raw_value.get("error") if isinstance(raw_value, dict) else None
                     error_type = raw_value.get("error_type") if isinstance(raw_value, dict) else None
                     error_code = raw_value.get("error_code") if isinstance(raw_value, dict) else None
+                    if isinstance(raw_value, dict) and not bool(ok):
+                        error, error_type = _failure_fields(raw_value, tool_name)
                     envelope = {
                         "ok": bool(ok),
                         "tool": tool_name,
@@ -2369,6 +2826,8 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         "request_id": raw_value.get("request_id") if isinstance(raw_value, dict) else None,
                         "raw": raw_value,
                     }
+                if tool_name in LOG_TOOL_NAMES and envelope.get("ok"):
+                    envelope["raw"] = _compact_log_raw(raw_value, envelope.get("data"))
             except Exception as exc:
                 latency_ms = int((time.time() - start) * 1000)
                 envelope = {
@@ -2384,10 +2843,13 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 }
 
             text = json.dumps(envelope, indent=2, sort_keys=True)
-            return                 CallToolResult(
-                    is_error=not envelope.get("ok", False),
-                    content=[TextContent(type="text", text=text)],
-                )
+            content = [TextContent(type="text", text=text)]
+            if pending_image_content is not None and envelope.get("ok"):
+                content.append(pending_image_content)
+            return CallToolResult(
+                is_error=not envelope.get("ok", False),
+                content=content,
+            )
 
         payload = ErrorData(code=0, message=f"Tool not implemented: {tool_name}", data=None)
         return             CallToolResult(

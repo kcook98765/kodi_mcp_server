@@ -25,6 +25,10 @@ def test_store_screenshot_from_base64_writes_png(tmp_path, monkeypatch):
 
     assert result["url"].startswith("http://server.example/screenshots/")
     assert result["filename"].endswith(".png")
+    assert result["format"] == "png"
+    assert result["width"] == 1
+    assert result["height"] == 1
+    assert len(result["sha256"]) == 64
     assert (tmp_path / result["filename"]).read_bytes().startswith(b"\x89PNG")
 
 

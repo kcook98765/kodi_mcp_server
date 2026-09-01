@@ -20,8 +20,10 @@ they pin the behavior that the v1 -> v2 migration must preserve:
 import json
 
 import pytest
+from jsonschema import Draft202012Validator
 
 from kodi_mcp_mcp.server_core import build_mcp_server, build_runtime
+from kodi_mcp_server import __version__
 from mcp.client import Client
 from mcp.shared.memory import create_client_server_memory_streams
 
@@ -104,7 +106,8 @@ async def test_v2_initialize_negotiates_supported_handshake_version():
             # Server identity comes from the constructor in v2 and feeds
             # the runner-built InitializeResult.
             assert init_options.server_name == "kodi-mcp"
-            assert init_options.server_version == "0.0.0"
+            assert init_options.server_version == __version__
+            assert init_options.server_version != "0.0.0"
             assert "Kodi MCP server" in init_options.instructions
             # Tools capability is advertised (derived from registered handlers).
             assert init_options.capabilities.tools is not None
@@ -120,11 +123,13 @@ async def test_v2_tools_list_complete_and_schemas_stable():
         async with Client(server, mode="auto") as client:
             result = await client.list_tools()
             names = {t.name for t in result.tools}
-            assert _EXPECTED_TOOLS.issubset(names)
+            assert names == _EXPECTED_TOOLS
             by_name = {t.name: t for t in result.tools}
+            for tool_name, tool in by_name.items():
+                Draft202012Validator.check_schema(tool.input_schema)
+                assert tool.input_schema["type"] == "object", tool_name
+                assert tool.input_schema["additionalProperties"] is False, tool_name
             status = by_name["kodi_status"]
-            assert status.input_schema["type"] == "object"
-            assert status.input_schema["additionalProperties"] is False
             assert status.description.startswith("Get end-to-end server status")
 
 
@@ -272,6 +277,39 @@ def test_v2_streamable_http_initialize_and_tool_listing():
         tool_names = {t["name"] for t in tools_body["result"]["tools"]}
         assert "kodi_status" in tool_names
 
+        invalid_calls = [
+            (3, "managed_addon_validate_state", {}, "managed_addon_id"),
+            (4, "kodi_gui_screenshot", {"store": "yes"}, "store"),
+            (
+                5,
+                "managed_addon_validate_state",
+                {"managed_addon_id": "Plugin/Bad"},
+                "managed_addon_id",
+            ),
+        ]
+        for request_id, tool_name, arguments, field in invalid_calls:
+            response = tc.post(
+                "/mcp/",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": "tools/call",
+                    "params": {"name": tool_name, "arguments": arguments},
+                },
+                headers={
+                    "mcp-session-id": session_id,
+                    "mcp-protocol-version": "2025-11-25",
+                },
+            )
+            body = sse_payload(response)
+            assert body["id"] == request_id
+            assert "error" not in body
+            assert body["result"]["isError"] is True
+            envelope = json.loads(body["result"]["content"][0]["text"])
+            assert envelope["ok"] is False
+            assert envelope["error_type"] == "invalid_params"
+            assert field in envelope["error"]
+
 
 @pytest.mark.asyncio
 async def test_mcp_dispatch_gate_invariant():
@@ -303,22 +341,29 @@ async def test_mcp_dispatch_gate_invariant():
         if name.strip()
     }
 
-    # Extract branch names: all `if/elif tool_name == "X"` or `elif tool_name in {A, B}`
-    # at 16-space indent between the `try:` at ~line 1628 and the terminal `else:`
+    # Extract branch names from the dispatch chain beginning immediately after
+    # the handler's start-time marker. Avoid pinning source line numbers: this
+    # contract test must survive unrelated helper growth above the dispatcher.
     lines = source.splitlines()
     branch_names = set()
     in_dispatch_chain = False
     terminal_else_found = False
+    saw_start_marker = False
     for i, line in enumerate(lines):
-        # Detect start of dispatch chain (after `try:` around line 1628)
-        if "try:" in line and i > 1600 and i < 1800:
+        if line.strip() == "start = time.time()":
+            saw_start_marker = True
+            continue
+        if saw_start_marker and line.strip() == "try:":
             in_dispatch_chain = True
             continue
-        # Detect terminal else (the one we patched)
-        if in_dispatch_chain and line.strip().startswith("else:") and i > 2200 and i < 2400:
+        if (
+            in_dispatch_chain
+            and line.strip().startswith("else:")
+            and i + 1 < len(lines)
+            and "no dispatch implementation for whitelisted tool" in lines[i + 1]
+        ):
             terminal_else_found = True
-            # Check the next line contains raise, not _kodi_status
-            next_line = lines[i + 1] if i + 1 < len(lines) else ""
+            next_line = lines[i + 1]
             assert next_line.strip().startswith("raise "), (
                 "terminal else must raise NotImplementedError, not call _kodi_status"
             )
@@ -326,7 +371,6 @@ async def test_mcp_dispatch_gate_invariant():
                 "terminal else must not call _kodi_status"
             )
             break
-        # Capture branch names while in dispatch chain
         if in_dispatch_chain:
             # Match `elif tool_name == "X":` or `if tool_name == "X":`
             eq_match = re.search(r' tool_name == "([^"]+)"', line)

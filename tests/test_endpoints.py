@@ -46,6 +46,11 @@ def test_status_endpoint_has_correct_structure():
     
     # Server section
     assert "status" in data["server"]
+    identity = data["server"]["identity"]
+    assert identity["version"] != "0.0.0"
+    assert len(identity["source_fingerprint_sha256"]) == 64
+    assert identity["running_files_match_current_source"] is True
+    assert identity["build_id"]
     
     # Config section
     assert "loaded" in data["config"]
