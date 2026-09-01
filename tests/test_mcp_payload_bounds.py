@@ -12,28 +12,16 @@ from starlette.testclient import TestClient
 
 from kodi_mcp_mcp.server_core import build_mcp_server
 from kodi_mcp_server.models.messages import ResponseMessage
+from tests.png_fixtures import large_noise_png, png_rgba
 
 
-PNG_SMALL = (
-    b"\x89PNG\r\n\x1a\n"
-    b"\x00\x00\x00\rIHDR"
-    b"\x00\x00\x00\x01\x00\x00\x00\x01"
-    b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
-    b"\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01"
-    b"\r\n-\xb4"
-    b"\x00\x00\x00\x00IEND\xaeB`\x82"
-)
+PNG_SMALL = png_rgba([[(32, 48, 64, 255)]])
 
 
 def _large_png_like(size: int = 1_500_000) -> bytes:
-    """A deterministic PNG-signature/IHDR payload at realistic screenshot size."""
-    prefix = (
-        b"\x89PNG\r\n\x1a\n"
-        b"\x00\x00\x00\rIHDR"
-        b"\x00\x00\x05\x00\x00\x00\x02\xd0"
-        b"\x08\x06\x00\x00\x00"
-    )
-    return prefix + (b"x" * (size - len(prefix)))
+    """Return a deterministic, valid, realistically oversize screenshot PNG."""
+
+    return large_noise_png(seed=size)
 
 
 class _PayloadBridge:

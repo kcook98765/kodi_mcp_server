@@ -1,8 +1,13 @@
+import base64
 import json
 
 import pytest
 
 from kodi_mcp_server.models.messages import ResponseMessage
+from tests.png_fixtures import png_rgba
+
+
+PNG_SMALL = png_rgba([[(32, 48, 64, 255)]])
 
 
 class _FakeBridge:
@@ -18,10 +23,10 @@ class _FakeBridge:
             "ok": True,
             "path": "/tmp/kodi-screen.png",
             "content_type": "image/png",
-            "size_bytes": 12,
+            "size_bytes": len(PNG_SMALL),
         }
         if include_image:
-            result["image_base64"] = "ZmFrZQ=="
+            result["image_base64"] = base64.b64encode(PNG_SMALL).decode("ascii")
         return ResponseMessage(
             request_id="fake-gui-screenshot",
             result=result,
@@ -102,7 +107,7 @@ async def test_gui_tools_dispatch_through_bridge():
         assert screenshot_env["data"]["content_type"] == "image/png"
         assert "image_base64" not in screenshot_env["data"]
         assert [item.type for item in screenshot_resp.content] == ["text", "image"]
-        assert screenshot_resp.content[1].data == "ZmFrZQ=="
+        assert screenshot_resp.content[1].data == base64.b64encode(PNG_SMALL).decode("ascii")
         assert screenshot_resp.content[1].mime_type == "image/png"
         assert screenshot_env["data"]["server_screenshot"]["url"] == "http://server/screenshots/shot-1.png"
 

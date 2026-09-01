@@ -61,11 +61,17 @@ from kodi_mcp_server.dev_loop_artifacts import (
 from kodi_mcp_server.kodi_apply import managed_addon_build_publish_stage_and_apply
 from kodi_mcp_server.milestone_a_bridge import read_addon_state
 from kodi_mcp_server.paths import AUTHORITATIVE_REPO_ROOT, PROJECT_ROOT
-from kodi_mcp_server.screenshot_store import store_screenshot_from_base64
+from kodi_mcp_server.screenshot_store import (
+    inspect_screenshot_from_base64,
+    store_screenshot_from_base64,
+)
 
 
 SERVER_NAME = "kodi-mcp"
 SERVER_VERSION = __version__
+SCREENSHOT_CAPTURE_MAX_ATTEMPTS = 5
+SCREENSHOT_RETRY_TIMEOUT_SECONDS = 2.0
+SCREENSHOT_RETRY_CONDITION = "effectively_uniform_black_home_without_active_media_or_dialog"
 
 # Kodi documents lowercase letters, numbers, periods, underscores, and dashes
 # for addon IDs. Kodi 20 also ships a language-resource ID containing ``@``
@@ -419,6 +425,152 @@ def _as_dict(value: Any) -> Any:
     if hasattr(value, "to_dict") and callable(getattr(value, "to_dict")):
         return value.to_dict()
     return value
+
+
+def _black_home_capture_is_retryable(gui_state: Any) -> bool:
+    """Return true only when a uniform black capture contradicts visible Home state."""
+
+    raw = _as_dict(gui_state)
+    state = raw.get("result") if isinstance(raw, dict) else None
+    if not isinstance(state, dict) or state.get("ok") is not True:
+        return False
+    conditions_value = state.get("conditions")
+    conditions = conditions_value if isinstance(conditions_value, dict) else {}
+    active_players = state.get("active_players")
+    dialog_id = state.get("current_dialog_id")
+    return (
+        state.get("current_window_id") == 10000
+        and isinstance(active_players, list)
+        and not active_players
+        and not any(
+            bool(conditions.get(key))
+            for key in (
+                "fullscreen_video",
+                "player_has_media",
+                "player_has_video",
+                "player_playing",
+                "player_paused",
+            )
+        )
+        and dialog_id in (0, 9999)
+    )
+
+
+async def _capture_screenshot_with_retry(bridge: Any, *, include_image: bool) -> Any:
+    """Capture until a Home frame is non-black, subject to strict attempt/time bounds."""
+
+    attempts: list[dict[str, Any]] = []
+    retry_deadline: float | None = None
+    loop = asyncio.get_running_loop()
+
+    def failure(reason: str) -> dict[str, Any]:
+        return {
+            "ok": False,
+            "error": reason,
+            "error_type": "screenshot_not_ready",
+            "error_code": "BLACK_FRAME",
+            "capture_validation": {
+                "status": "failed_black_frame",
+                "attempts": len(attempts),
+                "retries": max(0, len(attempts) - 1),
+                "max_attempts": SCREENSHOT_CAPTURE_MAX_ATTEMPTS,
+                "retry_timeout_seconds": SCREENSHOT_RETRY_TIMEOUT_SECONDS,
+                "retry_condition": SCREENSHOT_RETRY_CONDITION,
+                "attempt_diagnostics": attempts,
+            },
+        }
+
+    while len(attempts) < SCREENSHOT_CAPTURE_MAX_ATTEMPTS:
+        try:
+            if retry_deadline is None:
+                raw_result = await bridge.gui_screenshot(include_image=include_image)
+            else:
+                remaining = retry_deadline - loop.time()
+                if remaining <= 0:
+                    return failure("screenshot capture remained black until the retry timeout expired")
+                raw_result = await asyncio.wait_for(
+                    bridge.gui_screenshot(include_image=include_image), timeout=remaining
+                )
+        except TimeoutError:
+            return failure("screenshot capture remained black until the retry timeout expired")
+
+        raw_value = _as_dict(raw_result)
+        bridge_result = raw_value.get("result") if isinstance(raw_value, dict) else None
+        if not isinstance(bridge_result, dict):
+            return raw_result
+        image_base64 = bridge_result.get("image_base64")
+        if not isinstance(image_base64, str) or not image_base64:
+            return raw_result
+
+        inspection = inspect_screenshot_from_base64(image_base64)
+        attempts.append(
+            {
+                key: inspection.get(key)
+                for key in (
+                    "size_bytes",
+                    "width",
+                    "height",
+                    "sha256",
+                    "pixel_analysis_supported",
+                    "effectively_uniform_black",
+                    "max_rgb_channel",
+                    "black_channel_max",
+                )
+                if key in inspection
+            }
+        )
+        if not inspection["effectively_uniform_black"]:
+            bridge_result["capture_validation"] = {
+                "status": "valid_after_retry" if len(attempts) > 1 else "valid",
+                "attempts": len(attempts),
+                "retries": len(attempts) - 1,
+                "max_attempts": SCREENSHOT_CAPTURE_MAX_ATTEMPTS,
+                "retry_timeout_seconds": SCREENSHOT_RETRY_TIMEOUT_SECONDS,
+                "retry_condition": SCREENSHOT_RETRY_CONDITION,
+            }
+            raw_value["result"] = bridge_result
+            return raw_value
+
+        if retry_deadline is None:
+            retry_deadline = loop.time() + SCREENSHOT_RETRY_TIMEOUT_SECONDS
+
+        gui_state_method = getattr(bridge, "gui_state", None)
+        if not callable(gui_state_method):
+            bridge_result["capture_validation"] = {
+                "status": "accepted_uniform_black_without_gui_context",
+                "attempts": len(attempts),
+                "retries": len(attempts) - 1,
+                "max_attempts": SCREENSHOT_CAPTURE_MAX_ATTEMPTS,
+                "retry_timeout_seconds": SCREENSHOT_RETRY_TIMEOUT_SECONDS,
+                "retry_condition": SCREENSHOT_RETRY_CONDITION,
+            }
+            raw_value["result"] = bridge_result
+            return raw_value
+
+        try:
+            remaining = retry_deadline - loop.time()
+            if remaining <= 0:
+                return failure("screenshot capture remained black until the retry timeout expired")
+            gui_state = await asyncio.wait_for(bridge.gui_state(), timeout=remaining)
+        except TimeoutError:
+            return failure("screenshot capture remained black until the retry timeout expired")
+
+        if not _black_home_capture_is_retryable(gui_state):
+            bridge_result["capture_validation"] = {
+                "status": "accepted_uniform_black_context_may_be_legitimate",
+                "attempts": len(attempts),
+                "retries": len(attempts) - 1,
+                "max_attempts": SCREENSHOT_CAPTURE_MAX_ATTEMPTS,
+                "retry_timeout_seconds": SCREENSHOT_RETRY_TIMEOUT_SECONDS,
+                "retry_condition": SCREENSHOT_RETRY_CONDITION,
+            }
+            raw_value["result"] = bridge_result
+            return raw_value
+
+    return failure(
+        "screenshot capture remained effectively black after %d attempts"
+        % SCREENSHOT_CAPTURE_MAX_ATTEMPTS
+    )
 
 
 def _source_roots() -> list[Path]:
@@ -2317,7 +2469,9 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     store = args.get("store", True)
                     include_image = include_image if isinstance(include_image, bool) else False
                     store = store if isinstance(store, bool) else True
-                    raw_result = await runtime["bridge"].gui_screenshot(include_image=(include_image or store))
+                    raw_result = await _capture_screenshot_with_retry(
+                        runtime["bridge"], include_image=(include_image or store)
+                    )
                     raw_value = _as_dict(raw_result)
                     bridge_result = raw_value.get("result") if isinstance(raw_value, dict) else None
                     image_base64 = bridge_result.get("image_base64") if isinstance(bridge_result, dict) else None
