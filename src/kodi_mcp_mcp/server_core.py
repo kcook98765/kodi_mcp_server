@@ -16,6 +16,7 @@ NOTE: This file is intentionally a refactor/extraction from
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import re
@@ -30,6 +31,7 @@ from mcp.types import (
     CallToolRequestParams,
     CallToolResult,
     ErrorData,
+    ImageContent,
     ListToolsResult,
     PaginatedRequestParams,
     TextContent,
@@ -313,6 +315,98 @@ Runtime = dict[str, Any]
 
 SOURCE_TREE_EXCLUDES = {".git", "__pycache__", ".pytest_cache", "venv", ".venv", "node_modules"}
 LOG_ERROR_RE = re.compile(r"(error|exception|traceback|failed|failure|warning|timeout|refused)", re.IGNORECASE)
+LOG_DEFAULT_MAX_BYTES = 128 * 1024
+LOG_MAX_BYTES = 128 * 1024
+INLINE_SCREENSHOT_MAX_RAW_BYTES = 512 * 1024
+LOG_TOOL_NAMES = {"bridge_log_tail", "bridge_log_markers", "bridge_log_recent_errors"}
+
+
+def _utf8_tail(text: str, max_bytes: int) -> str:
+    """Return at most ``max_bytes`` from the end without splitting UTF-8."""
+
+    if max_bytes <= 0:
+        return ""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    tail = encoded[-max_bytes:]
+    while tail and tail[0] & 0xC0 == 0x80:
+        tail = tail[1:]
+    return tail.decode("utf-8")
+
+
+def _bound_log_lines(lines: list[Any], max_bytes: int) -> dict[str, Any]:
+    """Keep newest log content under a joined UTF-8 byte budget."""
+
+    normalized = [str(line) for line in lines]
+    available_bytes = len("\n".join(normalized).encode("utf-8"))
+    kept_reversed: list[str] = []
+    used = 0
+
+    for line in reversed(normalized):
+        separator = 1 if kept_reversed else 0
+        encoded_size = len(line.encode("utf-8"))
+        if used + separator + encoded_size <= max_bytes:
+            kept_reversed.append(line)
+            used += separator + encoded_size
+            continue
+
+        remaining = max_bytes - used - separator
+        if remaining > 0:
+            fragment = _utf8_tail(line, remaining)
+            if fragment:
+                kept_reversed.append(fragment)
+                used += separator + len(fragment.encode("utf-8"))
+        break
+
+    kept = list(reversed(kept_reversed))
+    truncated = kept != normalized
+    return {
+        "lines": kept,
+        "truncated": truncated,
+        "truncation_direction": "start" if truncated else None,
+        "max_bytes": max_bytes,
+        "available_lines": len(normalized),
+        "available_bytes": available_bytes,
+        "returned_lines": len(kept),
+        "returned_bytes": len("\n".join(kept).encode("utf-8")),
+    }
+
+
+def _bound_log_response(raw_result: Any, max_bytes: int) -> Any:
+    """Bound a bridge ResponseMessage-shaped log result."""
+
+    raw_value = _as_dict(raw_result)
+    if not isinstance(raw_value, dict):
+        return raw_value
+    result = raw_value.get("result")
+    if not isinstance(result, dict) or not isinstance(result.get("lines"), list):
+        return raw_value
+    bounded = _bound_log_lines(result["lines"], max_bytes)
+    result = {**result, **bounded}
+    raw_value["result"] = result
+    return raw_value
+
+
+def _compact_log_raw(raw_value: Any, data: Any) -> dict[str, Any]:
+    """Keep transport metadata without duplicating bounded log content."""
+
+    metadata_keys = (
+        "truncated",
+        "truncation_direction",
+        "max_bytes",
+        "available_lines",
+        "available_bytes",
+        "returned_lines",
+        "returned_bytes",
+    )
+    metadata = {key: data.get(key) for key in metadata_keys if isinstance(data, dict) and key in data}
+    compact = {"content_omitted": "see data", "result_metadata": metadata}
+    if isinstance(raw_value, dict):
+        for key in ("request_id", "error", "error_type", "error_code", "latency_ms"):
+            if key in raw_value:
+                compact[key] = raw_value.get(key)
+    return compact
 
 
 def _as_dict(value: Any) -> Any:
@@ -464,42 +558,52 @@ def _addon_source_tree(source_path: str, max_entries: int = 200) -> dict[str, An
     }
 
 
-async def _bridge_log_recent_errors(bridge_tool: Any, lines: int = 300, pattern: str | None = None) -> dict[str, Any]:
+async def _bridge_log_recent_errors(
+    bridge_tool: Any,
+    lines: int = 300,
+    pattern: str | None = None,
+    max_bytes: int = LOG_DEFAULT_MAX_BYTES,
+) -> dict[str, Any]:
     lines = max(1, min(1000, lines if isinstance(lines, int) else 300))
     raw_result = await bridge_tool.get_bridge_log_tail(lines=lines)
     raw_value = _as_dict(raw_result)
-    log_text = ""
     result_value = raw_value.get("result") if isinstance(raw_value, dict) else raw_value
     if isinstance(result_value, str):
-        log_text = result_value
+        source_lines = result_value.splitlines()
     elif isinstance(result_value, dict):
+        source_lines = []
         for key in ("log", "text", "tail", "lines"):
             value = result_value.get(key)
             if isinstance(value, str):
-                log_text = value
+                source_lines = value.splitlines()
                 break
             if isinstance(value, list):
-                log_text = "\n".join(str(item) for item in value)
+                source_lines = [str(item) for item in value]
                 break
     elif isinstance(result_value, list):
-        log_text = "\n".join(str(item) for item in result_value)
+        source_lines = [str(item) for item in result_value]
+    else:
+        source_lines = []
 
     pattern_re = re.compile(pattern, re.IGNORECASE) if isinstance(pattern, str) and pattern.strip() else None
     matches = []
-    for line in log_text.splitlines():
+    for line in source_lines:
         if not LOG_ERROR_RE.search(line):
             continue
         if pattern_re and not pattern_re.search(line):
             continue
         matches.append(line)
 
+    bounded = _bound_log_lines(matches[-100:], max_bytes)
+    matching_lines = bounded.pop("lines")
     return {
         "ok": True,
         "lines_requested": lines,
-        "lines_scanned": len(log_text.splitlines()),
+        "lines_scanned": len(source_lines),
         "pattern": pattern if pattern_re else None,
         "count": len(matches),
-        "matching_lines": matches[-100:],
+        "matching_lines": matching_lines,
+        **bounded,
         "request_id": raw_value.get("request_id") if isinstance(raw_value, dict) else None,
     }
 
@@ -636,8 +740,16 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                             "type": "integer",
                             "description": "Number of log lines to return.",
                             "minimum": 1,
+                            "maximum": 1000,
                             "default": 50,
-                        }
+                        },
+                        "max_bytes": {
+                            "type": "integer",
+                            "description": "Maximum UTF-8 bytes of returned log content; truncation is reported explicitly.",
+                            "minimum": 1,
+                            "maximum": LOG_MAX_BYTES,
+                            "default": LOG_DEFAULT_MAX_BYTES,
+                        },
                     },
                     "additionalProperties": False,
                 },
@@ -652,8 +764,16 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                             "type": "integer",
                             "description": "Number of log lines to scan for markers.",
                             "minimum": 1,
+                            "maximum": 1000,
                             "default": 200,
-                        }
+                        },
+                        "max_bytes": {
+                            "type": "integer",
+                            "description": "Maximum UTF-8 bytes of returned marker content; truncation is reported explicitly.",
+                            "minimum": 1,
+                            "maximum": LOG_MAX_BYTES,
+                            "default": LOG_DEFAULT_MAX_BYTES,
+                        },
                     },
                     "additionalProperties": False,
                 },
@@ -674,6 +794,13 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         "pattern": {
                             "type": "string",
                             "description": "Optional case-insensitive regex that matching error lines must also satisfy.",
+                        },
+                        "max_bytes": {
+                            "type": "integer",
+                            "description": "Maximum UTF-8 bytes of returned matching content; filtering occurs before truncation.",
+                            "minimum": 1,
+                            "maximum": LOG_MAX_BYTES,
+                            "default": LOG_DEFAULT_MAX_BYTES,
                         },
                     },
                     "additionalProperties": False,
@@ -731,7 +858,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         "include_image": {
                             "type": "boolean",
                             "default": False,
-                            "description": "If true, also include base64 PNG data in the tool result.",
+                            "description": "If true and the PNG is at most 524288 bytes, also return canonical MCP ImageContent. Larger images use stored-artifact mode or fail explicitly when store is false.",
                         },
                         "store": {
                             "type": "boolean",
@@ -1809,6 +1936,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
             if validation_error is not None:
                 return validation_error
 
+            pending_image_content: ImageContent | None = None
             start = time.time()
             envelope: dict[str, Any]
             try:
@@ -1829,22 +1957,29 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         lines = default_lines
                     if lines < 1:
                         lines = 1
+                    max_bytes = args.get("max_bytes", LOG_DEFAULT_MAX_BYTES)
+                    if not isinstance(max_bytes, int):
+                        max_bytes = LOG_DEFAULT_MAX_BYTES
 
                     if tool_name == "bridge_log_tail":
                         raw_result = await runtime["bridge"].get_bridge_log_tail(lines=lines)
                     else:
                         raw_result = await runtime["bridge"].get_bridge_log_markers(lines=lines)
+                    raw_result = _bound_log_response(raw_result, max_bytes)
                 elif tool_name == "bridge_log_recent_errors":
                     args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
                     lines = args.get("lines", 300)
                     lines = lines if isinstance(lines, int) else 300
+                    max_bytes = args.get("max_bytes", LOG_DEFAULT_MAX_BYTES)
+                    max_bytes = max_bytes if isinstance(max_bytes, int) else LOG_DEFAULT_MAX_BYTES
                     pattern = args.get("pattern")
                     raw_result = await _bridge_log_recent_errors(
                         runtime["bridge"],
                         lines=lines,
                         pattern=pattern if isinstance(pattern, str) and pattern.strip() else None,
+                        max_bytes=max_bytes,
                     )
                 elif tool_name == "addon_list":
                     args = params.arguments or {}
@@ -2186,14 +2321,50 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     raw_value = _as_dict(raw_result)
                     bridge_result = raw_value.get("result") if isinstance(raw_value, dict) else None
                     image_base64 = bridge_result.get("image_base64") if isinstance(bridge_result, dict) else None
-                    if store and isinstance(image_base64, str) and image_base64:
-                        stored = store_screenshot_from_base64(image_base64)
-                        bridge_result["server_screenshot"] = stored
-                        if not include_image:
-                            bridge_result.pop("image_base64", None)
-                    if isinstance(raw_value, dict) and isinstance(bridge_result, dict):
+                    payload_error = None
+                    if isinstance(image_base64, str) and image_base64:
+                        stored = None
+                        if store:
+                            stored = store_screenshot_from_base64(image_base64)
+                            bridge_result["server_screenshot"] = stored
+                            raw_size = int(stored["size_bytes"])
+                        else:
+                            raw_size = len(base64.b64decode(image_base64, validate=True))
+
+                        bridge_result.pop("image_base64", None)
+                        if include_image and raw_size <= INLINE_SCREENSHOT_MAX_RAW_BYTES:
+                            pending_image_content = ImageContent(
+                                type="image",
+                                data=image_base64,
+                                mimeType="image/png",
+                            )
+                            bridge_result["inline_image"] = {
+                                "included": True,
+                                "raw_size_bytes": raw_size,
+                                "max_raw_size_bytes": INLINE_SCREENSHOT_MAX_RAW_BYTES,
+                            }
+                        elif include_image and store:
+                            bridge_result["inline_image"] = {
+                                "included": False,
+                                "raw_size_bytes": raw_size,
+                                "max_raw_size_bytes": INLINE_SCREENSHOT_MAX_RAW_BYTES,
+                                "reason": "image exceeds inline MCP payload limit; use server_screenshot.url",
+                            }
+                        elif include_image:
+                            payload_error = {
+                                "ok": False,
+                                "error": "screenshot exceeds inline MCP payload limit; retry with store=true",
+                                "error_type": "payload_too_large",
+                                "error_code": None,
+                                "raw_size_bytes": raw_size,
+                                "max_raw_size_bytes": INLINE_SCREENSHOT_MAX_RAW_BYTES,
+                                "retry": {"store": True, "include_image": False},
+                            }
+                    if payload_error is not None:
+                        raw_result = payload_error
+                    elif isinstance(raw_value, dict) and isinstance(bridge_result, dict):
                         raw_value["result"] = bridge_result
-                    raw_result = raw_value
+                        raw_result = raw_value
                 elif tool_name == "kodi_gui_state":
                     raw_result = await runtime["bridge"].gui_state()
                 elif tool_name == "managed_addon_register":
@@ -2501,6 +2672,8 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         "request_id": raw_value.get("request_id") if isinstance(raw_value, dict) else None,
                         "raw": raw_value,
                     }
+                if tool_name in LOG_TOOL_NAMES and envelope.get("ok"):
+                    envelope["raw"] = _compact_log_raw(raw_value, envelope.get("data"))
             except Exception as exc:
                 latency_ms = int((time.time() - start) * 1000)
                 envelope = {
@@ -2516,10 +2689,13 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 }
 
             text = json.dumps(envelope, indent=2, sort_keys=True)
-            return                 CallToolResult(
-                    is_error=not envelope.get("ok", False),
-                    content=[TextContent(type="text", text=text)],
-                )
+            content = [TextContent(type="text", text=text)]
+            if pending_image_content is not None and envelope.get("ok"):
+                content.append(pending_image_content)
+            return CallToolResult(
+                is_error=not envelope.get("ok", False),
+                content=content,
+            )
 
         payload = ErrorData(code=0, message=f"Tool not implemented: {tool_name}", data=None)
         return             CallToolResult(

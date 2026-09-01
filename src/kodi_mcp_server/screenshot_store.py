@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import os
+import struct
 import time
 import uuid
 from pathlib import Path
@@ -74,6 +76,9 @@ def store_screenshot_from_base64(image_base64: str, *, root: Path | None = None)
     content = base64.b64decode(image_base64, validate=True)
     if not content.startswith(b"\x89PNG\r\n\x1a\n"):
         raise ValueError("screenshot image is not a PNG")
+    if len(content) < 24 or content[12:16] != b"IHDR":
+        raise ValueError("screenshot PNG is missing a valid IHDR header")
+    width, height = struct.unpack(">II", content[16:24])
 
     screenshot_id = "%s-%s" % (int(time.time() * 1000), uuid.uuid4().hex[:12])
     filename = "%s.png" % screenshot_id
@@ -87,7 +92,11 @@ def store_screenshot_from_base64(image_base64: str, *, root: Path | None = None)
         "path": str(path),
         "url": "%s/screenshots/%s" % (REPO_BASE_URL.rstrip("/"), filename),
         "content_type": "image/png",
+        "format": "png",
         "size_bytes": len(content),
+        "width": width,
+        "height": height,
+        "sha256": hashlib.sha256(content).hexdigest(),
         "cleanup": cleanup,
         "retention_seconds": SCREENSHOT_RETENTION_SECONDS,
         "max_files": SCREENSHOT_MAX_FILES,

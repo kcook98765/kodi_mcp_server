@@ -100,7 +100,10 @@ async def test_gui_tools_dispatch_through_bridge():
         screenshot_env = json.loads(screenshot_resp.content[0].text)
         assert screenshot_env["ok"] is True
         assert screenshot_env["data"]["content_type"] == "image/png"
-        assert screenshot_env["data"]["image_base64"] == "ZmFrZQ=="
+        assert "image_base64" not in screenshot_env["data"]
+        assert [item.type for item in screenshot_resp.content] == ["text", "image"]
+        assert screenshot_resp.content[1].data == "ZmFrZQ=="
+        assert screenshot_resp.content[1].mime_type == "image/png"
         assert screenshot_env["data"]["server_screenshot"]["url"] == "http://server/screenshots/shot-1.png"
 
         state_resp = await server.get_request_handler("tools/call").handler(None,
