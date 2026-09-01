@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Tuple
 from xml.etree import ElementTree
 
+from jsonschema import Draft202012Validator
 from mcp.server import Server
 from mcp.types import (
     CallToolRequestParams,
@@ -63,6 +64,115 @@ from kodi_mcp_server.screenshot_store import store_screenshot_from_base64
 
 SERVER_NAME = "kodi-mcp"
 SERVER_VERSION = __version__
+
+# Kodi documents lowercase letters, numbers, periods, underscores, and dashes
+# for addon IDs. Kodi 20 also ships a language-resource ID containing ``@``
+# (resource.language.sr_rs@latin), so preserve that observed compatibility.
+# Require at least one alphanumeric character so separator-only values cannot
+# be interpreted as registry keys.
+ADDON_ID_PATTERN = r"^(?=.*[a-z0-9])[a-z0-9._@-]+$"
+
+
+def _addon_id_schema(description: str | None = None) -> dict[str, Any]:
+    schema: dict[str, Any] = {
+        "type": "string",
+        "minLength": 1,
+        "pattern": ADDON_ID_PATTERN,
+    }
+    if description:
+        schema["description"] = description
+    return schema
+
+
+def _invalid_params_result(
+    tool_name: str,
+    arguments: Any,
+    detail: str,
+    validation: list[dict[str, Any]] | None = None,
+) -> CallToolResult:
+    raw: dict[str, Any] = {"arguments": arguments}
+    if validation:
+        raw["validation"] = validation
+    envelope = {
+        "ok": False,
+        "tool": tool_name,
+        "data": None,
+        "error": detail,
+        "error_type": "invalid_params",
+        "error_code": None,
+        "latency_ms": 0,
+        "request_id": None,
+        "raw": raw,
+    }
+    return CallToolResult(
+        is_error=True,
+        content=[TextContent(type="text", text=json.dumps(envelope, indent=2, sort_keys=True))],
+    )
+
+
+def _validate_tool_arguments(
+    tool_name: str, arguments: Any, input_schema: dict[str, Any]
+) -> CallToolResult | None:
+    """Validate actual call arguments against the exact advertised schema."""
+
+    candidate = {} if arguments is None else arguments
+    errors = sorted(
+        Draft202012Validator(input_schema).iter_errors(candidate),
+        key=lambda error: (list(error.absolute_path), list(error.absolute_schema_path)),
+    )
+    if not errors:
+        return None
+
+    error = errors[0]
+    field = ".".join(str(part) for part in error.absolute_path)
+    detail = (
+        f"invalid argument {field}: {error.message}"
+        if field
+        else f"invalid arguments: {error.message}"
+    )
+    validation = [
+        {
+            "field": ".".join(str(part) for part in item.absolute_path) or None,
+            "message": item.message,
+            "validator": item.validator,
+        }
+        for item in errors
+    ]
+    return _invalid_params_result(tool_name, candidate, detail, validation)
+
+
+def _failure_fields(raw_value: dict[str, Any], tool_name: str) -> tuple[Any, Any]:
+    """Return nonempty error/error_type values for a failed plain-dict result."""
+
+    error = raw_value.get("error")
+    error_type = raw_value.get("error_type")
+    if error not in (None, ""):
+        return error, error_type or "operation_failed"
+
+    verification = raw_value.get("verification")
+    verification = verification if isinstance(verification, dict) else {}
+    reason = (
+        raw_value.get("message")
+        or raw_value.get("failure_reason")
+        or raw_value.get("apply_status")
+        or verification.get("apply_status")
+        or raw_value.get("error_code")
+        or "operation_failed"
+    )
+    identifiers = []
+    for key in ("managed_addon_id", "addon_id", "addonid", "artifact_id"):
+        value = raw_value.get(key)
+        if isinstance(value, str) and value:
+            identifiers.append(f"{key}={value!r}")
+    context = f" ({', '.join(identifiers)})" if identifiers else ""
+    hint = verification.get("retry_hint")
+    hint_text = f"; {hint}" if isinstance(hint, str) and hint.strip() else ""
+    normalized_error = f"{tool_name} failed: {reason}{context}{hint_text}"
+
+    code = raw_value.get("error_code")
+    if error_type in (None, "") and isinstance(code, str) and code:
+        error_type = code.lower()
+    return normalized_error, error_type or "operation_failed"
 
 
 async def _observe_active_players(
@@ -577,6 +687,8 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     "properties": {
                         "message": {
                             "type": "string",
+                            "minLength": 1,
+                            "pattern": r"\S",
                             "description": "Marker text to write into the log. Use a unique token for traceability.",
                         }
                     },
@@ -663,10 +775,9 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "addonid": {
-                            "type": "string",
-                            "description": "Kodi addon id (e.g. 'service.kodi_mcp').",
-                        }
+                        "addonid": _addon_id_schema(
+                            "Kodi addon id (e.g. 'service.kodi_mcp')."
+                        )
                     },
                     "required": ["addonid"],
                     "additionalProperties": False,
@@ -678,14 +789,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "addonid": {
-                            "type": "string",
-                            "description": "Kodi addon id to execute.",
-                        },
-                        "addon_id": {
-                            "type": "string",
-                            "description": "Alias for addonid. Prefer addonid when possible.",
-                        },
+                        "addonid": _addon_id_schema("Kodi addon id to execute."),
+                        "addon_id": _addon_id_schema(
+                            "Alias for addonid. Prefer addonid when possible."
+                        ),
                         "wait": {
                             "type": "boolean",
                             "default": False,
@@ -750,7 +857,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                             "description": "Delay between GUI state checks.",
                         },
                     },
-                    "required": ["addonid"],
+                    "anyOf": [
+                        {"required": ["addonid"]},
+                        {"required": ["addon_id"]},
+                    ],
                     "additionalProperties": False,
                 },
             ),
@@ -765,6 +875,8 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     "properties": {
                         "source_path": {
                             "type": "string",
+                            "minLength": 1,
+                            "pattern": r"\S",
                             "description": "Server-local path under KODI_MCP_SOURCE_ROOTS, or a known agent mount such as /srv/workspaces/...; must contain addon.xml.",
                         }
                     },
@@ -780,6 +892,8 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     "properties": {
                         "source_path": {
                             "type": "string",
+                            "minLength": 1,
+                            "pattern": r"\S",
                             "description": "Server-local path under KODI_MCP_SOURCE_ROOTS, or a known agent mount such as /srv/workspaces/...; must contain addon.xml.",
                         }
                     },
@@ -795,6 +909,8 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     "properties": {
                         "source_path": {
                             "type": "string",
+                            "minLength": 1,
+                            "pattern": r"\S",
                             "description": "Server-local path under KODI_MCP_SOURCE_ROOTS, or a known agent mount such as /srv/workspaces/...; must contain addon.xml.",
                         },
                         "max_entries": {
@@ -1006,6 +1122,8 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     "properties": {
                         "source_path": {
                             "type": "string",
+                            "minLength": 1,
+                            "pattern": r"\S",
                             "description": "Local filesystem path to an addon root containing addon.xml.",
                         }
                     },
@@ -1028,10 +1146,9 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "managed_addon_id": {
-                            "type": "string",
-                            "description": "Managed addon id (key). Defaults to addon id.",
-                        }
+                        "managed_addon_id": _addon_id_schema(
+                            "Managed addon id (key). Defaults to addon id."
+                        )
                     },
                     "required": ["managed_addon_id"],
                     "additionalProperties": False,
@@ -1046,7 +1163,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "managed_addon_id": {"type": "string"},
+                        "managed_addon_id": _addon_id_schema(),
                         "version_policy": {
                             "type": "string",
                             "enum": ["use_addon_xml", "bump_patch", "set_explicit"],
@@ -1068,7 +1185,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "managed_addon_id": {"type": "string"},
+                        "managed_addon_id": _addon_id_schema(),
                         "version_policy": {
                             "type": "string",
                             "enum": ["use_addon_xml", "bump_patch", "set_explicit"],
@@ -1087,7 +1204,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "managed_addon_id": {"type": "string"},
+                        "managed_addon_id": _addon_id_schema(),
                     },
                     "required": ["managed_addon_id"],
                     "additionalProperties": False,
@@ -1104,9 +1221,9 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "zip_base64": {"type": "string", "description": "Base64-encoded zip bytes (optionally data: URI)."},
+                        "zip_base64": {"type": "string", "minLength": 1, "pattern": r"\S", "description": "Base64-encoded zip bytes (optionally data: URI)."},
                         "filename": {"type": "string", "default": "upload.zip"},
-                        "addon_id": {"type": "string"},
+                        "addon_id": _addon_id_schema(),
                         "version": {"type": "string"},
                     },
                     "required": ["zip_base64"],
@@ -1122,10 +1239,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "artifact_id": {"type": "string"},
-                        "addon_id": {"type": "string"},
-                        "addon_name": {"type": "string"},
-                        "addon_version": {"type": "string"},
+                        "artifact_id": {"type": "string", "minLength": 1, "pattern": r"\S"},
+                        "addon_id": _addon_id_schema(),
+                        "addon_name": {"type": "string", "minLength": 1, "pattern": r"\S"},
+                        "addon_version": {"type": "string", "minLength": 1, "pattern": r"\S"},
                         "provider_name": {"type": "string", "default": "kodi_mcp"},
                     },
                     "required": ["artifact_id", "addon_id", "addon_name", "addon_version"],
@@ -1155,7 +1272,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "addonid": {"type": "string"},
+                        "addonid": _addon_id_schema(),
                         "repo_version": {"type": "string"},
                         "target_version": {
                             "type": "string",
@@ -1178,10 +1295,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "artifact_id": {"type": "string"},
-                        "addon_id": {"type": "string"},
-                        "addon_name": {"type": "string"},
-                        "addon_version": {"type": "string"},
+                        "artifact_id": {"type": "string", "minLength": 1, "pattern": r"\S"},
+                        "addon_id": _addon_id_schema(),
+                        "addon_name": {"type": "string", "minLength": 1, "pattern": r"\S"},
+                        "addon_version": {"type": "string", "minLength": 1, "pattern": r"\S"},
                         "provider_name": {"type": "string", "default": "kodi_mcp"},
                         "repo_version": {"type": "string"},
                         "verify": {"type": "boolean", "default": True},
@@ -1201,10 +1318,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "artifact_id": {"type": "string"},
-                        "addon_id": {"type": "string"},
-                        "addon_name": {"type": "string"},
-                        "addon_version": {"type": "string"},
+                        "artifact_id": {"type": "string", "minLength": 1, "pattern": r"\S"},
+                        "addon_id": _addon_id_schema(),
+                        "addon_name": {"type": "string", "minLength": 1, "pattern": r"\S"},
+                        "addon_version": {"type": "string", "minLength": 1, "pattern": r"\S"},
                         "provider_name": {"type": "string", "default": "kodi_mcp"},
                         "repo_version": {"type": "string"},
                         "verify": {"type": "boolean", "default": True},
@@ -1679,6 +1796,18 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                                 is_error=True,
                                 content=[TextContent(type="text", text=text)],
                             )
+
+            # The MCP SDK validates only CallToolRequestParams itself. The
+            # custom low-level handler must enforce each listed tool schema.
+            listed_tools = await _handle_list_tools(ctx, None)
+            tool_schema = next(
+                tool.input_schema for tool in listed_tools.tools if tool.name == tool_name
+            )
+            validation_error = _validate_tool_arguments(
+                tool_name, params.arguments, tool_schema
+            )
+            if validation_error is not None:
+                return validation_error
 
             start = time.time()
             envelope: dict[str, Any]
@@ -2359,6 +2488,8 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     error = raw_value.get("error") if isinstance(raw_value, dict) else None
                     error_type = raw_value.get("error_type") if isinstance(raw_value, dict) else None
                     error_code = raw_value.get("error_code") if isinstance(raw_value, dict) else None
+                    if isinstance(raw_value, dict) and not bool(ok):
+                        error, error_type = _failure_fields(raw_value, tool_name)
                     envelope = {
                         "ok": bool(ok),
                         "tool": tool_name,
