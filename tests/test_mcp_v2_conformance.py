@@ -22,6 +22,7 @@ import json
 import pytest
 
 from kodi_mcp_mcp.server_core import build_mcp_server, build_runtime
+from kodi_mcp_server import __version__
 from mcp.client import Client
 from mcp.shared.memory import create_client_server_memory_streams
 
@@ -104,7 +105,8 @@ async def test_v2_initialize_negotiates_supported_handshake_version():
             # Server identity comes from the constructor in v2 and feeds
             # the runner-built InitializeResult.
             assert init_options.server_name == "kodi-mcp"
-            assert init_options.server_version == "0.0.0"
+            assert init_options.server_version == __version__
+            assert init_options.server_version != "0.0.0"
             assert "Kodi MCP server" in init_options.instructions
             # Tools capability is advertised (derived from registered handlers).
             assert init_options.capabilities.tools is not None

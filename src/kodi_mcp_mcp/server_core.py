@@ -35,6 +35,7 @@ from mcp.types import (
     Tool,
 )
 
+from kodi_mcp_server import __version__
 from kodi_mcp_server.composition import (
     build_bridge_tool,
     build_jsonrpc_tool,
@@ -61,7 +62,7 @@ from kodi_mcp_server.screenshot_store import store_screenshot_from_base64
 
 
 SERVER_NAME = "kodi-mcp"
-SERVER_VERSION = "0.0.0"
+SERVER_VERSION = __version__
 
 
 async def _observe_active_players(
