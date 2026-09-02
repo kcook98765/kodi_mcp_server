@@ -75,6 +75,7 @@ from kodi_mcp_server.dev_loop_artifacts import (
 from kodi_mcp_server.kodi_apply import managed_addon_build_publish_stage_and_apply
 from kodi_mcp_server.tools.library import LibraryTool
 from kodi_mcp_server.tools.music import MusicTool
+from kodi_mcp_server.tools.settings import SettingsTool
 from kodi_mcp_server.milestone_a_bridge import read_addon_state
 from kodi_mcp_server.paths import AUTHORITATIVE_REPO_ROOT, PROJECT_ROOT
 from kodi_mcp_server.screenshot_store import (
@@ -167,20 +168,40 @@ def _validate_tool_arguments(
 
     error = errors[0]
     field = ".".join(str(part) for part in error.absolute_path)
-    detail = (
-        f"invalid argument {field}: {error.message}"
-        if field
-        else f"invalid arguments: {error.message}"
-    )
+    redact_arguments = tool_name in {"kodi_setting_get", "kodi_setting_set"}
+    if redact_arguments:
+        detail = (
+            f"invalid argument {field}: does not satisfy the advertised schema"
+            if field
+            else "invalid settings arguments: do not satisfy the advertised schema"
+        )
+    else:
+        detail = (
+            f"invalid argument {field}: {error.message}"
+            if field
+            else f"invalid arguments: {error.message}"
+        )
     validation = [
         {
             "field": ".".join(str(part) for part in item.absolute_path) or None,
-            "message": item.message,
+            "message": (
+                "does not satisfy the advertised schema"
+                if redact_arguments
+                else item.message
+            ),
             "validator": item.validator,
         }
         for item in errors
     ]
-    return _invalid_params_result(tool_name, candidate, detail, validation)
+    safe_candidate = (
+        {
+            "provided_fields": sorted(candidate) if isinstance(candidate, dict) else [],
+            "values_redacted": True,
+        }
+        if redact_arguments
+        else candidate
+    )
+    return _invalid_params_result(tool_name, safe_candidate, detail, validation)
 
 
 def _failure_fields(raw_value: dict[str, Any], tool_name: str) -> tuple[Any, Any]:
@@ -1369,6 +1390,85 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 },
             ),
             Tool(
+                name="kodi_settings_list",
+                description=(
+                    "List only the Kodi core settings covered by the explicit MCP safety policy. "
+                    "This bounded catalog never enumerates Kodi's unrestricted setting universe."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "section": {
+                            "type": "string",
+                            "enum": ["interface", "media", "player"],
+                        },
+                        "category": {
+                            "type": "string",
+                            "enum": ["filelists", "regional", "skin", "subtitles", "videoplayer"],
+                        },
+                        "writable": {"type": "boolean"},
+                        "search": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 100,
+                            "pattern": r"\S",
+                        },
+                        "start": {"type": "integer", "default": 0, "minimum": 0},
+                        "limit": {
+                            "type": "integer",
+                            "default": 10,
+                            "minimum": 1,
+                            "maximum": 25,
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="kodi_setting_get",
+                description=(
+                    "Read one explicitly supported Kodi core setting with audited type, bounds, "
+                    "writability, and a current value that has passed the safety policy."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "setting_id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": r"^[a-z0-9._-]+$",
+                        }
+                    },
+                    "required": ["setting_id"],
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="kodi_setting_set",
+                description=(
+                    "Change exactly one explicitly writable Kodi core setting after strict type, "
+                    "range, step, enum, and sensitivity checks, then verify it by read-back."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "setting_id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": r"^[a-z0-9._-]+$",
+                        },
+                        "value": {
+                            "type": ["boolean", "integer", "number", "string"],
+                            "maxLength": 128,
+                        },
+                    },
+                    "required": ["setting_id", "value"],
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
                 name="kodi_artist_albums",
                 description=(
                     "List albums for a discovered Kodi artist ID using bounded Kodi-side "
@@ -1975,6 +2075,9 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
             "kodi_music_summary",
             "kodi_music_search",
             "kodi_music_browse",
+            "kodi_settings_list",
+            "kodi_setting_get",
+            "kodi_setting_set",
             "kodi_artist_albums",
             "kodi_album_songs",
             "kodi_library_search",
@@ -2589,6 +2692,26 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         category=args["category"],
                         start=args.get("start", 0),
                         limit=args.get("limit", 10),
+                    )
+                elif tool_name == "kodi_settings_list":
+                    args = params.arguments or {}
+                    raw_result = await SettingsTool(runtime["jsonrpc"]).list_settings(
+                        section=args.get("section"),
+                        category=args.get("category"),
+                        writable=args.get("writable"),
+                        search=args.get("search"),
+                        start=args.get("start", 0),
+                        limit=args.get("limit", 10),
+                    )
+                elif tool_name == "kodi_setting_get":
+                    args = params.arguments or {}
+                    raw_result = await SettingsTool(runtime["jsonrpc"]).get_setting(
+                        setting_id=args["setting_id"]
+                    )
+                elif tool_name == "kodi_setting_set":
+                    args = params.arguments or {}
+                    raw_result = await SettingsTool(runtime["jsonrpc"]).set_setting(
+                        setting_id=args["setting_id"], value=args["value"]
                     )
                 elif tool_name == "kodi_artist_albums":
                     args = params.arguments or {}

@@ -164,6 +164,13 @@ def test_safe_read_method_exhausts_retry_on_persistent_connection_error():
     assert response.error_type == ErrorType.NETWORK_ERROR
 
 
+def test_settings_metadata_reads_are_retry_safe_but_mutation_is_not():
+    assert is_safe_to_retry("Settings.GetSettings") is True
+    assert is_safe_to_retry("Settings.GetSettingValue") is True
+    assert is_safe_to_retry("Settings.SetSettingValue") is False
+    assert is_safe_to_retry("Settings.ResetSettingValue") is False
+
+
 def test_music_discovery_reads_are_retry_safe_but_playback_mutations_are_not():
     read_methods = {
         "AudioLibrary.GetArtists",

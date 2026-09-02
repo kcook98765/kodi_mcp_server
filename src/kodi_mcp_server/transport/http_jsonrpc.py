@@ -45,6 +45,7 @@ SAFE_READ_METHODS = frozenset([
     "VideoLibrary.GetTags",
     "Addons.GetAddons",
     "Addons.GetAddonDetails",
+    "Settings.GetSettings",
     "Settings.GetSettingValue",
     "System.GetProperties",
     # Introspection
