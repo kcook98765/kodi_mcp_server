@@ -246,6 +246,41 @@ bridge HTTP, host-control scripts, or curl fallbacks. If a required operation is
 missing from MCP, add a curated MCP tool rather than teaching agents a new escape
 hatch.
 
+### Structured MCP results and annotations
+
+`tools/list` advertises Draft 2020-12 `outputSchema` contracts for 36 of the 38
+tools. Calls to those tools return the existing JSON envelope in `TextContent`
+for backwards compatibility and a corresponding validated envelope in
+`structuredContent`. The envelope covers both success and application-level
+failure (`ok`, `tool`, `data`, `error`, `error_type`, `error_code`, latency,
+request identity, and raw diagnostics). Tool failures remain model-visible with
+`isError: true` and a meaningful error.
+
+Stable result families add required fields for status, GUI state, screenshots,
+bounded logs, source inspection, active players, and managed-addon validation.
+Pass-through and evolving mutation results use intentionally broader data
+schemas inside the stable envelope rather than guessed narrow fields. Two highly
+heterogeneous tools intentionally remain schema-less and text-only:
+`addon_execute` (optional player/GUI verification changes its shape) and
+`jsonrpc_introspect` (the Kodi API description varies by version and options).
+
+Compatibility details:
+
+- Screenshot metadata is structured, while image bytes remain a canonical MCP
+  `ImageContent` block when requested and within the inline limit. Base64 is not
+  copied into `structuredContent`.
+- Log text remains in the bounded compatibility `TextContent`. Structured log
+  output contains truncation/count/byte metadata only, so a large log is not
+  duplicated.
+- Every tool has standardized MCP behavior hints. Read-only hints are used only
+  for operations that do not modify state; mutating tools are split between
+  additive/non-destructive and potentially destructive operations. Idempotency
+  is not claimed for mutations, and only arbitrary addon execution is marked as
+  open-world.
+- The server validates structured results against the exact schema advertised by
+  `tools/list`. A mismatch fails closed as an `output_contract_error` instead of
+  emitting a misleading successful structured result.
+
 If you’re testing the **remote** transport directly, you can also do a minimal curl initialize:
 
 ```bash
