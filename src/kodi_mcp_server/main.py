@@ -1,5 +1,6 @@
 """Kodi MCP Server composition layer."""
 
+from kodi_mcp_server.bootstrap_app import configure_bootstrap_app
 from kodi_mcp_server.http_app import create_base_app
 from kodi_mcp_server.config import validate_config
 from kodi_mcp_server.mcp_app import configure_mcp_app
@@ -7,6 +8,7 @@ from kodi_mcp_server.repo_app import configure_repo_app
 
 app = create_base_app()
 configure_repo_app(app)
+configure_bootstrap_app(app)
 configure_mcp_app(app)
 
 

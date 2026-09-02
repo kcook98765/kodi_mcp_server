@@ -16,7 +16,35 @@ Bridge addon source is maintained in the standalone `kodi_mcp_addon` repo. This 
 
 ---
 
-## Rule: first install is manual for brand-new addons
+## Bridge-absent first install
+
+A Kodi target with healthy stock JSON-RPC but no `service.kodi_mcp` must begin
+with `bridge_bootstrap_status`. Kodi 19–22 expose no stock JSON-RPC operation to
+install an arbitrary ZIP, add a source/repository, or execute the internal
+`InstallAddon`/`InstallFromZip` built-ins.
+
+The supported contract is therefore user-assisted and fail-closed:
+
+1. The server exposes one pinned, validated bridge bundle at
+   `/bootstrap/manifest.json` and `/bootstrap/service.kodi_mcp.zip`.
+2. `bridge_bootstrap_status` returns `user_action_required` while the addon is
+   absent. It does not mutate Kodi settings or claim install success.
+3. The user reviews Kodi's Unknown Sources warning, installs that exact ZIP
+   through Kodi UI, and configures the shared token.
+4. Re-run the tool. Success requires `state=already_installed`, `verified=true`,
+   and `next_stage=managed_deployment`; version, source Git SHA, and source
+   fingerprint must all match.
+5. A stale/wrong same-ID addon returns `next_stage=authoritative_update` and
+   converges into the existing update/normalization flow.
+
+Release preparation must provide the official ZIP and matching manifest. In a
+source checkout, `scripts/prepare_bridge_bootstrap.py` prepares both without
+contacting Kodi. Prefer HTTPS for `REPO_BASE_URL`. Do not remotely enable Unknown
+Sources, inject files, or treat a matching addon ID alone as success.
+
+---
+
+## Rule: first install is manual for brand-new managed addons
 
 If an addon has **never been installed** in Kodi before, then after it is published into the Kodi MCP repo:
 
