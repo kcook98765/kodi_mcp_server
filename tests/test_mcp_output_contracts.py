@@ -35,6 +35,11 @@ _READ_ONLY_TOOLS = {
     "addon_source_inspect",
     "addon_project_map_status",
     "addon_source_tree",
+    "kodi_library_summary",
+    "kodi_library_search",
+    "kodi_library_browse",
+    "kodi_tv_seasons",
+    "kodi_tv_episodes",
     "kodi_player_active",
     "kodi_player_item",
     "jsonrpc_introspect",
@@ -118,7 +123,24 @@ class _Bridge:
 class _JsonRpc:
     async def get_jsonrpc_version(self):
         return ResponseMessage(
-            request_id="version", result={"version": {"major": 13}}, error=None
+            request_id="version",
+            result={"version": {"major": 13, "minor": 0, "patch": 0}},
+            error=None,
+        )
+
+    async def get_application_properties(self):
+        return ResponseMessage(
+            request_id="application",
+            result={
+                "name": "Kodi",
+                "version": {
+                    "major": 20,
+                    "minor": 5,
+                    "revision": "20.5.0",
+                    "tag": "stable",
+                },
+            },
+            error=None,
         )
 
 
@@ -210,6 +232,21 @@ async def test_success_and_failure_structured_content_validate_and_preserve_cont
     assert results["kodi_status"].structured_content == _text_envelope(
         results["kodi_status"]
     )
+    assert results["kodi_status"].structured_content["data"]["kodi"] == {
+        "status": "ok",
+        "name": "Kodi",
+        "version": {
+            "major": 20,
+            "minor": 5,
+            "revision": "20.5.0",
+            "tag": "stable",
+        },
+    }
+    assert results["kodi_status"].structured_content["data"]["jsonrpc"]["version"] == {
+        "major": 13,
+        "minor": 0,
+        "patch": 0,
+    }
     assert results["kodi_gui_state"].structured_content == _text_envelope(
         results["kodi_gui_state"]
     )
@@ -308,7 +345,20 @@ async def test_all_advertised_contracts_validate_canonical_success_and_failure_f
         "kodi_status": {
             "server": {"status": "running"},
             "config": {"loaded": True},
-            "jsonrpc": {"status": "ok"},
+            "jsonrpc": {
+                "status": "ok",
+                "version": {"major": 13, "minor": 0, "patch": 0},
+            },
+            "kodi": {
+                "status": "ok",
+                "name": "Kodi",
+                "version": {
+                    "major": 20,
+                    "minor": 5,
+                    "revision": "20.5.0",
+                    "tag": "stable",
+                },
+            },
             "bridge": {"status": "ok"},
             "vision": {},
         },
@@ -335,6 +385,36 @@ async def test_all_advertised_contracts_validate_canonical_success_and_failure_f
             "project_map": {},
         },
         "addon_source_tree": {"ok": True, "entries": [], "truncated": False},
+        "kodi_library_summary": {
+            "counts": {"movies": 0, "tvshows": 0, "seasons": 0, "episodes": 0}
+        },
+        "kodi_library_search": {
+            "query": "example",
+            "media_type": "movie",
+            "search": {"field": "title", "operator": "contains"},
+            "items": [],
+            "empty": True,
+            "pagination": {"start": 0, "end": 0, "total": 0, "limit": 10, "has_more": False},
+        },
+        "kodi_library_browse": {
+            "category": "recent_movies",
+            "items": [],
+            "empty": True,
+            "pagination": {"start": 0, "end": 0, "total": 0, "limit": 10, "has_more": False},
+        },
+        "kodi_tv_seasons": {
+            "tvshow": {"id": 1, "title": "Example"},
+            "items": [],
+            "empty": True,
+            "pagination": {"start": 0, "end": 0, "total": 0, "limit": 10, "has_more": False},
+        },
+        "kodi_tv_episodes": {
+            "tvshow": {"id": 1, "title": "Example"},
+            "season": 1,
+            "items": [],
+            "empty": True,
+            "pagination": {"start": 0, "end": 0, "total": 0, "limit": 10, "has_more": False},
+        },
         "kodi_player_active": [],
         "managed_addon_validate_state": {
             "ok": True,

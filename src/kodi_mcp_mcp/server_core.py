@@ -73,6 +73,7 @@ from kodi_mcp_server.dev_loop_artifacts import (
     repo_stage_and_apply_addon as _repo_stage_and_apply_addon,
 )
 from kodi_mcp_server.kodi_apply import managed_addon_build_publish_stage_and_apply
+from kodi_mcp_server.tools.library import LibraryTool
 from kodi_mcp_server.milestone_a_bridge import read_addon_state
 from kodi_mcp_server.paths import AUTHORITATIVE_REPO_ROOT, PROJECT_ROOT
 from kodi_mcp_server.screenshot_store import (
@@ -802,6 +803,7 @@ async def _kodi_status(runtime: Runtime) -> dict[str, Any]:
         "server": {"status": "running"},
         "config": {"loaded": bool(KODI_JSONRPC_URL and KODI_BRIDGE_BASE_URL)},
         "jsonrpc": {"status": "unknown", "url": KODI_JSONRPC_URL},
+        "kodi": {"status": "unknown"},
         "bridge": {"status": "unknown", "url": KODI_BRIDGE_BASE_URL},
         "vision": {
             "enabled": VISION_ENABLED,
@@ -817,11 +819,44 @@ async def _kodi_status(runtime: Runtime) -> dict[str, Any]:
             if getattr(jsonrpc_response, "error", None):
                 result["jsonrpc"]["status"] = "error"
                 result["jsonrpc"]["error"] = getattr(jsonrpc_response, "error", None)
+                result["kodi"]["status"] = "error"
+                result["kodi"]["error"] = "Kodi application identity unavailable"
             else:
                 result["jsonrpc"]["status"] = "ok"
+                jsonrpc_result = getattr(jsonrpc_response, "result", None)
+                if isinstance(jsonrpc_result, dict) and "version" in jsonrpc_result:
+                    result["jsonrpc"]["version"] = jsonrpc_result["version"]
+
+                application_response = await runtime[
+                    "jsonrpc"
+                ].get_application_properties()
+                if getattr(application_response, "error", None):
+                    result["kodi"]["status"] = "error"
+                    result["kodi"]["error"] = getattr(
+                        application_response, "error", None
+                    )
+                else:
+                    application = getattr(application_response, "result", None)
+                    name = application.get("name") if isinstance(application, dict) else None
+                    version = (
+                        application.get("version")
+                        if isinstance(application, dict)
+                        else None
+                    )
+                    if isinstance(name, str) and name and isinstance(version, dict):
+                        result["kodi"].update(
+                            {"status": "ok", "name": name, "version": version}
+                        )
+                    else:
+                        result["kodi"]["status"] = "error"
+                        result["kodi"]["error"] = (
+                            "Kodi returned malformed application identity"
+                        )
         except Exception as exc:
             result["jsonrpc"]["status"] = "error"
             result["jsonrpc"]["error"] = str(exc)
+            result["kodi"]["status"] = "error"
+            result["kodi"]["error"] = str(exc)
 
     # Test bridge connectivity
     if KODI_BRIDGE_BASE_URL:
@@ -1245,6 +1280,128 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         },
                     },
                     "required": ["source_path"],
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="kodi_library_summary",
+                description=(
+                    "Return compact video-library counts using Kodi-native total metadata "
+                    "without downloading the full library."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="kodi_library_search",
+                description=(
+                    "Search movie, TV-show, or episode titles with one bounded Kodi-native "
+                    "title-contains query. Results include stable Kodi IDs for later tools."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "pattern": r"\S",
+                            "description": "Case-insensitive title substring on supported Kodi versions.",
+                        },
+                        "media_type": {
+                            "type": "string",
+                            "enum": ["movie", "tvshow", "episode"],
+                        },
+                        "start": {"type": "integer", "default": 0, "minimum": 0},
+                        "limit": {
+                            "type": "integer",
+                            "default": 10,
+                            "minimum": 1,
+                            "maximum": 50,
+                        },
+                    },
+                    "required": ["query", "media_type"],
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="kodi_library_browse",
+                description=(
+                    "Browse bounded recent movies/episodes, video genres, movie sets, or "
+                    "video tags without requiring a pre-known Kodi ID."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "category": {
+                            "type": "string",
+                            "enum": [
+                                "recent_movies",
+                                "recent_episodes",
+                                "movie_genres",
+                                "tvshow_genres",
+                                "movie_sets",
+                                "movie_tags",
+                                "tvshow_tags",
+                            ],
+                        },
+                        "start": {"type": "integer", "default": 0, "minimum": 0},
+                        "limit": {
+                            "type": "integer",
+                            "default": 10,
+                            "minimum": 1,
+                            "maximum": 50,
+                        },
+                    },
+                    "required": ["category"],
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="kodi_tv_seasons",
+                description=(
+                    "List a discovered TV show's seasons by Kodi tvshow ID with bounded "
+                    "Kodi-side pagination."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "tvshow_id": {"type": "integer", "minimum": 0},
+                        "start": {"type": "integer", "default": 0, "minimum": 0},
+                        "limit": {
+                            "type": "integer",
+                            "default": 10,
+                            "minimum": 1,
+                            "maximum": 50,
+                        },
+                    },
+                    "required": ["tvshow_id"],
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="kodi_tv_episodes",
+                description=(
+                    "List episodes for a discovered TV show and season with bounded "
+                    "Kodi-side pagination."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "tvshow_id": {"type": "integer", "minimum": 0},
+                        "season": {"type": "integer", "minimum": 0},
+                        "start": {"type": "integer", "default": 0, "minimum": 0},
+                        "limit": {
+                            "type": "integer",
+                            "default": 10,
+                            "minimum": 1,
+                            "maximum": 50,
+                        },
+                    },
+                    "required": ["tvshow_id", "season"],
                     "additionalProperties": False,
                 },
             ),
@@ -1689,6 +1846,11 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
             "addon_source_inspect",
             "addon_project_map_status",
             "addon_source_tree",
+            "kodi_library_summary",
+            "kodi_library_search",
+            "kodi_library_browse",
+            "kodi_tv_seasons",
+            "kodi_tv_episodes",
             "kodi_player_active",
             "kodi_player_open",
             "kodi_player_item",
@@ -2279,6 +2441,38 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     max_entries = args.get("max_entries", 200)
                     max_entries = max_entries if isinstance(max_entries, int) else 200
                     raw_result = _addon_source_tree(str(args.get("source_path") or "").strip(), max_entries=max_entries)
+                elif tool_name == "kodi_library_summary":
+                    raw_result = await LibraryTool(runtime["jsonrpc"]).summary()
+                elif tool_name == "kodi_library_search":
+                    args = params.arguments or {}
+                    raw_result = await LibraryTool(runtime["jsonrpc"]).search(
+                        query=args["query"],
+                        media_type=args["media_type"],
+                        start=args.get("start", 0),
+                        limit=args.get("limit", 10),
+                    )
+                elif tool_name == "kodi_library_browse":
+                    args = params.arguments or {}
+                    raw_result = await LibraryTool(runtime["jsonrpc"]).browse(
+                        category=args["category"],
+                        start=args.get("start", 0),
+                        limit=args.get("limit", 10),
+                    )
+                elif tool_name == "kodi_tv_seasons":
+                    args = params.arguments or {}
+                    raw_result = await LibraryTool(runtime["jsonrpc"]).seasons(
+                        tvshow_id=args["tvshow_id"],
+                        start=args.get("start", 0),
+                        limit=args.get("limit", 10),
+                    )
+                elif tool_name == "kodi_tv_episodes":
+                    args = params.arguments or {}
+                    raw_result = await LibraryTool(runtime["jsonrpc"]).episodes(
+                        tvshow_id=args["tvshow_id"],
+                        season=args["season"],
+                        start=args.get("start", 0),
+                        limit=args.get("limit", 10),
+                    )
                 elif tool_name == "kodi_player_active":
                     raw_result = await runtime["jsonrpc"].get_active_players()
                 elif tool_name == "kodi_player_open":
