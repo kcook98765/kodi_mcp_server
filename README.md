@@ -234,6 +234,29 @@ Addon source and log triage helpers:
 - `addon_source_tree` returns a compact addon file tree for agent planning.
 - `bridge_log_recent_errors` filters recent bridge/Kodi log lines down to error-like entries, with an optional pattern.
 
+Video-library discovery helpers:
+- `kodi_library_summary` returns movie, TV-show, season, and episode totals from Kodi's native `limits.total` metadata. Each count call requests at most one sentinel item; it never downloads the full library.
+- `kodi_library_search` searches one explicit media type (`movie`, `tvshow`, or `episode`) using Kodi's native **title `contains`** filter. This is deterministic substring search, not fuzzy, semantic, cast, plot, filename, or path search. Matching is case-insensitive on the supported Kodi 19–22 targets.
+- `kodi_library_browse` exposes bounded `recent_movies`, `recent_episodes`, `movie_genres`, `tvshow_genres`, `movie_sets`, `movie_tags`, and `tvshow_tags` views.
+- `kodi_tv_seasons` accepts a `tvshow_id` returned by search and lists that show's seasons. `kodi_tv_episodes` accepts the same ID plus a season number and lists episodes.
+- Every listing/search uses Kodi-side `start`/`end` limits. `limit` defaults to 10 and is rejected above the hard maximum of 50. Results report `start`, `end`, `total`, requested `limit`, and `has_more`.
+- Results include stable Kodi IDs and concise identifying/play-state metadata. Raw media files and local paths are intentionally omitted. Artwork is limited to three useful references and drops filesystem/network-share references, credential-bearing URLs, and common token-bearing URLs.
+
+A movie workflow from unknown contents to existing playback:
+```json
+{"tool":"kodi_library_search","arguments":{"query":"Alien","media_type":"movie","limit":5}}
+{"tool":"kodi_player_open","arguments":{"media_type":"movie","item_id":123}}
+```
+Use the `id` returned by the first call as `item_id`; do not copy the illustrative ID above.
+
+A TV hierarchy workflow:
+```json
+{"tool":"kodi_library_search","arguments":{"query":"Example Show","media_type":"tvshow","limit":5}}
+{"tool":"kodi_tv_seasons","arguments":{"tvshow_id":456,"limit":20}}
+{"tool":"kodi_tv_episodes","arguments":{"tvshow_id":456,"season":1,"limit":20}}
+```
+Again, use the discovered `tvshow` ID. Empty pages are successful with `empty:true`; an invalid/nonexistent TV-show ID is a model-visible `not_found` error.
+
 Playback helpers:
 - `kodi_player_active` returns active Kodi players.
 - `kodi_player_item` returns the current item for a player.
@@ -248,7 +271,7 @@ hatch.
 
 ### Structured MCP results and annotations
 
-`tools/list` advertises Draft 2020-12 `outputSchema` contracts for 36 of the 38
+`tools/list` advertises Draft 2020-12 `outputSchema` contracts for 41 of the 43
 tools. Calls to those tools return the existing JSON envelope in `TextContent`
 for backwards compatibility and a corresponding validated envelope in
 `structuredContent`. The envelope covers both success and application-level

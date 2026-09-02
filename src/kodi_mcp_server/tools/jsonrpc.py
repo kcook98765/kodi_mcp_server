@@ -57,11 +57,11 @@ class JsonRpcTool:
         return await self.transport.send_request(request)
 
     async def get_application_properties(self) -> ResponseMessage:
-        """Retrieve a small set of Kodi application properties."""
+        """Retrieve Kodi application identity plus compact runtime properties."""
         return await self.execute_jsonrpc(
             method="Application.GetProperties",
             params={
-                "properties": ["language", "muted", "volume"],
+                "properties": ["name", "version", "language", "muted", "volume"],
             },
         )
 

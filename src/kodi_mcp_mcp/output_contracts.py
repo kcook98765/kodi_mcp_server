@@ -44,6 +44,24 @@ _STATUS_DATA = {
             "properties": {"status": {"type": "string"}},
             "required": ["status"],
         },
+        "kodi": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string"},
+                "name": {"type": "string", "minLength": 1},
+                "version": {
+                    "type": "object",
+                    "properties": {
+                        "major": {"type": "integer", "minimum": 0},
+                        "minor": {"type": "integer", "minimum": 0},
+                        "revision": {"type": "string"},
+                        "tag": {"type": "string"},
+                    },
+                    "required": ["major", "minor", "revision", "tag"],
+                },
+            },
+            "required": ["status"],
+        },
         "bridge": {
             "type": "object",
             "properties": {"status": {"type": "string"}},
@@ -51,7 +69,7 @@ _STATUS_DATA = {
         },
         "vision": {"type": "object"},
     },
-    "required": ["server", "config", "jsonrpc", "bridge", "vision"],
+    "required": ["server", "config", "jsonrpc", "kodi", "bridge", "vision"],
 }
 
 _GUI_STATE_DATA = {
@@ -195,6 +213,200 @@ _SOURCE_TREE_DATA = {
     "required": ["ok", "entries", "truncated"],
 }
 
+_LIBRARY_SUMMARY_DATA = {
+    "type": "object",
+    "properties": {
+        "counts": {
+            "type": "object",
+            "properties": {
+                "movies": {"type": "integer", "minimum": 0},
+                "tvshows": {"type": "integer", "minimum": 0},
+                "seasons": {"type": "integer", "minimum": 0},
+                "episodes": {"type": "integer", "minimum": 0},
+            },
+            "required": ["movies", "tvshows", "seasons", "episodes"],
+            "additionalProperties": False,
+        }
+    },
+    "required": ["counts"],
+    "additionalProperties": False,
+}
+
+_PAGINATION_DATA = {
+    "type": "object",
+    "properties": {
+        "start": {"type": "integer", "minimum": 0},
+        "end": {"type": "integer", "minimum": 0},
+        "total": {"type": "integer", "minimum": 0},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+        "has_more": {"type": "boolean"},
+    },
+    "required": ["start", "end", "total", "limit", "has_more"],
+    "additionalProperties": False,
+}
+
+_LIBRARY_ITEM_DATA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "integer", "minimum": 0},
+        "media_type": {"type": "string"},
+        "title": {"type": "string"},
+        "watched": {"type": "boolean"},
+        "playcount": {"type": "integer", "minimum": 0},
+        "runtime_seconds": {"type": ["integer", "null"], "minimum": 0},
+        "date_added": _NULLABLE_STRING,
+        "artwork": {"type": "object", "additionalProperties": {"type": "string"}},
+        "year": {"type": ["integer", "null"], "minimum": 0},
+        "genres": {"type": "array", "items": {"type": "string"}},
+        "episode_count": {"type": ["integer", "null"], "minimum": 0},
+        "season_count": {"type": ["integer", "null"], "minimum": 0},
+        "watched_episode_count": {"type": ["integer", "null"], "minimum": 0},
+        "show_title": _NULLABLE_STRING,
+        "tvshow_id": {"type": ["integer", "null"], "minimum": 0},
+        "season_id": {"type": ["integer", "null"], "minimum": 0},
+        "season": {"type": ["integer", "null"], "minimum": 0},
+        "episode": {"type": ["integer", "null"], "minimum": 0},
+    },
+    "required": [
+        "id",
+        "media_type",
+        "title",
+        "watched",
+        "playcount",
+        "runtime_seconds",
+        "date_added",
+        "artwork",
+    ],
+    "additionalProperties": False,
+}
+
+_LIBRARY_SEARCH_DATA = {
+    "type": "object",
+    "properties": {
+        "query": {"type": "string", "minLength": 1},
+        "media_type": {"enum": ["movie", "tvshow", "episode"]},
+        "search": {
+            "type": "object",
+            "properties": {
+                "field": {"const": "title"},
+                "operator": {"const": "contains"},
+            },
+            "required": ["field", "operator"],
+            "additionalProperties": False,
+        },
+        "items": {"type": "array", "items": _LIBRARY_ITEM_DATA, "maxItems": 50},
+        "empty": {"type": "boolean"},
+        "pagination": _PAGINATION_DATA,
+    },
+    "required": ["query", "media_type", "search", "items", "empty", "pagination"],
+    "additionalProperties": False,
+}
+
+_DISCOVERY_ITEM_DATA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "integer", "minimum": 0},
+        "media_type": {"enum": ["genre", "movie_set", "tag"]},
+        "title": {"type": "string"},
+        "artwork": {"type": "object", "additionalProperties": {"type": "string"}},
+        "library_type": {"enum": ["movie", "tvshow"]},
+    },
+    "required": ["id", "media_type", "title", "artwork"],
+    "additionalProperties": False,
+}
+
+_LIBRARY_BROWSE_DATA = {
+    "type": "object",
+    "properties": {
+        "category": {
+            "enum": [
+                "recent_movies",
+                "recent_episodes",
+                "movie_genres",
+                "tvshow_genres",
+                "movie_sets",
+                "movie_tags",
+                "tvshow_tags",
+            ]
+        },
+        "items": {
+            "type": "array",
+            "items": {"oneOf": [_LIBRARY_ITEM_DATA, _DISCOVERY_ITEM_DATA]},
+            "maxItems": 50,
+        },
+        "empty": {"type": "boolean"},
+        "pagination": _PAGINATION_DATA,
+    },
+    "required": ["category", "items", "empty", "pagination"],
+    "additionalProperties": False,
+}
+
+_TVSHOW_IDENTITY_DATA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "integer", "minimum": 0},
+        "title": {"type": "string"},
+    },
+    "required": ["id", "title"],
+    "additionalProperties": False,
+}
+
+_SEASON_ITEM_DATA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "integer", "minimum": 0},
+        "media_type": {"const": "season"},
+        "title": {"type": "string"},
+        "show_title": _NULLABLE_STRING,
+        "tvshow_id": {"type": "integer", "minimum": 0},
+        "season": {"type": "integer", "minimum": 0},
+        "watched": {"type": "boolean"},
+        "playcount": {"type": "integer", "minimum": 0},
+        "episode_count": {"type": ["integer", "null"], "minimum": 0},
+        "watched_episode_count": {"type": ["integer", "null"], "minimum": 0},
+        "artwork": {"type": "object", "additionalProperties": {"type": "string"}},
+    },
+    "required": [
+        "id",
+        "media_type",
+        "title",
+        "show_title",
+        "tvshow_id",
+        "season",
+        "watched",
+        "playcount",
+        "episode_count",
+        "watched_episode_count",
+        "artwork",
+    ],
+    "additionalProperties": False,
+}
+
+_TV_SEASONS_DATA = {
+    "type": "object",
+    "properties": {
+        "tvshow": _TVSHOW_IDENTITY_DATA,
+        "items": {"type": "array", "items": _SEASON_ITEM_DATA, "maxItems": 50},
+        "empty": {"type": "boolean"},
+        "pagination": _PAGINATION_DATA,
+    },
+    "required": ["tvshow", "items", "empty", "pagination"],
+    "additionalProperties": False,
+}
+
+_TV_EPISODES_DATA = {
+    "type": "object",
+    "properties": {
+        "tvshow": _TVSHOW_IDENTITY_DATA,
+        "season": {"type": "integer", "minimum": 0},
+        "items": {"type": "array", "items": _LIBRARY_ITEM_DATA, "maxItems": 50},
+        "empty": {"type": "boolean"},
+        "pagination": _PAGINATION_DATA,
+    },
+    "required": ["tvshow", "season", "items", "empty", "pagination"],
+    "additionalProperties": False,
+}
+
 _DATA_SCHEMAS: dict[str, dict[str, Any]] = {
     "kodi_status": _STATUS_DATA,
     "bridge_health": _OBJECT,
@@ -213,6 +425,11 @@ _DATA_SCHEMAS: dict[str, dict[str, Any]] = {
     "addon_source_inspect": _SOURCE_INSPECT_DATA,
     "addon_project_map_status": _OBJECT,
     "addon_source_tree": _SOURCE_TREE_DATA,
+    "kodi_library_summary": _LIBRARY_SUMMARY_DATA,
+    "kodi_library_search": _LIBRARY_SEARCH_DATA,
+    "kodi_library_browse": _LIBRARY_BROWSE_DATA,
+    "kodi_tv_seasons": _TV_SEASONS_DATA,
+    "kodi_tv_episodes": _TV_EPISODES_DATA,
     "kodi_player_active": _ARRAY,
     "kodi_player_open": _ANY,
     "kodi_player_item": _OBJECT,
@@ -250,6 +467,11 @@ _READ_ONLY = frozenset(
         "addon_source_inspect",
         "addon_project_map_status",
         "addon_source_tree",
+        "kodi_library_summary",
+        "kodi_library_search",
+        "kodi_library_browse",
+        "kodi_tv_seasons",
+        "kodi_tv_episodes",
         "kodi_player_active",
         "kodi_player_item",
         "jsonrpc_introspect",
