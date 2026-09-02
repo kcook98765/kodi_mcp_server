@@ -39,6 +39,8 @@ _READ_ONLY_TOOLS = {
     "kodi_music_summary",
     "kodi_music_search",
     "kodi_music_browse",
+    "kodi_settings_list",
+    "kodi_setting_get",
     "kodi_artist_albums",
     "kodi_album_songs",
     "kodi_library_search",
@@ -62,6 +64,7 @@ _NONDESTRUCTIVE_MUTATIONS = {
     "kodi_player_pause",
     "kodi_player_stop",
     "artifact_upload_zip",
+    "kodi_setting_set",
 }
 
 _DESTRUCTIVE_MUTATIONS = {
@@ -374,6 +377,20 @@ async def test_all_advertised_contracts_validate_canonical_success_and_failure_f
         "duration_seconds": 120,
         "artwork": {},
     }
+    setting_policy = {
+        "id": "filelists.showextensions",
+        "label": "Show file extensions",
+        "help": "Show filename extensions in Kodi file lists.",
+        "section": "media",
+        "category": "filelists",
+        "type": "boolean",
+        "readable": True,
+        "writable": True,
+        "mutation_unavailable_reason": None,
+        "policy": "explicit_allowlist",
+        "supported_kodi_major": [19, 20, 21, 22],
+        "constraints": {},
+    }
     specific_data = {
         "kodi_status": {
             "server": {"status": "running"},
@@ -437,6 +454,27 @@ async def test_all_advertised_contracts_validate_canonical_success_and_failure_f
             "items": [],
             "empty": True,
             "pagination": empty_page,
+        },
+        "kodi_settings_list": {
+            "items": [setting_policy],
+            "empty": False,
+            "pagination": {**empty_page, "end": 1, "total": 1},
+        },
+        "kodi_setting_get": {
+            "setting": {
+                **setting_policy,
+                "value": True,
+                "default": True,
+                "enabled": True,
+            }
+        },
+        "kodi_setting_set": {
+            "setting_id": "filelists.showextensions",
+            "before": True,
+            "requested": False,
+            "after": False,
+            "changed": True,
+            "verified": True,
         },
         "kodi_artist_albums": {
             "artist": music_artist,

@@ -275,6 +275,22 @@ A music workflow from unknown contents to normal audio playback:
 ```
 Use IDs returned by the preceding call, not the illustrative IDs above. Kodi normally reports the active audio player as ID `0`; discover it with `kodi_player_active` rather than assuming. Pass that returned ID to item, pause, seek, and stop, and stop playback after controlled tests. `kodi_player_open` also accepts `media_type:"album"`; Kodi's native album item starts immediate album playback without this server clearing, replacing, or enqueueing a playlist.
 
+Settings administration helpers:
+- `kodi_settings_list` lists only the small product safety policy, not Kodi's unrestricted setting universe. It supports exact section/category and writable filters, bounded text search, `start`, and `limit`; the default is 10 and the hard maximum is 25.
+- `kodi_setting_get` reads one listed setting and returns its current value, audited type, constraints, supported Kodi major versions, and whether MCP policy permits writes.
+- `kodi_setting_set` accepts one setting and one JSON value. It rejects unknown, read-only, unsafe, and sensitive IDs before mutation; rejects silent string-to-boolean/integer coercion; enforces numeric range and exact step, finite numbers, allowlisted enum/select values, and bounded control-free strings; performs at most one `Settings.SetSettingValue`; then reads the setting again and succeeds only when the observed value matches the request.
+- Setting writes are deliberately conservative: no batch operation, arbitrary setting key, addon setting, path/source administration, credential or token access, network-service enabling, repository/security change, reset, or generic JSON-RPC mutation is exposed. Sensitive-looking IDs are excluded and values containing credentials, URLs with userinfo, filesystem/share paths, or control characters fail closed without being returned.
+- `filelists.showextensions`, `lookandfeel.skinzoom`, `locale.country`, and `subtitles.style` are writable on Kodi 19–22. `subtitles.marginvertical` is writable only on Kodi 20–22 because Kodi 19 does not expose that number setting. `filelists.showhidden` and `videoplayer.adjustrefreshrate` are readable but intentionally not writable.
+- Read-only `Settings.GetSettings` metadata calls may use the transport's bounded read retry. `Settings.SetSettingValue` is never automatically retried, and the MCP mutation advertises neither read-only nor idempotent behavior.
+
+Discover and change a setting safely:
+```json
+{"tool":"kodi_settings_list","arguments":{"writable":true,"limit":10}}
+{"tool":"kodi_setting_get","arguments":{"setting_id":"filelists.showextensions"}}
+{"tool":"kodi_setting_set","arguments":{"setting_id":"filelists.showextensions","value":false}}
+```
+Use the returned `before` value to restore the setting with a second explicit call when performing a temporary administration or acceptance workflow.
+
 Playback helpers:
 - `kodi_player_active` returns active Kodi players.
 - `kodi_player_item` returns the current item for a player.

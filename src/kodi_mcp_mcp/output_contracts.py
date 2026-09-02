@@ -434,6 +434,78 @@ _MUSIC_BROWSE_DATA = {
     "additionalProperties": False,
 }
 
+_SETTING_POLICY_ITEM = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "label": {"type": "string"},
+        "help": {"type": "string"},
+        "section": {"enum": ["interface", "media", "player"]},
+        "category": {"type": "string"},
+        "type": {"enum": ["boolean", "integer", "number", "string"]},
+        "readable": {"const": True},
+        "writable": {"type": "boolean"},
+        "mutation_unavailable_reason": {"type": ["string", "null"]},
+        "policy": {"const": "explicit_allowlist"},
+        "supported_kodi_major": {
+            "type": "array",
+            "items": {"type": "integer", "minimum": 19, "maximum": 22},
+            "minItems": 1,
+            "maxItems": 4,
+            "uniqueItems": True,
+        },
+        "constraints": {"type": "object"},
+    },
+    "required": [
+        "id", "label", "help", "section", "category", "type", "readable",
+        "writable", "mutation_unavailable_reason", "policy",
+        "supported_kodi_major", "constraints",
+    ],
+    "additionalProperties": False,
+}
+
+_SETTINGS_LIST_DATA = {
+    "type": "object",
+    "properties": {
+        "items": {"type": "array", "items": _SETTING_POLICY_ITEM, "maxItems": 25},
+        "empty": {"type": "boolean"},
+        "pagination": _PAGINATION_DATA,
+    },
+    "required": ["items", "empty", "pagination"],
+    "additionalProperties": False,
+}
+
+_SETTING_DETAILS = deepcopy(_SETTING_POLICY_ITEM)
+_SETTING_DETAILS["properties"].update(
+    {
+        "value": {"type": ["boolean", "integer", "number", "string"]},
+        "default": {"type": ["boolean", "integer", "number", "string"]},
+        "enabled": {"type": "boolean"},
+    }
+)
+_SETTING_DETAILS["required"] += ["value", "default", "enabled"]
+
+_SETTING_GET_DATA = {
+    "type": "object",
+    "properties": {"setting": _SETTING_DETAILS},
+    "required": ["setting"],
+    "additionalProperties": False,
+}
+
+_SETTING_SET_DATA = {
+    "type": "object",
+    "properties": {
+        "setting_id": {"type": "string", "minLength": 1},
+        "before": {"type": ["boolean", "integer", "number", "string"]},
+        "requested": {"type": ["boolean", "integer", "number", "string"]},
+        "after": {"type": ["boolean", "integer", "number", "string"]},
+        "changed": {"type": "boolean"},
+        "verified": {"const": True},
+    },
+    "required": ["setting_id", "before", "requested", "after", "changed", "verified"],
+    "additionalProperties": False,
+}
+
 _ARTIST_ALBUMS_DATA = {
     "type": "object",
     "properties": {
@@ -607,6 +679,9 @@ _DATA_SCHEMAS: dict[str, dict[str, Any]] = {
     "kodi_music_summary": _MUSIC_SUMMARY_DATA,
     "kodi_music_search": _MUSIC_SEARCH_DATA,
     "kodi_music_browse": _MUSIC_BROWSE_DATA,
+    "kodi_settings_list": _SETTINGS_LIST_DATA,
+    "kodi_setting_get": _SETTING_GET_DATA,
+    "kodi_setting_set": _SETTING_SET_DATA,
     "kodi_artist_albums": _ARTIST_ALBUMS_DATA,
     "kodi_album_songs": _ALBUM_SONGS_DATA,
     "kodi_library_search": _LIBRARY_SEARCH_DATA,
@@ -654,6 +729,8 @@ _READ_ONLY = frozenset(
         "kodi_music_summary",
         "kodi_music_search",
         "kodi_music_browse",
+        "kodi_settings_list",
+        "kodi_setting_get",
         "kodi_artist_albums",
         "kodi_album_songs",
         "kodi_library_search",
@@ -678,6 +755,7 @@ _NONDESTRUCTIVE_MUTATIONS = frozenset(
         "kodi_player_pause",
         "kodi_player_stop",
         "artifact_upload_zip",
+        "kodi_setting_set",
     }
 )
 _DESTRUCTIVE_MUTATIONS = frozenset(
