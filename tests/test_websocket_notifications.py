@@ -63,6 +63,22 @@ class _FakeWebSocket:
         await asyncio.Event().wait()
 
 
+class _ClosingWebSocket:
+    """An established socket whose first receive reports a transport close."""
+
+    def __init__(self, exc):
+        self._exc = exc
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def recv(self):
+        raise self._exc
+
+
 async def _run_silent_socket_partial(sample_size, listen_seconds):
     """Drive ``listen_with_trigger`` with a silent socket that delivers fewer
     messages than ``sample_size`` before going quiet.
@@ -518,31 +534,53 @@ def _make_invalid_status(status_code: int):
 
 
 @pytest.mark.parametrize(
-    ("exc", "expected_cause"),
+    ("exc", "expected_code", "expected_cause"),
     [
         pytest.param(
-            ConnectionRefusedError(111, "Connection refused"),
+            ConnectionRefusedError(111, "Connect call failed ('172.27.0.1', 9090)"),
+            "connection_refused",
             _TCP_GUIDANCE,
             id="connection-refused",
         ),
         pytest.param(
             asyncio.TimeoutError(),
+            "connection_timeout",
             "connection to Kodi timed out",
             id="open-timeout",
         ),
         pytest.param(
             socket.gaierror(-2, "Name or service not known"),
+            "name_resolution_failure",
             "DNS/name resolution failure",
             id="dns-failure",
         ),
         pytest.param(
             _make_invalid_status(401),
+            "handshake_auth_failure",
             _AUTH_GUIDANCE,
             id="auth-401-handshake",
         ),
+        pytest.param(
+            _make_invalid_status(500),
+            "handshake_failure",
+            "WebSocket handshake failed",
+            id="http-500-handshake",
+        ),
+        pytest.param(
+            ConnectionResetError(104, "Connection reset by peer"),
+            "network_failure",
+            "WebSocket network transport failed",
+            id="connection-reset",
+        ),
+        pytest.param(
+            RuntimeError("opaque failure"),
+            "transport_failure",
+            "WebSocket transport failed for an unknown reason",
+            id="unknown-transport-failure",
+        ),
     ],
 )
-def test_classify_error_maps_real_failure_categories(exc, expected_cause):
+def test_classify_error_maps_real_failure_categories(exc, expected_code, expected_cause):
     """Each distinct WebSocket failure category the probe can encounter must
     map to operator guidance that names THAT category.
 
@@ -556,8 +594,133 @@ def test_classify_error_maps_real_failure_categories(exc, expected_cause):
     )
 
     probe = WebSocketNotificationProbe(tcp_host="test", tcp_port=9090)
+    assert probe._diagnostic_code(exc) == expected_code
     cause = probe._classify_error(exc)
-    assert cause == expected_cause, (
+    assert expected_cause in cause, (
         f"{type(exc).__name__} (str={str(exc)!r}) classified as {cause!r}; "
-        f"expected {expected_cause!r}"
+        f"expected guidance containing {expected_cause!r}"
     )
+
+
+def test_established_connection_closure_is_truthful_interruption(monkeypatch):
+    """A lost established socket is not evidence of a disabled service or bad port."""
+    import kodi_mcp_server.transport.websocket_notifications as ws_mod
+    from websockets.exceptions import ConnectionClosedError
+
+    monkeypatch.setattr(
+        ws_mod.websockets,
+        "connect",
+        lambda url, **kwargs: _ClosingWebSocket(ConnectionClosedError(None, None)),
+    )
+    probe = ws_mod.WebSocketNotificationProbe(tcp_host="test", tcp_port=9090)
+
+    loop = asyncio.new_event_loop()
+    try:
+        response = loop.run_until_complete(probe.listen(sample_size=1, listen_seconds=2))
+    finally:
+        loop.close()
+
+    assert response.error == "no close frame received or sent"
+    assert response.result is not None
+    assert response.result["connected"] is False
+    assert response.result["diagnostic_code"] == "connection_interrupted"
+    guidance = response.result["likely_cause"].lower()
+    assert "route/target change" in guidance
+    assert "disabled" not in guidance
+    assert "wrong" not in guidance
+    assert "intentional" not in guidance
+
+
+def test_diagnostic_redacts_websocket_credentials_and_query(monkeypatch):
+    """The real endpoint is used to connect but secrets never enter result diagnostics."""
+    import kodi_mcp_server.transport.websocket_notifications as ws_mod
+    from websockets.exceptions import ConnectionClosedError
+
+    private_url = "ws://operator:secret@example.test:9090/jsonrpc?token=private"
+    observed_urls = []
+
+    def fake_connect(url, **kwargs):
+        observed_urls.append(url)
+        return _ClosingWebSocket(ConnectionClosedError(None, None))
+
+    monkeypatch.setattr(ws_mod.websockets, "connect", fake_connect)
+    probe = ws_mod.WebSocketNotificationProbe(
+        tcp_host="unused",
+        websocket_url=private_url,
+    )
+
+    loop = asyncio.new_event_loop()
+    try:
+        response = loop.run_until_complete(probe.listen(sample_size=1, listen_seconds=2))
+    finally:
+        loop.close()
+
+    assert observed_urls == [private_url]
+    assert response.result is not None
+    assert response.result["websocket_url"] == "ws://example.test:9090/jsonrpc"
+    serialized = json.dumps(response.to_dict())
+    assert "operator" not in serialized
+    assert "secret" not in serialized
+    assert "private" not in serialized
+
+
+def test_fresh_sample_recovers_after_interrupted_connection(monkeypatch):
+    """An interrupted call retains no socket state that can poison the next sample."""
+    import kodi_mcp_server.transport.websocket_notifications as ws_mod
+    from websockets.exceptions import ConnectionClosedError
+
+    expected_message = {"method": "Player.OnPlay", "params": {}}
+    connections = [
+        _ClosingWebSocket(ConnectionClosedError(None, None)),
+        _FakeWebSocket([json.dumps(expected_message)]),
+    ]
+    monkeypatch.setattr(
+        ws_mod.websockets,
+        "connect",
+        lambda url, **kwargs: connections.pop(0),
+    )
+    probe = ws_mod.WebSocketNotificationProbe(tcp_host="test", tcp_port=9090)
+
+    loop = asyncio.new_event_loop()
+    try:
+        interrupted = loop.run_until_complete(probe.listen(sample_size=1, listen_seconds=2))
+        recovered = loop.run_until_complete(probe.listen(sample_size=1, listen_seconds=2))
+    finally:
+        loop.close()
+
+    assert interrupted.error == "no close frame received or sent"
+    assert interrupted.result is not None
+    assert interrupted.result["diagnostic_code"] == "connection_interrupted"
+    assert recovered.error is None
+    assert recovered.result is not None
+    assert recovered.result["connected"] is True
+    assert recovered.result["messages"] == [expected_message]
+    assert "diagnostic_code" not in recovered.result
+
+
+def test_repeated_refusal_remains_visible_without_false_recovery(monkeypatch):
+    """A persistently unavailable route stays failed on every fresh attempt."""
+    import kodi_mcp_server.transport.websocket_notifications as ws_mod
+
+    def refuse_connection(url, **kwargs):
+        raise ConnectionRefusedError(111, "Connection refused")
+
+    monkeypatch.setattr(ws_mod.websockets, "connect", refuse_connection)
+    probe = ws_mod.WebSocketNotificationProbe(tcp_host="test", tcp_port=9090)
+
+    loop = asyncio.new_event_loop()
+    try:
+        responses = [
+            loop.run_until_complete(probe.listen(sample_size=1, listen_seconds=2))
+            for _ in range(2)
+        ]
+    finally:
+        loop.close()
+
+    for response in responses:
+        assert response.error == "[Errno 111] Connection refused"
+        assert response.result is not None
+        assert response.result["connected"] is False
+        assert response.result["diagnostic_code"] == "connection_refused"
+        assert response.result["likely_cause"] == _TCP_GUIDANCE
+        assert "recovered" not in response.result
