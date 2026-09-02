@@ -7,7 +7,7 @@ Tools for executing Kodi JSON-RPC commands
 import uuid
 from typing import Optional
 
-from ..models.messages import RequestMessage, ResponseMessage
+from ..models.messages import ErrorType, RequestMessage, ResponseMessage
 from ..transport.base import Transport
 
 
@@ -70,12 +70,27 @@ class JsonRpcTool:
         return await self.execute_jsonrpc(method="Player.GetActivePlayers")
 
     async def open_library_item(self, media_type: str, item_id: int) -> ResponseMessage:
-        """Start a Kodi library movie or episode by its library id."""
-        id_key = "movieid" if media_type == "movie" else "episodeid"
-        return await self.execute_jsonrpc(
+        """Start a Kodi library movie, episode, album, or song by library id."""
+        id_key = {
+            "movie": "movieid",
+            "episode": "episodeid",
+            "album": "albumid",
+            "song": "songid",
+        }[media_type]
+        response = await self.execute_jsonrpc(
             method="Player.Open",
             params={"item": {id_key: item_id}},
         )
+        if media_type in {"album", "song"} and response.error_code == -32602:
+            return ResponseMessage(
+                request_id=response.request_id,
+                result=None,
+                error=f"{media_type} {item_id} was not found",
+                error_type=ErrorType.NOT_FOUND,
+                error_code=response.error_code,
+                latency_ms=response.latency_ms,
+            )
+        return response
 
     async def execute_input_action(self, action: str) -> ResponseMessage:
         """Execute a Kodi input action."""

@@ -33,6 +33,12 @@ class _FakeJsonRpc:
 
     async def open_library_item(self, media_type: str, item_id: int):
         self.calls.append(("open_library_item", {"media_type": media_type, "item_id": item_id}))
+        self.active_players = [
+            {
+                "playerid": 0 if media_type in {"song", "album"} else 1,
+                "type": "audio" if media_type in {"song", "album"} else "video",
+            }
+        ]
         return ResponseMessage(request_id="fake-open", result="OK", error=None)
 
     async def seek_player_to_seconds(self, playerid: int = 1, seconds: float = 0):
@@ -53,6 +59,9 @@ class _FakeJsonRpc:
 
     async def stop_player(self, playerid: int = 1):
         self.calls.append(("stop_player", {"playerid": playerid}))
+        self.active_players = [
+            player for player in self.active_players if player.get("playerid") != playerid
+        ]
         return ResponseMessage(
             request_id="fake-stop",
             result="OK",
@@ -75,16 +84,56 @@ class _RecordingTransport:
 
 
 @pytest.mark.asyncio
-async def test_open_library_movie_uses_exact_player_open_request():
+@pytest.mark.parametrize(
+    ("media_type", "item_id", "id_key"),
+    [
+        ("movie", 7, "movieid"),
+        ("episode", 8, "episodeid"),
+        ("album", 9, "albumid"),
+        ("song", 10, "songid"),
+    ],
+)
+async def test_open_library_item_uses_exact_typed_player_open_request(
+    media_type, item_id, id_key
+):
     transport = _RecordingTransport(ResponseMessage(request_id="open", result="OK", error=None))
 
-    response = await JsonRpcTool(transport).open_library_item(media_type="movie", item_id=7)
+    response = await JsonRpcTool(transport).open_library_item(
+        media_type=media_type, item_id=item_id
+    )
 
     assert response.error is None
     assert len(transport.requests) == 1
     request = transport.requests[0]
     assert request.command == "execute_jsonrpc"
-    assert request.args == {"method": "Player.Open", "params": {"item": {"movieid": 7}}}
+    assert request.args == {
+        "method": "Player.Open",
+        "params": {"item": {id_key: item_id}},
+    }
+
+
+@pytest.mark.asyncio
+async def test_missing_music_item_is_normalized_without_changing_video_errors():
+    missing = ResponseMessage(
+        request_id="missing",
+        result=None,
+        error="jsonrpc error -32602: Invalid params.",
+        error_type=ErrorType.SERVER_ERROR,
+        error_code=-32602,
+    )
+
+    song = await JsonRpcTool(_RecordingTransport(missing)).open_library_item(
+        media_type="song", item_id=999999
+    )
+    movie = await JsonRpcTool(_RecordingTransport(missing)).open_library_item(
+        media_type="movie", item_id=999999
+    )
+
+    assert song.error == "song 999999 was not found"
+    assert song.error_type == ErrorType.NOT_FOUND
+    assert song.error_code == -32602
+    assert movie.error == "jsonrpc error -32602: Invalid params."
+    assert movie.error_type == ErrorType.SERVER_ERROR
 
 
 @pytest.mark.asyncio
@@ -119,7 +168,7 @@ async def test_player_open_transport_error_uses_standard_envelope():
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "arguments, expected_error",
-    [({}, "media_type"), ({"media_type": "song", "item_id": 7}, "media_type"), ({"media_type": "movie"}, "item_id")],
+    [({}, "media_type"), ({"media_type": "artist", "item_id": 7}, "media_type"), ({"media_type": "movie"}, "item_id")],
 )
 async def test_player_open_rejects_invalid_or_missing_input(arguments, expected_error):
     from kodi_mcp_mcp.server_core import build_mcp_server
@@ -197,12 +246,143 @@ async def test_player_tools_are_listed_and_dispatch_through_jsonrpc():
 
 
 @pytest.mark.asyncio
+async def test_discovered_song_uses_audio_player_zero_without_regressing_video_player_one():
+    from kodi_mcp_mcp.server_core import build_mcp_server
+    from mcp.types import CallToolRequestParams
+
+    jsonrpc = _FakeJsonRpc()
+    server, _ = build_mcp_server(
+        {"bridge": _FakeBridge(), "jsonrpc": jsonrpc, "notifications": None}
+    )
+    call = server.get_request_handler("tools/call").handler
+
+    song_open = await call(
+        None,
+        CallToolRequestParams(
+            name="kodi_player_open",
+            arguments={"media_type": "song", "item_id": 33},
+        ),
+    )
+    active_audio = await call(
+        None, CallToolRequestParams(name="kodi_player_active", arguments={})
+    )
+    item_audio = await call(
+        None,
+        CallToolRequestParams(name="kodi_player_item", arguments={"playerid": 0}),
+    )
+    await call(
+        None,
+        CallToolRequestParams(
+            name="kodi_player_seek", arguments={"playerid": 0, "seconds": 5}
+        ),
+    )
+    await call(
+        None,
+        CallToolRequestParams(name="kodi_player_pause", arguments={"playerid": 0}),
+    )
+    stop_audio = await call(
+        None,
+        CallToolRequestParams(
+            name="kodi_player_stop",
+            arguments={
+                "playerid": 0,
+                "verify_attempts": 1,
+                "verify_delay_ms": 0,
+                "stable_checks": 1,
+            },
+        ),
+    )
+
+    assert song_open.is_error is False
+    assert _tool_payload(active_audio)["data"] == [
+        {"playerid": 0, "type": "audio"}
+    ]
+    assert _tool_payload(item_audio)["data"]["playerid"] == 0
+    assert _tool_payload(stop_audio)["data"]["stopped"] is True
+    assert ("seek_player_to_seconds", {"playerid": 0, "seconds": 5.0}) in jsonrpc.calls
+    assert ("pause_player", {"playerid": 0}) in jsonrpc.calls
+    assert ("stop_player", {"playerid": 0}) in jsonrpc.calls
+
+    movie_open = await call(
+        None,
+        CallToolRequestParams(
+            name="kodi_player_open",
+            arguments={"media_type": "movie", "item_id": 7},
+        ),
+    )
+    active_video = await call(
+        None, CallToolRequestParams(name="kodi_player_active", arguments={})
+    )
+    assert movie_open.is_error is False
+    assert _tool_payload(active_video)["data"] == [
+        {"playerid": 1, "type": "video"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_invalid_music_id_fails_cleanly_and_next_valid_open_recovers():
+    from kodi_mcp_mcp.server_core import build_mcp_server
+    from mcp.types import CallToolRequestParams
+
+    jsonrpc = _FakeJsonRpc()
+    outcomes = [
+        ResponseMessage(
+            request_id="missing-song",
+            result=None,
+            error="song 999999 was not found",
+            error_type=ErrorType.NOT_FOUND,
+            error_code=-32602,
+        ),
+        ResponseMessage(request_id="valid-song", result="OK", error=None),
+    ]
+
+    async def open_with_outcomes(media_type: str, item_id: int):
+        jsonrpc.calls.append(
+            ("open_library_item", {"media_type": media_type, "item_id": item_id})
+        )
+        return outcomes.pop(0)
+
+    jsonrpc.open_library_item = open_with_outcomes
+    server, _ = build_mcp_server(
+        {"bridge": _FakeBridge(), "jsonrpc": jsonrpc, "notifications": None}
+    )
+    call = server.get_request_handler("tools/call").handler
+
+    missing = await call(
+        None,
+        CallToolRequestParams(
+            name="kodi_player_open",
+            arguments={"media_type": "song", "item_id": 999999},
+        ),
+    )
+    valid = await call(
+        None,
+        CallToolRequestParams(
+            name="kodi_player_open",
+            arguments={"media_type": "song", "item_id": 33},
+        ),
+    )
+
+    assert missing.is_error is True
+    assert _tool_payload(missing)["error_type"] == "not_found"
+    assert _tool_payload(missing)["error_code"] == -32602
+    assert valid.is_error is False
+    assert _tool_payload(valid)["data"] == "OK"
+
+
+@pytest.mark.asyncio
 async def test_player_stop_fails_when_player_remains_active():
     from kodi_mcp_mcp.server_core import build_mcp_server
     from mcp.types import CallToolRequestParams
 
     jsonrpc = _FakeJsonRpc()
     jsonrpc.active_players = [{"playerid": 1, "type": "video"}]
+
+    async def sticky_stop(playerid: int = 1):
+        jsonrpc.calls.append(("stop_player", {"playerid": playerid}))
+        return ResponseMessage(request_id="fake-stop", result="OK", error=None)
+
+    jsonrpc.stop_player = sticky_stop
     server, _ = build_mcp_server({"bridge": _FakeBridge(), "jsonrpc": jsonrpc, "notifications": None})
 
     resp = await server.get_request_handler("tools/call").handler(None,

@@ -232,6 +232,24 @@ _LIBRARY_SUMMARY_DATA = {
     "additionalProperties": False,
 }
 
+_MUSIC_SUMMARY_DATA = {
+    "type": "object",
+    "properties": {
+        "counts": {
+            "type": "object",
+            "properties": {
+                "artists": {"type": "integer", "minimum": 0},
+                "albums": {"type": "integer", "minimum": 0},
+                "songs": {"type": "integer", "minimum": 0},
+            },
+            "required": ["artists", "albums", "songs"],
+            "additionalProperties": False,
+        }
+    },
+    "required": ["counts"],
+    "additionalProperties": False,
+}
+
 _PAGINATION_DATA = {
     "type": "object",
     "properties": {
@@ -277,6 +295,166 @@ _LIBRARY_ITEM_DATA = {
         "date_added",
         "artwork",
     ],
+    "additionalProperties": False,
+}
+
+_MUSIC_ARTIST_DATA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "integer", "minimum": 0},
+        "media_type": {"const": "artist"},
+        "name": {"type": "string"},
+        "genres": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
+        "is_album_artist": {"type": ["boolean", "null"]},
+        "artwork": {
+            "type": "object",
+            "maxProperties": 3,
+            "additionalProperties": {"type": "string"},
+        },
+    },
+    "required": ["id", "media_type", "name", "genres", "is_album_artist", "artwork"],
+    "additionalProperties": False,
+}
+
+_MUSIC_ALBUM_DATA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "integer", "minimum": 0},
+        "media_type": {"const": "album"},
+        "title": {"type": "string"},
+        "artists": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
+        "artist_ids": {
+            "type": "array",
+            "items": {"type": "integer", "minimum": 0},
+            "maxItems": 20,
+        },
+        "year": {"type": ["integer", "null"], "minimum": 0},
+        "genres": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
+        "playcount": {"type": "integer", "minimum": 0},
+        "compilation": {"type": "boolean"},
+        "duration_seconds": {"type": ["integer", "null"], "minimum": 0},
+        "artwork": {
+            "type": "object",
+            "maxProperties": 3,
+            "additionalProperties": {"type": "string"},
+        },
+    },
+    "required": [
+        "id", "media_type", "title", "artists", "artist_ids", "year", "genres",
+        "playcount", "compilation", "duration_seconds", "artwork",
+    ],
+    "additionalProperties": False,
+}
+
+_MUSIC_SONG_DATA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "integer", "minimum": 0},
+        "media_type": {"const": "song"},
+        "title": {"type": "string"},
+        "artists": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
+        "album": _NULLABLE_STRING,
+        "album_id": {"type": ["integer", "null"], "minimum": 0},
+        "track": {"type": ["integer", "null"], "minimum": 0},
+        "disc": {"type": ["integer", "null"], "minimum": 0},
+        "duration_seconds": {"type": ["integer", "null"], "minimum": 0},
+        "playcount": {"type": "integer", "minimum": 0},
+        "year": {"type": ["integer", "null"], "minimum": 0},
+        "genres": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
+        "artwork": {
+            "type": "object",
+            "maxProperties": 3,
+            "additionalProperties": {"type": "string"},
+        },
+    },
+    "required": [
+        "id", "media_type", "title", "artists", "album", "album_id", "track",
+        "disc", "duration_seconds", "playcount", "year", "genres", "artwork",
+    ],
+    "additionalProperties": False,
+}
+
+_MUSIC_ITEM_DATA = {
+    "oneOf": [_MUSIC_ARTIST_DATA, _MUSIC_ALBUM_DATA, _MUSIC_SONG_DATA]
+}
+
+_MUSIC_SEARCH_DATA = {
+    "type": "object",
+    "properties": {
+        "query": {"type": "string", "minLength": 1},
+        "media_type": {"enum": ["artist", "album", "song"]},
+        "search": {
+            "type": "object",
+            "properties": {
+                "field": {"enum": ["artist", "album", "title"]},
+                "operator": {"const": "contains"},
+            },
+            "required": ["field", "operator"],
+            "additionalProperties": False,
+        },
+        "items": {"type": "array", "items": _MUSIC_ITEM_DATA, "maxItems": 50},
+        "empty": {"type": "boolean"},
+        "pagination": _PAGINATION_DATA,
+    },
+    "required": ["query", "media_type", "search", "items", "empty", "pagination"],
+    "additionalProperties": False,
+}
+
+_MUSIC_GENRE_DATA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "integer", "minimum": 0},
+        "media_type": {"const": "genre"},
+        "title": {"type": "string"},
+        "artwork": {
+            "type": "object",
+            "maxProperties": 3,
+            "additionalProperties": {"type": "string"},
+        },
+    },
+    "required": ["id", "media_type", "title", "artwork"],
+    "additionalProperties": False,
+}
+
+_MUSIC_BROWSE_DATA = {
+    "type": "object",
+    "properties": {
+        "category": {"enum": ["recent_albums", "recent_songs", "genres"]},
+        "items": {
+            "type": "array",
+            "items": {
+                "oneOf": [_MUSIC_ALBUM_DATA, _MUSIC_SONG_DATA, _MUSIC_GENRE_DATA]
+            },
+            "maxItems": 50,
+        },
+        "empty": {"type": "boolean"},
+        "pagination": _PAGINATION_DATA,
+    },
+    "required": ["category", "items", "empty", "pagination"],
+    "additionalProperties": False,
+}
+
+_ARTIST_ALBUMS_DATA = {
+    "type": "object",
+    "properties": {
+        "artist": _MUSIC_ARTIST_DATA,
+        "items": {"type": "array", "items": _MUSIC_ALBUM_DATA, "maxItems": 50},
+        "empty": {"type": "boolean"},
+        "pagination": _PAGINATION_DATA,
+    },
+    "required": ["artist", "items", "empty", "pagination"],
+    "additionalProperties": False,
+}
+
+_ALBUM_SONGS_DATA = {
+    "type": "object",
+    "properties": {
+        "album": _MUSIC_ALBUM_DATA,
+        "items": {"type": "array", "items": _MUSIC_SONG_DATA, "maxItems": 50},
+        "empty": {"type": "boolean"},
+        "pagination": _PAGINATION_DATA,
+    },
+    "required": ["album", "items", "empty", "pagination"],
     "additionalProperties": False,
 }
 
@@ -426,6 +604,11 @@ _DATA_SCHEMAS: dict[str, dict[str, Any]] = {
     "addon_project_map_status": _OBJECT,
     "addon_source_tree": _SOURCE_TREE_DATA,
     "kodi_library_summary": _LIBRARY_SUMMARY_DATA,
+    "kodi_music_summary": _MUSIC_SUMMARY_DATA,
+    "kodi_music_search": _MUSIC_SEARCH_DATA,
+    "kodi_music_browse": _MUSIC_BROWSE_DATA,
+    "kodi_artist_albums": _ARTIST_ALBUMS_DATA,
+    "kodi_album_songs": _ALBUM_SONGS_DATA,
     "kodi_library_search": _LIBRARY_SEARCH_DATA,
     "kodi_library_browse": _LIBRARY_BROWSE_DATA,
     "kodi_tv_seasons": _TV_SEASONS_DATA,
@@ -468,6 +651,11 @@ _READ_ONLY = frozenset(
         "addon_project_map_status",
         "addon_source_tree",
         "kodi_library_summary",
+        "kodi_music_summary",
+        "kodi_music_search",
+        "kodi_music_browse",
+        "kodi_artist_albums",
+        "kodi_album_songs",
         "kodi_library_search",
         "kodi_library_browse",
         "kodi_tv_seasons",
