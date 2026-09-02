@@ -50,8 +50,16 @@ Ignored local files include `.env`, `.env.*`, local backups, logs, caches, build
 First MCP checks:
 
 1. `kodi_status`
-2. `bridge_health`
-3. `bridge_runtime_info`
+2. `bridge_bootstrap_status`
+3. `bridge_health`
+4. `bridge_runtime_info`
+
+`bridge_bootstrap_status` is the read-only bridge-absent entrypoint. With healthy
+stock JSON-RPC and no bridge, it returns the exact validated ZIP identity and an
+explicit one-time Kodi UI action. Kodi MCP does not alter Unknown Sources or claim
+a fully remote ZIP install. After the user installs/configures the service, the
+same tool requires exact version, source Git SHA, and source fingerprint before
+handing off to existing managed deployment.
 
 GUI MCP tools:
 

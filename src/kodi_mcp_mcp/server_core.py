@@ -39,12 +39,19 @@ from mcp.types import (
 )
 
 from kodi_mcp_server import __version__
+from kodi_mcp_server.bridge_bootstrap import inspect_bootstrap_state
 from kodi_mcp_server.composition import (
     build_bridge_tool,
     build_jsonrpc_tool,
     build_notification_probe,
 )
-from kodi_mcp_server.config import KODI_BRIDGE_BASE_URL, KODI_JSONRPC_URL, VISION_ENABLED
+from kodi_mcp_server.config import (
+    BRIDGE_BOOTSTRAP_MANIFEST_PATH,
+    KODI_BRIDGE_BASE_URL,
+    KODI_JSONRPC_URL,
+    REPO_BASE_URL,
+    VISION_ENABLED,
+)
 from kodi_mcp_server.managed_addons import (
     managed_addon_build_publish_and_stage,
     managed_addon_get,
@@ -883,6 +890,19 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 },
             ),
             Tool(
+                name="bridge_bootstrap_status",
+                description=(
+                    "Classify the secure first-install state for service.kodi_mcp using stock "
+                    "Kodi JSON-RPC and the configured authoritative bridge bundle. This tool is "
+                    "read-only and returns explicit user action when Kodi requires it."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
                 name="bridge_log_tail",
                 description="Read the last N lines of the Kodi log via the bridge (primary dev-loop debugging signal).",
                 inputSchema={
@@ -1625,6 +1645,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
             "bridge_health",
             "bridge_status",
             "bridge_runtime_info",
+            "bridge_bootstrap_status",
             "bridge_log_tail",
             "bridge_log_markers",
             "bridge_log_recent_errors",
@@ -2098,6 +2119,13 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     raw_result = await runtime["bridge"].get_bridge_status()
                 elif tool_name == "bridge_runtime_info":
                     raw_result = await runtime["bridge"].get_bridge_runtime_info()
+                elif tool_name == "bridge_bootstrap_status":
+                    raw_result = await inspect_bootstrap_state(
+                        jsonrpc_tool=runtime["jsonrpc"],
+                        bridge_tool=runtime["bridge"],
+                        manifest_path=BRIDGE_BOOTSTRAP_MANIFEST_PATH,
+                        base_url=REPO_BASE_URL,
+                    )
                 elif tool_name in {"bridge_log_tail", "bridge_log_markers"}:
                     args = params.arguments or {}
                     if not isinstance(args, dict):

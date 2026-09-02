@@ -32,14 +32,48 @@ REPO_BASE_URL=http://<server-host>:8010
 .venv/bin/uvicorn kodi_mcp_server.main:app --host 0.0.0.0 --port 8010
 ```
 
-**First-time onboarding (repo install)**
-1) Install + enable the Kodi bridge addon: `service.kodi_mcp`
-2) Set the shared token in Kodi addon settings (**service.kodi_mcp → Kodi MCP → MCP shared token**)
-3) Start this server
-4) Install + launch the Kodi setup helper addon: `script.kodi_mcp_setup`
-5) In **Kodi MCP Setup**, confirm the server URL and choose **Prepare repository add-on zip**
-6) Choose **Open Install from zip file**, then select `repository.kodi-mcp-latest.zip`
-7) For a brand-new target addon, use Kodi UI: **Add-ons → Install from repository → Kodi MCP Repository → target addon → Install**
+**First-time bridge bootstrap (ordinary remote user)**
+
+Kodi 19–22 do not expose a stock JSON-RPC method that installs an arbitrary ZIP,
+adds a repository/source, or executes Kodi's `InstallAddon`/`InstallFromZip`
+built-ins. A bridge-absent target therefore requires a one-time user-mediated
+Kodi flow; Kodi MCP does not bypass that security boundary or silently enable
+Unknown Sources.
+
+1) The server operator provides the official `service.kodi_mcp` release ZIP and
+matching `bridge-bootstrap.json`. In a source checkout, the release maintainer can
+prepare the exact authoritative bundle without contacting Kodi:
+```bash
+.venv/bin/python scripts/prepare_bridge_bootstrap.py --source /path/to/kodi_mcp_addon
+```
+2) Set `REPO_BASE_URL` to the HTTPS URL Kodi/users can reach. The default manifest
+path is `addon/bridge-bootstrap.json`; override it with
+`KODI_MCP_BRIDGE_BOOTSTRAP_MANIFEST` when needed.
+3) Start the server and call `bridge_bootstrap_status`.
+4) If it returns `state=user_action_required`, compare the returned SHA-256, make
+that exact ZIP visible to Kodi (download on the Kodi device or use a user-approved
+network source), then use **Add-ons → Install from zip file**. Review Kodi's Unknown
+Sources warning yourself; MCP will not change the setting.
+5) Configure **service.kodi_mcp → Kodi MCP → MCP shared token** to match
+`KODI_BRIDGE_TOKEN`, then call `bridge_bootstrap_status` again.
+6) Do not treat installation as complete until the result is
+`state=already_installed`, `verified=true`, and `next_stage=managed_deployment`.
+This checks Kodi metadata plus the running bridge's exact version, source Git SHA,
+and source fingerprint. A wrong build is routed to the existing authoritative
+update/normalization flow instead of being accepted.
+
+The bootstrap status operation is read-only and idempotent. Cancellation,
+interrupted installation, a disabled/unconfigured service, an unavailable bundle,
+or an identity mismatch remains an explicit non-success state on the next call.
+Future bridge upgrades use the existing authoritative update flow; the one-time ZIP
+step is not repeated.
+
+**First-time repository/managed-addon onboarding (after bridge verification)**
+1) Start this server and confirm `bridge_bootstrap_status` is verified.
+2) Install + launch the Kodi setup helper addon: `script.kodi_mcp_setup`.
+3) In **Kodi MCP Setup**, confirm the server URL and choose **Prepare repository add-on zip**.
+4) Choose **Open Install from zip file**, then select `repository.kodi-mcp-latest.zip`.
+5) For a brand-new target addon, use Kodi UI: **Add-ons → Install from repository → Kodi MCP Repository → target addon → Install**.
 
 **Managed addon loop (after repo is installed in Kodi)**
 1) Register local addon: `managed_addon_register`
@@ -51,12 +85,17 @@ Retry only if `verification.can_retry == true`
 
 ## Kodi addon requirement
 
-- This MCP server requires the Kodi bridge addon to be installed and enabled in Kodi:
+- Rich bridge-backed control requires `service.kodi_mcp` to be installed, enabled,
+  and configured with the shared token:
   https://github.com/kcook98765/kodi_mcp_addon
-- The addon exposes the HTTP bridge used by this server, including GUI action/screenshot helpers for guided first-install checks.
-- After the addon token is configured and this server starts, the server can register with the bridge and stage repository content for the managed update loop.
-- Without the addon, the MCP server cannot talk to Kodi.
-- Kodi-resident bridge addon source is owned by the standalone `kodi_mcp_addon` repo, not this server repo.
+- Before the bridge exists, Kodi MCP can still use stock JSON-RPC for status and
+  `bridge_bootstrap_status`; bridge-dependent tools remain unavailable.
+- The server exposes only the validated configured bridge bundle at
+  `/bootstrap/manifest.json` and `/bootstrap/service.kodi_mcp.zip`.
+- After the one-time user-mediated ZIP install, the bridge supplies GUI, health,
+  staging, and authoritative update capabilities.
+- Kodi-resident bridge addon source is owned by the standalone `kodi_mcp_addon`
+  repo, not this server repo.
 
 ## Connection modes
 
@@ -159,14 +198,15 @@ Optional:
 - `KODI_JSONRPC_USERNAME`, `KODI_JSONRPC_PASSWORD`
 - `KODI_TIMEOUT`
 - `MCP_API_KEY` (remote MCP only)
-- `REPO_BASE_URL` for repo and screenshot URLs visible to Kodi/clients on other hosts
+- `REPO_BASE_URL` for repo, first-install bridge bundle, and screenshot URLs visible to Kodi/clients on other hosts
+- `KODI_MCP_BRIDGE_BOOTSTRAP_MANIFEST` for the pinned bridge bundle manifest (default `addon/bridge-bootstrap.json`)
 - `KODI_SCREENSHOT_STORE_DIR`, `KODI_SCREENSHOT_RETENTION_SECONDS`, `KODI_SCREENSHOT_MAX_FILES`
 - `KODI_VISION_MODEL_URL`, `KODI_VISION_MODEL_NAME`; when unset, screenshot capture remains available but vision-analysis tools are not exposed
 
 For a one-host setup, these URLs may all use `localhost`. For a split-host setup, use hostnames or IPs that are reachable from the machine that consumes each URL:
 
-- Kodi must reach `REPO_BASE_URL` for repository files.
-- The server must reach `KODI_JSONRPC_URL` and `KODI_BRIDGE_BASE_URL`.
+- Kodi/users must reach `REPO_BASE_URL` for repository files and the one-time bridge bundle.
+- The server must reach `KODI_JSONRPC_URL`; bridge-backed tools additionally require `KODI_BRIDGE_BASE_URL`.
 - Remote MCP clients must reach `http://<server-host>:8010/mcp` and screenshot URLs returned under `/screenshots/`.
 
 Local development can use a repo-root `.env` file copied from `.env.example`.
@@ -177,8 +217,9 @@ Process environment values take precedence over `.env` values. Keep `.env`,
 
 Once connected, try these MCP tools first:
 1. `kodi_status`
-2. `bridge_health`
-3. `bridge_runtime_info`
+2. `bridge_bootstrap_status` (works through stock JSON-RPC when the bridge is absent)
+3. `bridge_health`
+4. `bridge_runtime_info`
 
 GUI helpers:
 - `kodi_gui_action` sends basic navigation actions (`up`, `down`, `left`, `right`, `select`, `back`, `home`, `context`, `info`) and the cleanup action `stop`.
@@ -295,13 +336,14 @@ Key `verification.apply_status` values:
 Operator rule: If the loop cannot complete, run `managed_addon_validate_state` and follow its output.
 
 ### Kodi-side manual step (required)
-1) Install + enable **Kodi MCP Service**
-2) Configure token:
+1) Follow `bridge_bootstrap_status` for the one-time exact bridge ZIP install; do not bypass Kodi's Unknown Sources warning.
+2) Configure the token:
    **Kodi → Add-ons → Services → Kodi MCP Service → Configure → Kodi MCP → MCP shared token**
-3) Install + enable **Kodi MCP Repository** (`repository.kodi-mcp`) once if it is missing
-4) For each brand-new target addon:
+3) Re-run `bridge_bootstrap_status` and require exact identity verification.
+4) Install + enable **Kodi MCP Repository** (`repository.kodi-mcp`) once if it is missing
+5) For each brand-new target addon:
    **Kodi → Add-ons → Install from repository → Kodi MCP Repository → target addon → Install**
-5) Rerun the managed addon apply/update workflow after the first install
+6) Rerun the managed addon apply/update workflow after the first install
 
 Note: a staged `dev-repo.zip` is repository content used by the server/bridge refresh loop; it is not itself an installable Kodi add-on zip.
 
@@ -350,11 +392,12 @@ WantedBy=multi-user.target
 ## Troubleshooting
 
 ### Kodi bridge unreachable
-Symptom: `apply_status = bridge_unreachable`; `managed_addon_validate_state` shows `reachable=false`.
+Symptom: `kodi_status` reports JSON-RPC `ok` but bridge `error`, or managed apply reports `bridge_unreachable`.
 Action:
-- Start Kodi
-- Ensure `service.kodi_mcp` is enabled
-- Verify `KODI_BRIDGE_BASE_URL` and token match
+- Run `bridge_bootstrap_status` first.
+- If `installed=false`, follow its one-time user action and exact artifact identity.
+- If `installed=true`, ensure the service is enabled and its token matches.
+- Never enable Unknown Sources or install an unverified same-ID ZIP automatically.
 
 ### Repo not installed (first-time setup)
 Symptom: `apply_status = repo_not_installed`; `dev_setup_available` may be true.

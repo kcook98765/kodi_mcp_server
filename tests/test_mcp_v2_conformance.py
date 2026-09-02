@@ -33,6 +33,7 @@ _EXPECTED_TOOLS = {
     "bridge_health",
     "bridge_status",
     "bridge_runtime_info",
+    "bridge_bootstrap_status",
     "bridge_log_tail",
     "bridge_log_markers",
     "bridge_log_recent_errors",
