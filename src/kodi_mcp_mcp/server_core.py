@@ -36,6 +36,13 @@ from mcp.types import (
     PaginatedRequestParams,
     TextContent,
     Tool,
+    ToolAnnotations,
+)
+
+from kodi_mcp_mcp.output_contracts import (
+    annotation_values_for,
+    apply_output_contract,
+    output_schema_for,
 )
 
 from kodi_mcp_server import __version__
@@ -88,6 +95,27 @@ SCREENSHOT_RETRY_CONDITION = "effectively_uniform_black_home_without_active_medi
 ADDON_ID_PATTERN = r"^(?=.*[a-z0-9])[a-z0-9._@-]+$"
 
 
+def _result_from_envelope(
+    envelope: dict[str, Any], extra_content: list[Any] | None = None
+) -> CallToolResult:
+    """Return compatible text plus schema-validated structured content."""
+
+    rendered_envelope, structured_content = apply_output_contract(envelope)
+    content: list[Any] = [
+        TextContent(
+            type="text",
+            text=json.dumps(rendered_envelope, indent=2, sort_keys=True),
+        )
+    ]
+    if extra_content and rendered_envelope.get("ok"):
+        content.extend(extra_content)
+    return CallToolResult(
+        is_error=not rendered_envelope.get("ok", False),
+        content=content,
+        structured_content=structured_content,
+    )
+
+
 def _addon_id_schema(description: str | None = None) -> dict[str, Any]:
     schema: dict[str, Any] = {
         "type": "string",
@@ -119,10 +147,7 @@ def _invalid_params_result(
         "request_id": None,
         "raw": raw,
     }
-    return CallToolResult(
-        is_error=True,
-        content=[TextContent(type="text", text=json.dumps(envelope, indent=2, sort_keys=True))],
-    )
+    return _result_from_envelope(envelope)
 
 
 def _validate_tool_arguments(
@@ -1633,6 +1658,15 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
             ),
         ]
 
+        tools = [
+            tool.model_copy(
+                update={
+                    "output_schema": output_schema_for(tool.name),
+                    "annotations": ToolAnnotations(**annotation_values_for(tool.name)),
+                }
+            )
+            for tool in tools
+        ]
         return ListToolsResult(tools=tools)
 
     async def _handle_call_tool(ctx, params: CallToolRequestParams) -> CallToolResult:
@@ -1699,11 +1733,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         "request_id": None,
                         "raw": {"arguments": args, "accepted_aliases": ["addonid", "addon_id"]},
                     }
-                    text = json.dumps(envelope, indent=2, sort_keys=True)
-                    return                         CallToolResult(
-                            is_error=True,
-                            content=[TextContent(type="text", text=text)],
-                        )
+                    return _result_from_envelope(envelope)
 
             # Preserve exact normalized missing-arg behavior for bridge_write_log_marker.
             if tool_name == "bridge_write_log_marker":
@@ -1724,11 +1754,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         "request_id": None,
                         "raw": {"arguments": args},
                     }
-                    text = json.dumps(envelope, indent=2, sort_keys=True)
-                    return                         CallToolResult(
-                            is_error=True,
-                            content=[TextContent(type="text", text=text)],
-                        )
+                    return _result_from_envelope(envelope)
 
             if tool_name == "kodi_gui_action":
                 args = params.arguments or {}
@@ -1749,11 +1775,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         "request_id": None,
                         "raw": {"arguments": args, "allowed": sorted(allowed_actions)},
                     }
-                    text = json.dumps(envelope, indent=2, sort_keys=True)
-                    return                         CallToolResult(
-                            is_error=True,
-                            content=[TextContent(type="text", text=text)],
-                        )
+                    return _result_from_envelope(envelope)
 
             if tool_name in {"addon_source_inspect", "addon_project_map_status", "addon_source_tree"}:
                 args = params.arguments or {}
@@ -1773,11 +1795,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         "request_id": None,
                         "raw": {"arguments": args},
                     }
-                    text = json.dumps(envelope, indent=2, sort_keys=True)
-                    return                         CallToolResult(
-                            is_error=True,
-                            content=[TextContent(type="text", text=text)],
-                        )
+                    return _result_from_envelope(envelope)
 
             if tool_name == "kodi_player_open":
                 args = params.arguments or {}
@@ -1803,10 +1821,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         "request_id": None,
                         "raw": {"arguments": args},
                     }
-                    return CallToolResult(
-                        is_error=True,
-                        content=[TextContent(type="text", text=json.dumps(envelope, indent=2, sort_keys=True))],
-                    )
+                    return _result_from_envelope(envelope)
 
             if tool_name in {"kodi_player_item", "kodi_player_seek", "kodi_player_pause", "kodi_player_stop"}:
                 args = params.arguments or {}
@@ -1826,11 +1841,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         "request_id": None,
                         "raw": {"arguments": args},
                     }
-                    text = json.dumps(envelope, indent=2, sort_keys=True)
-                    return                         CallToolResult(
-                            is_error=True,
-                            content=[TextContent(type="text", text=text)],
-                        )
+                    return _result_from_envelope(envelope)
 
                 if tool_name == "kodi_player_seek":
                     seconds = args.get("seconds")
@@ -1846,11 +1857,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                             "request_id": None,
                             "raw": {"arguments": args},
                         }
-                        text = json.dumps(envelope, indent=2, sort_keys=True)
-                        return                             CallToolResult(
-                                is_error=True,
-                                content=[TextContent(type="text", text=text)],
-                            )
+                        return _result_from_envelope(envelope)
 
             # Managed addon required-arg checks.
             if tool_name in {
@@ -1878,11 +1885,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                             "request_id": None,
                             "raw": {"arguments": args},
                         }
-                        text = json.dumps(envelope, indent=2, sort_keys=True)
-                        return                             CallToolResult(
-                                is_error=True,
-                                content=[TextContent(type="text", text=text)],
-                            )
+                        return _result_from_envelope(envelope)
 
             # Agent-safe artifact tools required-arg checks.
             if tool_name in {
@@ -1910,11 +1913,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                             "request_id": None,
                             "raw": {"arguments": args},
                         }
-                        text = json.dumps(envelope, indent=2, sort_keys=True)
-                        return                             CallToolResult(
-                                is_error=True,
-                                content=[TextContent(type="text", text=text)],
-                            )
+                        return _result_from_envelope(envelope)
 
                 if tool_name == "repo_publish_artifact":
                     for k in ("artifact_id", "addon_id", "addon_name", "addon_version"):
@@ -1931,11 +1930,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                                 "request_id": None,
                                 "raw": {"arguments": args},
                             }
-                            text = json.dumps(envelope, indent=2, sort_keys=True)
-                            return                                 CallToolResult(
-                                    is_error=True,
-                                    content=[TextContent(type="text", text=text)],
-                                )
+                            return _result_from_envelope(envelope)
 
                 if tool_name == "repo_stage_and_apply_addon":
                     addonid = args.get("addonid")
@@ -1951,11 +1946,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                             "request_id": None,
                             "raw": {"arguments": args},
                         }
-                        text = json.dumps(envelope, indent=2, sort_keys=True)
-                        return                             CallToolResult(
-                                is_error=True,
-                                content=[TextContent(type="text", text=text)],
-                            )
+                        return _result_from_envelope(envelope)
 
                 if tool_name in {"repo_publish_stage_apply_artifact", "addon_dev_loop"}:
                     for k in ("artifact_id", "addon_id", "addon_name", "addon_version"):
@@ -1972,11 +1963,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                                 "request_id": None,
                                 "raw": {"arguments": args},
                             }
-                            text = json.dumps(envelope, indent=2, sort_keys=True)
-                            return                                 CallToolResult(
-                                    is_error=True,
-                                    content=[TextContent(type="text", text=text)],
-                                )
+                            return _result_from_envelope(envelope)
 
                 if tool_name == "managed_addon_get":
                     managed_addon_id = args.get("managed_addon_id")
@@ -1992,11 +1979,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                             "request_id": None,
                             "raw": {"arguments": args},
                         }
-                        text = json.dumps(envelope, indent=2, sort_keys=True)
-                        return                             CallToolResult(
-                                is_error=True,
-                                content=[TextContent(type="text", text=text)],
-                            )
+                        return _result_from_envelope(envelope)
 
                 if tool_name == "managed_addon_validate_state":
                     managed_addon_id = args.get("managed_addon_id")
@@ -2012,11 +1995,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                             "request_id": None,
                             "raw": {"arguments": args},
                         }
-                        text = json.dumps(envelope, indent=2, sort_keys=True)
-                        return                             CallToolResult(
-                                is_error=True,
-                                content=[TextContent(type="text", text=text)],
-                            )
+                        return _result_from_envelope(envelope)
 
                 if tool_name == "managed_addon_build_publish_and_stage":
                     managed_addon_id = args.get("managed_addon_id")
@@ -2033,11 +2012,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                             "request_id": None,
                             "raw": {"arguments": args},
                         }
-                        text = json.dumps(envelope, indent=2, sort_keys=True)
-                        return                             CallToolResult(
-                                is_error=True,
-                                content=[TextContent(type="text", text=text)],
-                            )
+                        return _result_from_envelope(envelope)
                     if version_policy not in {"use_addon_xml", "bump_patch", "set_explicit"}:
                         envelope = {
                             "ok": False,
@@ -2050,11 +2025,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                             "request_id": None,
                             "raw": {"arguments": args, "allowed": ["use_addon_xml", "bump_patch", "set_explicit"]},
                         }
-                        text = json.dumps(envelope, indent=2, sort_keys=True)
-                        return                             CallToolResult(
-                                is_error=True,
-                                content=[TextContent(type="text", text=text)],
-                            )
+                        return _result_from_envelope(envelope)
 
                 if tool_name == "managed_addon_build_publish_stage_and_apply":
                     managed_addon_id = args.get("managed_addon_id")
@@ -2071,11 +2042,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                             "request_id": None,
                             "raw": {"arguments": args},
                         }
-                        text = json.dumps(envelope, indent=2, sort_keys=True)
-                        return                             CallToolResult(
-                                is_error=True,
-                                content=[TextContent(type="text", text=text)],
-                            )
+                        return _result_from_envelope(envelope)
                     if version_policy not in {"use_addon_xml", "bump_patch", "set_explicit"}:
                         envelope = {
                             "ok": False,
@@ -2091,11 +2058,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                                 "allowed": ["use_addon_xml", "bump_patch", "set_explicit"],
                             },
                         }
-                        text = json.dumps(envelope, indent=2, sort_keys=True)
-                        return                             CallToolResult(
-                                is_error=True,
-                                content=[TextContent(type="text", text=text)],
-                            )
+                        return _result_from_envelope(envelope)
 
             # The MCP SDK validates only CallToolRequestParams itself. The
             # custom low-level handler must enforce each listed tool schema.
@@ -2870,14 +2833,12 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     "raw": None,
                 }
 
-            text = json.dumps(envelope, indent=2, sort_keys=True)
-            content = [TextContent(type="text", text=text)]
-            if pending_image_content is not None and envelope.get("ok"):
-                content.append(pending_image_content)
-            return CallToolResult(
-                is_error=not envelope.get("ok", False),
-                content=content,
+            extra_content = (
+                [pending_image_content]
+                if pending_image_content is not None and envelope.get("ok")
+                else None
             )
+            return _result_from_envelope(envelope, extra_content=extra_content)
 
         payload = ErrorData(code=0, message=f"Tool not implemented: {tool_name}", data=None)
         return             CallToolResult(
