@@ -257,6 +257,24 @@ A TV hierarchy workflow:
 ```
 Again, use the discovered `tvshow` ID. Empty pages are successful with `empty:true`; an invalid/nonexistent TV-show ID is a model-visible `not_found` error.
 
+Music-library discovery helpers:
+- `kodi_music_summary` returns artist, album, and song totals from native `limits.total`; each of its three fixed count calls requests at most one sentinel item.
+- `kodi_music_search` searches exactly one type: artist name (`artist`), album title (`album`), or song title (`title`). It uses Kodi's native case-insensitive `contains` operator on the supported Kodi 19–22 targets. It is substring search, not fuzzy, semantic, cross-type ranking, lyrics, filename, or path search.
+- `kodi_music_browse` exposes bounded `recent_albums`, `recent_songs`, and `genres` pages.
+- `kodi_artist_albums` validates a discovered artist ID, then lists albums for that artist without implicitly broadening to contributor-only roles. `kodi_album_songs` validates an album ID, then lists its songs in Kodi's native track order. Multi-artist names and IDs and compilation status remain explicit.
+- All music pages default to 10 results, reject limits above 50, use Kodi-side pagination, and return native totals. Results omit raw media paths and bound nested artist/genre lists to 20 values. Artwork is reference-only, limited to three entries, and uses the same filesystem/share/credential/token screening as video discovery.
+
+A music workflow from unknown contents to normal audio playback:
+```json
+{"tool":"kodi_music_search","arguments":{"query":"Example Artist","media_type":"artist","limit":5}}
+{"tool":"kodi_artist_albums","arguments":{"artist_id":123,"limit":10}}
+{"tool":"kodi_album_songs","arguments":{"album_id":456,"limit":20}}
+{"tool":"kodi_player_open","arguments":{"media_type":"song","item_id":789}}
+{"tool":"kodi_player_active","arguments":{}}
+{"tool":"kodi_player_item","arguments":{"playerid":0}}
+```
+Use IDs returned by the preceding call, not the illustrative IDs above. Kodi normally reports the active audio player as ID `0`; discover it with `kodi_player_active` rather than assuming. Pass that returned ID to item, pause, seek, and stop, and stop playback after controlled tests. `kodi_player_open` also accepts `media_type:"album"`; Kodi's native album item starts immediate album playback without this server clearing, replacing, or enqueueing a playlist.
+
 Playback helpers:
 - `kodi_player_active` returns active Kodi players.
 - `kodi_player_item` returns the current item for a player.
@@ -271,8 +289,8 @@ hatch.
 
 ### Structured MCP results and annotations
 
-`tools/list` advertises Draft 2020-12 `outputSchema` contracts for 41 of the 43
-tools. Calls to those tools return the existing JSON envelope in `TextContent`
+`tools/list` advertises Draft 2020-12 `outputSchema` contracts for every stable
+result tool. Calls to those tools return the existing JSON envelope in `TextContent`
 for backwards compatibility and a corresponding validated envelope in
 `structuredContent`. The envelope covers both success and application-level
 failure (`ok`, `tool`, `data`, `error`, `error_type`, `error_code`, latency,

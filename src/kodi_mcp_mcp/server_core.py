@@ -74,6 +74,7 @@ from kodi_mcp_server.dev_loop_artifacts import (
 )
 from kodi_mcp_server.kodi_apply import managed_addon_build_publish_stage_and_apply
 from kodi_mcp_server.tools.library import LibraryTool
+from kodi_mcp_server.tools.music import MusicTool
 from kodi_mcp_server.milestone_a_bridge import read_addon_state
 from kodi_mcp_server.paths import AUTHORITATIVE_REPO_ROOT, PROJECT_ROOT
 from kodi_mcp_server.screenshot_store import (
@@ -1296,6 +1297,123 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 },
             ),
             Tool(
+                name="kodi_music_summary",
+                description=(
+                    "Return compact artist, album, and song counts using Kodi-native total "
+                    "metadata without downloading the music library."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="kodi_music_search",
+                description=(
+                    "Search one artist, album, or song identity field with one bounded "
+                    "Kodi-native contains query. Results include stable Kodi music IDs."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 200,
+                            "pattern": r"\S",
+                            "description": (
+                                "Case-insensitive substring matched against artist name, album "
+                                "title, or song title according to media_type."
+                            ),
+                        },
+                        "media_type": {
+                            "type": "string",
+                            "enum": ["artist", "album", "song"],
+                        },
+                        "start": {"type": "integer", "default": 0, "minimum": 0},
+                        "limit": {
+                            "type": "integer",
+                            "default": 10,
+                            "minimum": 1,
+                            "maximum": 50,
+                        },
+                    },
+                    "required": ["query", "media_type"],
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="kodi_music_browse",
+                description=(
+                    "Browse bounded recently added albums, recently added songs, or music "
+                    "genres without requiring a pre-known Kodi ID."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "category": {
+                            "type": "string",
+                            "enum": ["recent_albums", "recent_songs", "genres"],
+                        },
+                        "start": {"type": "integer", "default": 0, "minimum": 0},
+                        "limit": {
+                            "type": "integer",
+                            "default": 10,
+                            "minimum": 1,
+                            "maximum": 50,
+                        },
+                    },
+                    "required": ["category"],
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="kodi_artist_albums",
+                description=(
+                    "List albums for a discovered Kodi artist ID using bounded Kodi-side "
+                    "pagination. Primary album/performer roles are used; contributor-only roles "
+                    "are not broadened implicitly."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "artist_id": {"type": "integer", "minimum": 0},
+                        "start": {"type": "integer", "default": 0, "minimum": 0},
+                        "limit": {
+                            "type": "integer",
+                            "default": 10,
+                            "minimum": 1,
+                            "maximum": 50,
+                        },
+                    },
+                    "required": ["artist_id"],
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="kodi_album_songs",
+                description=(
+                    "List songs for a discovered Kodi album ID in native track order using "
+                    "bounded Kodi-side pagination."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "album_id": {"type": "integer", "minimum": 0},
+                        "start": {"type": "integer", "default": 0, "minimum": 0},
+                        "limit": {
+                            "type": "integer",
+                            "default": 10,
+                            "minimum": 1,
+                            "maximum": 50,
+                        },
+                    },
+                    "required": ["album_id"],
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
                 name="kodi_library_search",
                 description=(
                     "Search movie, TV-show, or episode titles with one bounded Kodi-native "
@@ -1416,19 +1534,26 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
             ),
             Tool(
                 name="kodi_player_open",
-                description="Start playback of a known Kodi library movie or episode by its library id.",
+                description=(
+                    "Start playback of a known Kodi library movie, episode, album, or song by "
+                    "its library ID. Album playback uses Kodi's native Player.Open album item; "
+                    "it does not edit or enqueue a playlist."
+                ),
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "media_type": {
                             "type": "string",
-                            "enum": ["movie", "episode"],
+                            "enum": ["movie", "episode", "album", "song"],
                             "description": "Kodi library item type.",
                         },
                         "item_id": {
                             "type": "integer",
                             "minimum": 0,
-                            "description": "Existing Kodi movieid or episodeid matching media_type.",
+                            "description": (
+                                "Existing Kodi movieid, episodeid, albumid, or songid matching "
+                                "media_type."
+                            ),
                         },
                     },
                     "required": ["media_type", "item_id"],
@@ -1847,6 +1972,11 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
             "addon_project_map_status",
             "addon_source_tree",
             "kodi_library_summary",
+            "kodi_music_summary",
+            "kodi_music_search",
+            "kodi_music_browse",
+            "kodi_artist_albums",
+            "kodi_album_songs",
             "kodi_library_search",
             "kodi_library_browse",
             "kodi_tv_seasons",
@@ -1965,7 +2095,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     args = {}
                 media_type = args.get("media_type")
                 item_id = args.get("item_id")
-                if media_type not in {"movie", "episode"}:
+                if media_type not in {"movie", "episode", "album", "song"}:
                     error = "missing or invalid required argument: media_type"
                 elif not isinstance(item_id, int) or isinstance(item_id, bool) or item_id < 0:
                     error = "missing or invalid required argument: item_id"
@@ -2443,6 +2573,37 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     raw_result = _addon_source_tree(str(args.get("source_path") or "").strip(), max_entries=max_entries)
                 elif tool_name == "kodi_library_summary":
                     raw_result = await LibraryTool(runtime["jsonrpc"]).summary()
+                elif tool_name == "kodi_music_summary":
+                    raw_result = await MusicTool(runtime["jsonrpc"]).summary()
+                elif tool_name == "kodi_music_search":
+                    args = params.arguments or {}
+                    raw_result = await MusicTool(runtime["jsonrpc"]).search(
+                        query=args["query"],
+                        media_type=args["media_type"],
+                        start=args.get("start", 0),
+                        limit=args.get("limit", 10),
+                    )
+                elif tool_name == "kodi_music_browse":
+                    args = params.arguments or {}
+                    raw_result = await MusicTool(runtime["jsonrpc"]).browse(
+                        category=args["category"],
+                        start=args.get("start", 0),
+                        limit=args.get("limit", 10),
+                    )
+                elif tool_name == "kodi_artist_albums":
+                    args = params.arguments or {}
+                    raw_result = await MusicTool(runtime["jsonrpc"]).artist_albums(
+                        artist_id=args["artist_id"],
+                        start=args.get("start", 0),
+                        limit=args.get("limit", 10),
+                    )
+                elif tool_name == "kodi_album_songs":
+                    args = params.arguments or {}
+                    raw_result = await MusicTool(runtime["jsonrpc"]).album_songs(
+                        album_id=args["album_id"],
+                        start=args.get("start", 0),
+                        limit=args.get("limit", 10),
+                    )
                 elif tool_name == "kodi_library_search":
                     args = params.arguments or {}
                     raw_result = await LibraryTool(runtime["jsonrpc"]).search(

@@ -36,6 +36,11 @@ _READ_ONLY_TOOLS = {
     "addon_project_map_status",
     "addon_source_tree",
     "kodi_library_summary",
+    "kodi_music_summary",
+    "kodi_music_search",
+    "kodi_music_browse",
+    "kodi_artist_albums",
+    "kodi_album_songs",
     "kodi_library_search",
     "kodi_library_browse",
     "kodi_tv_seasons",
@@ -341,6 +346,34 @@ async def test_all_advertised_contracts_validate_canonical_success_and_failure_f
         {"bridge": _Bridge(), "jsonrpc": _JsonRpc(), "notifications": None}
     )
     tools = {tool.name: tool for tool in await _list_tools(server)}
+    empty_page = {
+        "start": 0,
+        "end": 0,
+        "total": 0,
+        "limit": 10,
+        "has_more": False,
+    }
+    music_artist = {
+        "id": 1,
+        "media_type": "artist",
+        "name": "Example Artist",
+        "genres": [],
+        "is_album_artist": True,
+        "artwork": {},
+    }
+    music_album = {
+        "id": 2,
+        "media_type": "album",
+        "title": "Example Album",
+        "artists": ["Example Artist"],
+        "artist_ids": [1],
+        "year": 2026,
+        "genres": [],
+        "playcount": 0,
+        "compilation": False,
+        "duration_seconds": 120,
+        "artwork": {},
+    }
     specific_data = {
         "kodi_status": {
             "server": {"status": "running"},
@@ -387,6 +420,35 @@ async def test_all_advertised_contracts_validate_canonical_success_and_failure_f
         "addon_source_tree": {"ok": True, "entries": [], "truncated": False},
         "kodi_library_summary": {
             "counts": {"movies": 0, "tvshows": 0, "seasons": 0, "episodes": 0}
+        },
+        "kodi_music_summary": {
+            "counts": {"artists": 0, "albums": 0, "songs": 0}
+        },
+        "kodi_music_search": {
+            "query": "example",
+            "media_type": "artist",
+            "search": {"field": "artist", "operator": "contains"},
+            "items": [],
+            "empty": True,
+            "pagination": empty_page,
+        },
+        "kodi_music_browse": {
+            "category": "genres",
+            "items": [],
+            "empty": True,
+            "pagination": empty_page,
+        },
+        "kodi_artist_albums": {
+            "artist": music_artist,
+            "items": [],
+            "empty": True,
+            "pagination": empty_page,
+        },
+        "kodi_album_songs": {
+            "album": music_album,
+            "items": [],
+            "empty": True,
+            "pagination": empty_page,
         },
         "kodi_library_search": {
             "query": "example",

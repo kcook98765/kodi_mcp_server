@@ -21,7 +21,10 @@ from urllib.error import URLError
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from kodi_mcp_server.models.messages import ErrorType, RequestMessage
-from kodi_mcp_server.transport.http_jsonrpc import HttpJsonRpcTransport
+from kodi_mcp_server.transport.http_jsonrpc import (
+    HttpJsonRpcTransport,
+    is_safe_to_retry,
+)
 
 
 class _FakeResponse:
@@ -159,6 +162,24 @@ def test_safe_read_method_exhausts_retry_on_persistent_connection_error():
     assert len(calls) == 2
     assert response.error == "connection error: Connection refused"
     assert response.error_type == ErrorType.NETWORK_ERROR
+
+
+def test_music_discovery_reads_are_retry_safe_but_playback_mutations_are_not():
+    read_methods = {
+        "AudioLibrary.GetArtists",
+        "AudioLibrary.GetArtistDetails",
+        "AudioLibrary.GetAlbums",
+        "AudioLibrary.GetAlbumDetails",
+        "AudioLibrary.GetSongs",
+        "AudioLibrary.GetRecentlyAddedAlbums",
+        "AudioLibrary.GetRecentlyAddedSongs",
+        "AudioLibrary.GetGenres",
+    }
+
+    assert all(is_safe_to_retry(method) for method in read_methods)
+    assert is_safe_to_retry("Player.Open") is False
+    assert is_safe_to_retry("Playlist.Clear") is False
+    assert is_safe_to_retry("Playlist.Add") is False
 
 
 def test_mutating_method_does_not_retry_on_timeout():
