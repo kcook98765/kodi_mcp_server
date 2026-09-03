@@ -1,4 +1,4 @@
-"""Remote MCP (/mcp) smoke test.
+r"""Remote MCP (/mcp) smoke test.
 
 Usage (from repo root):
 
