@@ -11,7 +11,7 @@ from kodi_mcp_server.paths import PROJECT_ROOT
 from kodi_mcp_server.runtime_identity import capture_runtime_identity
 
 
-TARGET_VERSION = "0.2.0"
+TARGET_VERSION = "0.2.1"
 
 
 def test_product_version_sources_are_synchronized():

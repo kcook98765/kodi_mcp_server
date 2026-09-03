@@ -46,7 +46,14 @@ def configure_bootstrap_app(
     async def bootstrap_manifest():
         return bundle().public_manifest(configured_base_url)
 
-    @app.api_route("/bootstrap/service.kodi_mcp.zip", methods=["GET", "HEAD"])
+    @app.get(
+        "/bootstrap/service.kodi_mcp.zip",
+        operation_id="get_bootstrap_bridge_zip",
+    )
+    @app.head(
+        "/bootstrap/service.kodi_mcp.zip",
+        operation_id="head_bootstrap_bridge_zip",
+    )
     async def bootstrap_bridge_zip():
         validated = bundle()
         return Response(
