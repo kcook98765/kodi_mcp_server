@@ -92,9 +92,6 @@ def test_dotenv_lookup_target_is_repository_root_env():
     so a regression to ``parents[3]`` fails even when no ``.env`` is present.
     """
     repo_root = Path(__file__).resolve().parents[1]
-    # The real .env lives at the repo root in this checkout; the structural
-    # assertion holds regardless of its contents.
+    # The lookup contract is structural; a checkout need not contain a real .env.
     assert config.PROJECT_ROOT == repo_root
     assert config.PROJECT_ROOT / ".env" == repo_root / ".env"
-    # And that marker actually exists in the source tree (repo-root .env).
-    assert (repo_root / ".env").is_file()

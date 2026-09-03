@@ -23,64 +23,10 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from kodi_mcp_mcp.server_core import build_mcp_server, build_runtime
+from kodi_mcp_mcp.tool_contract import EXPECTED_TOOL_NAMES
 from kodi_mcp_server import __version__
 from mcp.client import Client
 from mcp.shared.memory import create_client_server_memory_streams
-
-
-_EXPECTED_TOOLS = {
-    "kodi_status",
-    "bridge_health",
-    "bridge_status",
-    "bridge_runtime_info",
-    "bridge_bootstrap_status",
-    "bridge_log_tail",
-    "bridge_log_markers",
-    "bridge_log_recent_errors",
-    "addon_list",
-    "addon_details",
-    "addon_execute",
-    "addon_source_inspect",
-    "addon_project_map_status",
-    "addon_source_tree",
-    "kodi_library_summary",
-    "kodi_music_summary",
-    "kodi_music_search",
-    "kodi_music_browse",
-    "kodi_settings_list",
-    "kodi_setting_get",
-    "kodi_setting_set",
-    "kodi_artist_albums",
-    "kodi_album_songs",
-    "kodi_library_search",
-    "kodi_library_browse",
-    "kodi_tv_seasons",
-    "kodi_tv_episodes",
-    "kodi_player_active",
-    "kodi_player_open",
-    "kodi_player_item",
-    "kodi_player_seek",
-    "kodi_player_pause",
-    "kodi_player_stop",
-    "jsonrpc_introspect",
-    "kodi_notifications_sample",
-    "bridge_write_log_marker",
-    "kodi_gui_action",
-    "kodi_gui_screenshot",
-    "kodi_gui_state",
-    "managed_addon_register",
-    "managed_addon_list",
-    "managed_addon_get",
-    "managed_addon_build_publish_and_stage",
-    "managed_addon_build_publish_stage_and_apply",
-    "managed_addon_validate_state",
-    "artifact_upload_zip",
-    "repo_publish_artifact",
-    "repo_stage_current_dev_repo",
-    "repo_stage_and_apply_addon",
-    "repo_publish_stage_apply_artifact",
-    "addon_dev_loop",
-}
 
 
 def _server():
@@ -137,7 +83,7 @@ async def test_v2_tools_list_complete_and_schemas_stable():
         async with Client(server, mode="auto") as client:
             result = await client.list_tools()
             names = {t.name for t in result.tools}
-            assert names == _EXPECTED_TOOLS
+            assert names == EXPECTED_TOOL_NAMES
             by_name = {t.name: t for t in result.tools}
             for tool_name, tool in by_name.items():
                 Draft202012Validator.check_schema(tool.input_schema)

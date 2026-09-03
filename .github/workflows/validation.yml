@@ -1,0 +1,83 @@
+name: Validation gates
+
+on:
+  workflow_call:
+    inputs:
+      intended_version:
+        description: Optional X.Y.Z release candidate version
+        required: false
+        type: string
+        default: ""
+      expected_sha:
+        description: Optional full release candidate Git SHA
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  deterministic:
+    name: Tier A / deterministic PR gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install package and CI dependencies
+        run: python -m pip install -e ".[ci]"
+      - name: Run deterministic test suite once
+        run: python -m pytest
+      - name: Check compile and import health
+        run: |
+          python -m compileall -q src scripts
+          python -c "import kodi_mcp_mcp.server_core, kodi_mcp_server.main"
+      - name: Run offline source release gate
+        run: python -m kodi_mcp_server.release_gate --project-root .
+      - name: Validate manual release candidate inputs
+        if: ${{ inputs.intended_version != '' || inputs.expected_sha != '' }}
+        env:
+          INTENDED_VERSION: ${{ inputs.intended_version }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: >-
+          python -m kodi_mcp_server.release_gate --project-root .
+          --expected-version "$INTENDED_VERSION" --expected-sha "$EXPECTED_SHA"
+
+  package:
+    name: Tier B / isolated package gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install build frontend
+        run: python -m pip install "build>=1.2,<2"
+      - name: Build wheel and source distribution
+        run: python -m build
+      - name: Create clean artifact environment
+        run: python -m venv .release-venv
+      - name: Install wheel without editable-source assumptions
+        run: .release-venv/bin/python -m pip install dist/*.whl
+      - name: Verify clean artifact import
+        run: >-
+          .release-venv/bin/python -c
+          "from importlib.metadata import version; import kodi_mcp_server; assert version('kodi_mcp_server') == kodi_mcp_server.__version__"
+      - name: Install smoke-test harness dependency
+        run: .release-venv/bin/python -m pip install "httpx>=0.28,<1"
+      - name: Run installed-artifact release gate
+        env:
+          INTENDED_VERSION: ${{ inputs.intended_version }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          args=(--project-root .)
+          if [[ -n "$INTENDED_VERSION" || -n "$EXPECTED_SHA" ]]; then
+            args+=(--expected-version "$INTENDED_VERSION" --expected-sha "$EXPECTED_SHA")
+          fi
+          .release-venv/bin/python -m kodi_mcp_server.release_gate "${args[@]}"

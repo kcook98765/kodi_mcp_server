@@ -11,10 +11,24 @@ dependencies = [
     "mcp>=2.0.0,<3.0.0",
 ]
 
+[project.optional-dependencies]
+ci = [
+    "anyio==4.14.2",
+    "build>=1.2,<2",
+    "httpx>=0.28,<1",
+    "jsonschema>=4.26,<5",
+    "mcp==2.0.0",
+    "pytest>=9.1,<10",
+    "pytest-asyncio>=1.4,<2",
+    "pyyaml>=6,<7",
+    "requests>=2.32,<3",
+]
+
 [project.scripts]
 kodi-mcp-server = "kodi_mcp_server.main:main"
 kodi-mcp = "kodi_mcp_mcp.server:main"
 kodi-mcp-wrapper = "kodi_mcp_mcp.server:main"
+kodi-mcp-release-gate = "kodi_mcp_server.release_gate:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
