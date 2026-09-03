@@ -580,8 +580,18 @@ Action:
 - Run `managed_addon_validate_state`
 - Inspect: artifacts, repo_ready_check, bridge state
 
-## Testing
+## Testing and release readiness
+
+The deterministic suite and release gate target Python 3.13:
 
 ```bash
-python -m pytest -v
+.venv/bin/python -m pip install -e ".[ci]"
+.venv/bin/python -m pytest
+.venv/bin/python -m compileall -q src scripts
+.venv/bin/python -m kodi_mcp_server.release_gate --project-root .
 ```
+
+See [CI and reproducible release gates](docs/CI_AND_RELEASE_GATES.md) for the
+tier model, isolated wheel/sdist validation, manual release-readiness workflow,
+known-warning policy, private compatibility-lab boundary, and release checklist.
+CI does not deploy, contact Kodi, tag, or publish a GitHub Release.

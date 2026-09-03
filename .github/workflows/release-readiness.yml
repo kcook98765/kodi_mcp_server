@@ -1,0 +1,27 @@
+name: Release readiness dry run
+
+on:
+  workflow_dispatch:
+    inputs:
+      intended_version:
+        description: Intended stable release version (X.Y.Z)
+        required: true
+        type: string
+      expected_sha:
+        description: Full 40-character Git SHA to validate
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-readiness-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    uses: ./.github/workflows/validation.yml
+    with:
+      intended_version: ${{ inputs.intended_version }}
+      expected_sha: ${{ inputs.expected_sha }}
