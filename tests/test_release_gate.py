@@ -19,16 +19,16 @@ def test_release_identity_accepts_current_source_and_rejects_version_drift():
 
     identity = check_release_identity(
         project_root=PROJECT_ROOT,
-        expected_version="0.2.1",
+        expected_version="0.2.2",
         expected_sha=current_sha,
     )
-    assert identity.pop("future_tag") == "v0.2.1"
-    assert set(identity.values()) == {"0.2.1"}
+    assert identity.pop("future_tag") == "v0.2.2"
+    assert set(identity.values()) == {"0.2.2"}
 
-    with pytest.raises(GateError, match=r"expected version '0\.2\.2'"):
+    with pytest.raises(GateError, match=r"expected version '0\.2\.3'"):
         check_release_identity(
             project_root=PROJECT_ROOT,
-            expected_version="0.2.2",
+            expected_version="0.2.3",
         )
 
 

@@ -278,6 +278,7 @@ GUI helpers:
 - `kodi_gui_screenshot` captures a Kodi GUI screenshot through the bridge addon, stores it on the MCP server by default, and returns a `/screenshots/<id>.png` URL.
 - `kodi_gui_state` returns compact Kodi window/control/player state for UI verification.
 - `addon_execute` launches an addon through Kodi JSON-RPC without using the legacy HTTP companion endpoint. It returns post-launch `gui_state` by default. Use `expect_window` / `expect_fullscreen` for UI or navigation addons; reserve `expect_player` for tasks that explicitly require media playback.
+- Use `addon_list` to discover installed IDs before `addon_details` or `addon_execute`. Unknown IDs reported by `addon_details` are returned as `not_found`; `addon_execute` keeps Kodi's broader parameter rejection generic because addon-specific `params` can also be invalid.
 - These can assist first-install UI navigation, but deterministic bridge/repo state checks should remain the primary workflow.
 
 Addon source and log triage helpers:
@@ -349,6 +350,8 @@ Playback helpers:
 - `kodi_player_seek` seeks a player to an absolute timestamp in seconds.
 - `kodi_player_pause` pauses without toggling playback back on.
 - `kodi_player_stop` stops a player and, by default, verifies playback stays inactive across a short settle window.
+
+Player item, pause, and stop calls report a stale or inactive `playerid` with guidance to call `kodi_player_active`. Seek rejections remain generic because Kodi's `-32602` can also mean the current item is not seekable; the error tells callers to verify both conditions rather than guessing.
 
 Autonomous agents should use these MCP tools instead of direct Kodi JSON-RPC,
 bridge HTTP, host-control scripts, or curl fallbacks. If a required operation is

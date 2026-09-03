@@ -113,7 +113,7 @@ async def test_open_library_item_uses_exact_typed_player_open_request(
 
 
 @pytest.mark.asyncio
-async def test_missing_music_item_is_normalized_without_changing_video_errors():
+async def test_missing_library_item_is_normalized_for_music_and_video():
     missing = ResponseMessage(
         request_id="missing",
         result=None,
@@ -132,8 +132,9 @@ async def test_missing_music_item_is_normalized_without_changing_video_errors():
     assert song.error == "song 999999 was not found"
     assert song.error_type == ErrorType.NOT_FOUND
     assert song.error_code == -32602
-    assert movie.error == "jsonrpc error -32602: Invalid params."
-    assert movie.error_type == ErrorType.SERVER_ERROR
+    assert movie.error == "movie 999999 was not found"
+    assert movie.error_type == ErrorType.NOT_FOUND
+    assert movie.error_code == -32602
 
 
 @pytest.mark.asyncio

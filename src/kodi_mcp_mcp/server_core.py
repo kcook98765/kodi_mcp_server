@@ -2630,6 +2630,21 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         verification_guidance.append(
                             "GUI verification failed. Compare gui_verification.last_gui_state/current_window with the expected window, then adjust the expectation or investigate the addon UI."
                         )
+                    downstream_error = (
+                        execute_value.get("error")
+                        if not execute_ok and isinstance(execute_value, dict)
+                        else None
+                    )
+                    downstream_error_type = (
+                        execute_value.get("error_type")
+                        if not execute_ok and isinstance(execute_value, dict)
+                        else None
+                    )
+                    downstream_error_code = (
+                        execute_value.get("error_code")
+                        if not execute_ok and isinstance(execute_value, dict)
+                        else None
+                    )
                     raw_result = {
                         "ok": ok,
                         "addonid": addonid,
@@ -2652,9 +2667,19 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                             if execute_ok and not player_started and not gui_verification_required
                             else None
                         ),
-                        "error": None if ok else "; ".join(verification_errors) or "addon_execute verification failed",
-                        "error_type": None if ok else "verification_failed",
-                        "error_code": None,
+                        "error": (
+                            None
+                            if ok
+                            else downstream_error
+                            or "; ".join(verification_errors)
+                            or "addon_execute verification failed"
+                        ),
+                        "error_type": (
+                            None
+                            if ok
+                            else downstream_error_type or "verification_failed"
+                        ),
+                        "error_code": downstream_error_code,
                         "request_id": getattr(execute_result, "request_id", None),
                     }
                 elif tool_name == "addon_source_inspect":
