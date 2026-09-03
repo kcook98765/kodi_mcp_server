@@ -237,7 +237,7 @@ def create_base_app() -> FastAPI:
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
 
-    app = FastAPI(title="Kodi MCP Server", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Kodi MCP Server", version="0.2.0", lifespan=lifespan)
     app.add_middleware(RemoteApiKeyMiddleware)
     # Mount remote MCP at /mcp
     app.mount("/mcp", remote_asgi_app)
