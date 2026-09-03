@@ -1,4 +1,5 @@
 """Tests for HTTP error mapping in HttpJsonRpcTransport."""
+import asyncio
 import sys
 import socket
 from pathlib import Path
@@ -11,6 +12,15 @@ from unittest.mock import patch, MagicMock
 from kodi_mcp_server.models.messages import ErrorType, ResponseMessage
 from kodi_mcp_server.transport.http_jsonrpc import HttpJsonRpcTransport, is_safe_to_retry
 from kodi_mcp_server.models.messages import RequestMessage
+
+
+def _run(coro):
+    """Run a coroutine on an explicitly owned event loop."""
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
 
 
 def test_http_error_401_mapped_to_auth_error():
@@ -40,9 +50,7 @@ def test_http_error_401_mapped_to_auth_error():
                 args={"method": "Test", "params": {}},
             )
 
-            import asyncio
-
-            response = asyncio.get_event_loop().run_until_complete(
+            response = _run(
                 transport.send_request(request)
             )
 
@@ -79,9 +87,7 @@ def test_http_error_403_mapped_to_auth_error():
                 args={"method": "Test", "params": {}},
             )
 
-            import asyncio
-
-            response = asyncio.get_event_loop().run_until_complete(
+            response = _run(
                 transport.send_request(request)
             )
 
@@ -117,9 +123,7 @@ def test_http_error_404_mapped_to_not_found():
                 args={"method": "Test", "params": {}},
             )
 
-            import asyncio
-
-            response = asyncio.get_event_loop().run_until_complete(
+            response = _run(
                 transport.send_request(request)
             )
 
@@ -155,9 +159,7 @@ def test_http_error_500_mapped_to_server_error():
                 args={"method": "Test", "params": {}},
             )
 
-            import asyncio
-
-            response = asyncio.get_event_loop().run_until_complete(
+            response = _run(
                 transport.send_request(request)
             )
 
@@ -194,9 +196,7 @@ def test_http_error_503_mapped_to_server_error():
                 args={"method": "Test", "params": {}},
             )
 
-            import asyncio
-
-            response = asyncio.get_event_loop().run_until_complete(
+            response = _run(
                 transport.send_request(request)
             )
 
@@ -274,13 +274,12 @@ def test_safe_method_retries_on_timeout():
 
     # Patch _send_once to simulate timeout then success
     with patch.object(transport, '_send_once', side_effect=mock_send_once):
-        import asyncio
         request = RequestMessage(
             request_id="test-retry-timeout",
             command="execute_jsonrpc",
             args={"method": "Application.GetProperties", "params": {}},
         )
-        response = asyncio.get_event_loop().run_until_complete(
+        response = _run(
             transport.send_request(request)
         )
 
@@ -311,13 +310,12 @@ def test_mutating_method_does_not_retry_on_timeout():
         )
 
     with patch.object(transport, '_send_once', side_effect=mock_send_once):
-        import asyncio
         request = RequestMessage(
             request_id="test-no-retry-mutate",
             command="execute_jsonrpc",
             args={"method": "Addons.SetAddonEnabled", "params": {"addonid": "test", "enabled": True}},
         )
-        response = asyncio.get_event_loop().run_until_complete(
+        response = _run(
             transport.send_request(request)
         )
 
@@ -350,13 +348,12 @@ def test_auth_error_does_not_retry():
         )
 
     with patch.object(transport, '_send_once', side_effect=mock_send_once):
-        import asyncio
         request = RequestMessage(
             request_id="test-no-retry-auth",
             command="execute_jsonrpc",
             args={"method": "Application.GetProperties", "params": {}},
         )
-        response = asyncio.get_event_loop().run_until_complete(
+        response = _run(
             transport.send_request(request)
         )
 
@@ -391,13 +388,12 @@ def test_network_error_retries_once():
         )
 
     with patch.object(transport, '_send_once', side_effect=mock_send_once):
-        import asyncio
         request = RequestMessage(
             request_id="test-retry-network",
             command="execute_jsonrpc",
             args={"method": "Files.GetSources", "params": {}},
         )
-        response = asyncio.get_event_loop().run_until_complete(
+        response = _run(
             transport.send_request(request)
         )
 
@@ -423,13 +419,12 @@ def test_max_one_retry():
         raise socket.timeout("timeout")
 
     with patch.object(transport, '_send_once', side_effect=mock_send_once):
-        import asyncio
         request = RequestMessage(
             request_id="test-max-retry",
             command="execute_jsonrpc",
             args={"method": "Application.GetProperties", "params": {}},
         )
-        response = asyncio.get_event_loop().run_until_complete(
+        response = _run(
             transport.send_request(request)
         )
 
