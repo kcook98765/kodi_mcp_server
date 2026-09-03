@@ -42,7 +42,7 @@ stdio entrypoint and the FastAPI `/mcp` StreamableHTTP path.
 |---|---|---|---|---|
 | stdio entrypoint | `stdio_server()` + `server.run(read, write, init_options)` | same API, dual-era loop underneath | UNCHANGED | live probe: initialize→`2025-11-25`, tools/list 36 tools, tools/call ok |
 | StreamableHTTP (`/mcp`) | `StreamableHTTPSessionManager(app=server, stateless=False)` | same constructor; session manager drives `serve_loop` without init options (falls back to `server.create_initialization_options()`) | UNCHANGED | live ASGI probe: initialize 200 + `Mcp-Session-Id`, tools/list 200 with all tools; `test_endpoints.py`/`test_post_endpoints.py` (import-time construction of the full app) |
-| API-key ASGI wrapper | `x-mcp-api-key` check before `handle_request` | identical | UNCHANGED | `test_http_jsonrpc.py` + wrapper code untouched |
+| API-key ASGI wrapper | `x-mcp-api-key` check before `handle_request` | Hardened after migration: constant-time bounded header check plus secure bind policy; same header contract | INTENTIONAL SECURITY HARDENING | `tests/test_remote_security.py` |
 | Protocol versions served | handshake-era only (2024-11-05…2025-11-25) | handshake-era **and** modern 2026-07-28 (era decided by the client's first request) | INTENTIONAL (superset; old clients keep working) | `test_v2_legacy_handshake_era_still_served`, `test_v2_initialize_negotiates_supported_handshake_version` (legacy), `test_v2_*` in `auto` mode (modern) |
 | `Mcp-Session-Id` | issued by session manager, honored across requests | identical (v2 keeps session semantics for the legacy era) | UNCHANGED | live ASGI probe (session id returned and reused) |
 

@@ -27,9 +27,14 @@ KODI_BRIDGE_TOKEN=<same-token-configured-in-service.kodi_mcp>
 REPO_BASE_URL=http://<server-host>:8010
 ```
 `REPO_BASE_URL` must be reachable from Kodi and any remote MCP client that needs repository files or screenshot URLs.
-4) Start the server:
+
+For local-only use, keep the default `MCP_BIND_HOST=127.0.0.1`; authentication is
+optional. For a LAN bind, also set a non-loopback `MCP_BIND_HOST` and
+`MCP_API_KEY`. See [Security and deployment policy](#security-and-deployment-policy).
+
+4) Start the supported server entry point (default port `8010`):
 ```bash
-.venv/bin/uvicorn kodi_mcp_server.main:app --host 0.0.0.0 --port 8010
+.venv/bin/kodi-mcp-server
 ```
 
 **First-time bridge bootstrap (ordinary remote user)**
@@ -125,21 +130,19 @@ Run by your MCP client (Cline) as a local process:
 
 ### 2) MCP remote transport (Streamable HTTP)
 
-Expose the MCP server over HTTP at:
-
-- `http://<host>:8010/mcp`
-
-The MCP server runs on the host and clients connect over HTTP; **no local process is required**.
-
-Start the server:
+The HTTP endpoint is `/mcp`. Use the supported entry point so bind policy is
+validated before Uvicorn opens a listener:
 
 ```bash
-uvicorn kodi_mcp_server.main:app --host 0.0.0.0 --port 8010
+kodi-mcp-server
 ```
 
-#### Cline config (remote MCP)
+It defaults to `127.0.0.1:8010`. For an authenticated LAN bind, set
+`MCP_BIND_HOST` and `MCP_API_KEY` in the protected repo-root `.env` (or a
+service-owned environment file), then run the same command. Do not put a real
+key directly in a command-line argument or URL.
 
-Example **with API key header**:
+#### Cline config (remote MCP)
 
 ```json
 {
@@ -149,38 +152,85 @@ Example **with API key header**:
       "url": "http://<server-host>:8010/mcp",
       "disabled": false,
       "headers": {
-        "x-mcp-api-key": "<optional>"
+        "x-mcp-api-key": "<key-from-your-local-secret-configuration>"
       }
     }
   }
 }
 ```
 
-Example **without headers** (no API key):
+The key is accepted only in the `x-mcp-api-key` header. Query-string keys,
+Bearer headers, duplicate headers, malformed values, and oversized values are
+rejected with the same non-reflective `401 Unauthorized` response.
 
-```json
-{
-  "mcpServers": {
-    "kodi-mcp-remote": {
-      "type": "streamableHttp",
-      "url": "http://<server-host>:8010/mcp",
-      "disabled": false
-    }
-  }
-}
+## Security and deployment policy
+
+Kodi MCP exposes mutation-capable operations. The secure default therefore
+separates local development from remotely reachable binds:
+
+| Deployment | Bind | Auth |
+|---|---|---|
+| Local development | loopback (`127.0.0.1`, `::1`, or `localhost`) | optional |
+| Trusted LAN | explicit non-loopback address or wildcard | API key required by default |
+| Internet/untrusted network | loopback behind a trusted HTTPS reverse proxy or secure tunnel | API key required; TLS required at the proxy/tunnel boundary |
+
+`MCP_BIND_HOST` defaults to `127.0.0.1`; `MCP_PORT` defaults to `8010`. Every
+non-loopback bind—including `0.0.0.0`, `::`, RFC1918 IPv4, IPv6 ULA/link-local,
+public addresses, and non-localhost hostnames—is treated as remote-capable.
+This is a conservative bind classification, not a claim about firewall or
+router reachability.
+
+A remote-capable bind without `MCP_API_KEY` refuses to start. Intentional
+unauthenticated home-LAN use remains available only by explicitly setting:
+
+```text
+MCP_ALLOW_INSECURE_REMOTE=true
 ```
 
-#### API key (optional)
+This override emits a startup warning. Use it only on a network whose clients
+and routing you explicitly trust; **never** use it for an internet-facing,
+port-forwarded, proxied, tunneled, or otherwise untrusted deployment. Values
+other than exact case-insensitive `true`, `false`, or `0` are configuration
+errors; malformed values never enable the override.
 
-To require an API key for remote MCP requests, set:
+The application provides API-key authentication, not TLS. A key sent over
+plain HTTP can be stolen by a hostile network observer. For untrusted networks,
+bind Kodi MCP to loopback, terminate HTTPS at a trusted reverse proxy or secure
+tunnel on the same trusted host/network boundary, preserve the
+`x-mcp-api-key` request header, and do not expose the loopback listener directly.
+Do not configure the proxy to bypass application authentication. Kodi MCP does
+not use `X-Forwarded-*` headers to weaken or change its bind/auth decision.
 
-- `MCP_API_KEY=<your key>`
+The API-key gate covers all StreamableHTTP routes under `/mcp`, legacy
+`/tools/*` routes, `/status`, and detailed repo-health diagnostics. Minimal
+`/health` remains unauthenticated and returns only service liveness. Repository
+and validated bridge-bootstrap downloads remain unauthenticated so Kodi can
+consume them; treat published artifacts as public to anyone who can reach the
+server. No permissive CORS policy is enabled, and authenticated mutation
+endpoints do not emit `Access-Control-Allow-Origin: *`.
 
-Clients must send:
+To avoid typing a secret into shell history during an interactive session:
 
-- `x-mcp-api-key: <your key>`
+```bash
+read -rsp 'MCP API key: ' MCP_API_KEY && printf '\n'
+export MCP_API_KEY
+kodi-mcp-server
+```
 
-> Tip (Windows/cmd.exe): use `set "MCP_API_KEY=secret"` to avoid accidental trailing spaces.
+For persistent services, prefer a permission-restricted environment file rather
+than putting the key in the unit's command line or a public configuration file.
+
+### Migration impact
+
+**Behavior change:** existing supported-entry-point configurations that bind
+`0.0.0.0`, `::`, a LAN address, or another non-loopback host without an API key
+now refuse to start. Configure `MCP_API_KEY`, return to loopback, or deliberately
+opt into trusted-LAN insecure mode with `MCP_ALLOW_INSECURE_REMOTE=true`.
+Direct `uvicorn ... --host ...` invocation is no longer the documented/supported
+launch path. For migration safety the application recognizes Uvicorn's bind
+argument and applies the same startup policy; if it disagrees with
+`MCP_BIND_HOST`, startup fails. Prefer `kodi-mcp-server` so bind policy and the
+actual listener use one configuration.
 
 ### 3) Optional HTTP debug/compatibility endpoints
 
@@ -197,7 +247,9 @@ Required environment variables:
 Optional:
 - `KODI_JSONRPC_USERNAME`, `KODI_JSONRPC_PASSWORD`
 - `KODI_TIMEOUT`
-- `MCP_API_KEY` (remote MCP only)
+- `MCP_BIND_HOST` (default `127.0.0.1`) and `MCP_PORT` (default `8010`)
+- `MCP_API_KEY` (optional on loopback; required by default for non-loopback HTTP)
+- `MCP_ALLOW_INSECURE_REMOTE` (default false; explicit trusted-LAN-only escape hatch)
 - `REPO_BASE_URL` for repo, first-install bridge bundle, and screenshot URLs visible to Kodi/clients on other hosts
 - `KODI_MCP_BRIDGE_BOOTSTRAP_MANIFEST` for the pinned bridge bundle manifest (default `addon/bridge-bootstrap.json`)
 - `KODI_SCREENSHOT_STORE_DIR`, `KODI_SCREENSHOT_RETENTION_SECONDS`, `KODI_SCREENSHOT_MAX_FILES`
@@ -207,7 +259,7 @@ For a one-host setup, these URLs may all use `localhost`. For a split-host setup
 
 - Kodi/users must reach `REPO_BASE_URL` for repository files and the one-time bridge bundle.
 - The server must reach `KODI_JSONRPC_URL`; bridge-backed tools additionally require `KODI_BRIDGE_BASE_URL`.
-- Remote MCP clients must reach `http://<server-host>:8010/mcp` and screenshot URLs returned under `/screenshots/`.
+- Remote MCP clients must reach the configured MCP URL and screenshot URLs returned under `/screenshots/`; use HTTPS outside a trusted network.
 
 Local development can use a repo-root `.env` file copied from `.env.example`.
 Process environment values take precedence over `.env` values. Keep `.env`,
@@ -344,7 +396,7 @@ If you’re testing the **remote** transport directly, you can also do a minimal
 curl -i -N http://<server-host>:8010/mcp \
   -H "Content-Type: application/json" \
   -H "Accept: application/json, text/event-stream" \
-  -H "x-mcp-api-key: <optional>" \
+  -H "x-mcp-api-key: ${MCP_API_KEY}" \
   --data-binary '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
 ```
 
@@ -454,10 +506,15 @@ When you run the FastAPI server (the same one used for remote MCP), these endpoi
 The `/tools/*` endpoints are not the primary integration surface; they exist for debugging and backwards compatibility.
 
 They are **not MCP** and are not used by MCP clients.
+When `MCP_API_KEY` is configured, `/tools/*`, `/status`, `/repo-health`, and
+`/repo/health` require the same key. `/health` remains a minimal public liveness
+endpoint.
 
 ## Hosting example (systemd)
 
-Example unit file (Linux). This hosts remote MCP at `http://<host>:8010/mcp`:
+Example unit file (Linux). Put deployment values, including `MCP_API_KEY`, in a
+root-owned `0600` file at `/etc/kodi-mcp-server.env` rather than in the command
+line or unit text:
 
 ```ini
 [Unit]
@@ -468,18 +525,19 @@ After=network.target
 Type=simple
 User=kodi
 WorkingDirectory=/opt/kodi_mcp_server
-Environment=KODI_JSONRPC_URL=http://kodi.local:8080/jsonrpc
-Environment=KODI_BRIDGE_BASE_URL=http://kodi.local:8765
-# Optional (protect /mcp)
-Environment=MCP_API_KEY=change-me
+EnvironmentFile=/etc/kodi-mcp-server.env
 
-ExecStart=/opt/kodi_mcp_server/.venv/bin/uvicorn kodi_mcp_server.main:app --host 0.0.0.0 --port 8010
+ExecStart=/opt/kodi_mcp_server/.venv/bin/kodi-mcp-server
 Restart=on-failure
 RestartSec=2
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+For a non-loopback service, the environment file must set `MCP_BIND_HOST` and
+`MCP_API_KEY`; it may set `MCP_PORT` (default `8010`). Put TLS in a trusted
+reverse proxy or secure tunnel when clients cross an untrusted network.
 
 ## Troubleshooting
 

@@ -5,11 +5,19 @@ This module is the HTTP adapter boundary and is allowed to import FastAPI.
 
 import contextlib
 import asyncio
+import os
 from typing import AsyncIterator
 
 from fastapi import FastAPI
 
-from kodi_mcp_server.remote_mcp_app import create_remote_mcp
+from kodi_mcp_server.remote_mcp_app import (
+    MCP_ALLOW_INSECURE_REMOTE_ENV,
+    MCP_API_KEY_ENV,
+    RemoteApiKeyMiddleware,
+    create_remote_mcp,
+    runtime_bind_host,
+    validate_remote_deployment,
+)
 
 
 async def _addon_registration_loop(*, stop_event: asyncio.Event) -> None:
@@ -211,7 +219,13 @@ def create_base_app() -> FastAPI:
     remote_asgi_app, remote_lifespan = create_remote_mcp()
 
     @contextlib.asynccontextmanager
-    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        if not getattr(app.state, "remote_deployment_validated", False):
+            validate_remote_deployment(
+                bind_host=runtime_bind_host(),
+                api_key=os.getenv(MCP_API_KEY_ENV),
+                allow_insecure_remote=os.getenv(MCP_ALLOW_INSECURE_REMOTE_ENV),
+            )
         async with remote_lifespan():
             stop_event = asyncio.Event()
             task = asyncio.create_task(_addon_registration_loop(stop_event=stop_event))
@@ -223,7 +237,8 @@ def create_base_app() -> FastAPI:
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
 
-    app = FastAPI(title="Kodi MCP Server", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Kodi MCP Server", version="0.2.0", lifespan=lifespan)
+    app.add_middleware(RemoteApiKeyMiddleware)
     # Mount remote MCP at /mcp
     app.mount("/mcp", remote_asgi_app)
     return app
