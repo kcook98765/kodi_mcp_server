@@ -35,6 +35,7 @@ class ErrorType(str, Enum):
     CONFIG_ERROR = "config_error"    # Missing required config
 
     # Operation issues
+    INVALID_PARAMS = "invalid_params"  # Kodi rejected structurally valid parameters
     INVALID_OPERATION = "invalid_operation"  # Action not allowed for this type
 
     # Fallback

@@ -11,6 +11,35 @@ from ..models.messages import ErrorType, RequestMessage, ResponseMessage
 from ..transport.base import Transport
 
 
+def _normalized_invalid_params(
+    response: ResponseMessage,
+    *,
+    message: str,
+    error_type: ErrorType,
+) -> ResponseMessage:
+    """Replace only Kodi's -32602 response while retaining diagnostics."""
+    if response.error_code != -32602:
+        return response
+    return ResponseMessage(
+        request_id=response.request_id,
+        result=None,
+        error=message,
+        error_type=error_type,
+        error_code=response.error_code,
+        latency_ms=response.latency_ms,
+    )
+
+
+def _bounded_text_identifier(value: str, limit: int = 128) -> str:
+    """Keep caller-controlled identifiers bounded when included in errors."""
+    return value if len(value) <= limit else f"{value[:limit]}…"
+
+
+def _bounded_integer_identifier(value: int) -> str:
+    """Render ordinary Kodi IDs without reflecting unbounded integer text."""
+    return str(value) if value.bit_length() <= 63 else "supplied"
+
+
 class JsonRpcTool:
     """Tool for executing Kodi JSON-RPC commands"""
 
@@ -81,16 +110,12 @@ class JsonRpcTool:
             method="Player.Open",
             params={"item": {id_key: item_id}},
         )
-        if media_type in {"album", "song"} and response.error_code == -32602:
-            return ResponseMessage(
-                request_id=response.request_id,
-                result=None,
-                error=f"{media_type} {item_id} was not found",
-                error_type=ErrorType.NOT_FOUND,
-                error_code=response.error_code,
-                latency_ms=response.latency_ms,
-            )
-        return response
+        item_label = _bounded_integer_identifier(item_id)
+        return _normalized_invalid_params(
+            response,
+            message=f"{media_type} {item_label} was not found",
+            error_type=ErrorType.NOT_FOUND,
+        )
 
     async def execute_input_action(self, action: str) -> ResponseMessage:
         """Execute a Kodi input action."""
@@ -101,17 +126,19 @@ class JsonRpcTool:
 
     async def stop_player(self, playerid: int = 1) -> ResponseMessage:
         """Stop a Kodi player."""
-        return await self.execute_jsonrpc(
+        response = await self.execute_jsonrpc(
             method="Player.Stop",
             params={"playerid": playerid},
         )
+        return self._normalize_inactive_player(response, playerid)
 
     async def pause_player(self, playerid: int = 1) -> ResponseMessage:
         """Pause a Kodi player without toggling it back to playing."""
-        return await self.execute_jsonrpc(
+        response = await self.execute_jsonrpc(
             method="Player.PlayPause",
             params={"playerid": playerid, "play": False},
         )
+        return self._normalize_inactive_player(response, playerid)
 
     async def seek_player_to_seconds(
         self,
@@ -123,7 +150,7 @@ class JsonRpcTool:
         hours, rem = divmod(total_ms, 3_600_000)
         minutes, rem = divmod(rem, 60_000)
         secs, milliseconds = divmod(rem, 1000)
-        return await self.execute_jsonrpc(
+        response = await self.execute_jsonrpc(
             method="Player.Seek",
             params={
                 "playerid": playerid,
@@ -136,6 +163,14 @@ class JsonRpcTool:
                     }
                 },
             },
+        )
+        return _normalized_invalid_params(
+            response,
+            message=(
+                "Kodi rejected the supplied parameters for Player.Seek; verify playerid "
+                "with kodi_player_active and confirm the current item is seekable"
+            ),
+            error_type=ErrorType.INVALID_PARAMS,
         )
 
     async def get_movies_sample(self, limit: int = 5) -> ResponseMessage:
@@ -181,12 +216,21 @@ class JsonRpcTool:
 
     async def get_addon_details(self, addonid: str) -> ResponseMessage:
         """Retrieve details for a specific Kodi addon."""
-        return await self.execute_jsonrpc(
+        response = await self.execute_jsonrpc(
             method="Addons.GetAddonDetails",
             params={
                 "addonid": addonid,
                 "properties": ["name", "version", "enabled"],
             },
+        )
+        addon_label = _bounded_text_identifier(addonid)
+        return _normalized_invalid_params(
+            response,
+            message=(
+                f"addon {addon_label!r} is not installed or not recognized by Kodi; "
+                "call addon_list to discover installed addon IDs"
+            ),
+            error_type=ErrorType.NOT_FOUND,
         )
 
     async def set_addon_enabled(
@@ -237,13 +281,14 @@ class JsonRpcTool:
 
     async def get_player_item(self, playerid: int = 1) -> ResponseMessage:
         """Retrieve the current item for a Kodi player."""
-        return await self.execute_jsonrpc(
+        response = await self.execute_jsonrpc(
             method="Player.GetItem",
             params={
                 "playerid": playerid,
                 "properties": ["title", "album", "artist", "season", "episode"],
             },
         )
+        return self._normalize_inactive_player(response, playerid)
 
     async def list_addons(
         self, type: str | None = None, enabled: bool | None = None
@@ -266,13 +311,35 @@ class JsonRpcTool:
         self, addonid: str, params: dict | None = None, wait: bool = False
     ) -> ResponseMessage:
         """Execute a Kodi addon with optional params."""
-        return await self.execute_jsonrpc(
+        response = await self.execute_jsonrpc(
             method="Addons.ExecuteAddon",
             params={
                 "addonid": addonid,
                 "params": params or {},
                 "wait": wait,
             },
+        )
+        return _normalized_invalid_params(
+            response,
+            message=(
+                "Kodi rejected the supplied parameters for Addons.ExecuteAddon; verify the "
+                "addon ID with addon_list and check addon-specific params"
+            ),
+            error_type=ErrorType.INVALID_PARAMS,
+        )
+
+    @staticmethod
+    def _normalize_inactive_player(
+        response: ResponseMessage, playerid: int
+    ) -> ResponseMessage:
+        player_label = _bounded_integer_identifier(playerid)
+        return _normalized_invalid_params(
+            response,
+            message=(
+                f"player {player_label} is not active; call kodi_player_active to discover "
+                "active player IDs"
+            ),
+            error_type=ErrorType.NOT_FOUND,
         )
 
     async def get_setting_value(self, setting: str) -> ResponseMessage:
