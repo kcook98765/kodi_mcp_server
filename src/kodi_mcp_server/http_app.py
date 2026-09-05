@@ -133,7 +133,7 @@ async def _addon_registration_loop(*, stop_event: asyncio.Event) -> None:
 
                                 # First-time onboarding needs an installable *repository add-on zip*.
                                 # Do NOT stage a raw zip of repo/dev-repo contents.
-                                repo_addon = build_repo_addon(repo_version="1.0.0")
+                                repo_addon = build_repo_addon()
                                 if repo_addon.get("status") != "ok":
                                     raise RuntimeError(f"build_repo_addon failed: {repo_addon}")
 
@@ -164,7 +164,7 @@ async def _addon_registration_loop(*, stop_event: asyncio.Event) -> None:
                                 print("[kodi_mcp_server] repo zip staging: starting (repository add-on zip)")
                                 stage_out = await stage_dev_repo_zip(
                                     zip_path=str(repo_addon_zip),
-                                    repo_version="1.0.0",
+                                    repo_version=str(repo_addon.get("repo_version") or ""),
                                     verify=True,
                                 )
                                 state_after = (stage_out or {}).get("state") if isinstance(stage_out, dict) else None

@@ -10,19 +10,24 @@ Serves only the authoritative project-root repo tree. Legacy `server/repo*`
 locations are intentionally not used.
 """
 
-import os
-import zipfile
+import hashlib
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse, FileResponse, RedirectResponse, HTMLResponse
-from fastapi.staticfiles import StaticFiles
 
 from kodi_mcp_server.config import REPO_BASE_URL, REPO_ROOT
+from kodi_mcp_server.repository_addon_manifest import load_repository_addon_manifest
 from kodi_mcp_server.screenshot_store import cleanup_screenshots, screenshot_path_for
 
 router = APIRouter()
+
+
+def canonical_repository_artifact(repo_addon_path: Path | None = None) -> Path:
+    """Return the manifest-selected bootstrap artifact, independent of mtime."""
+
+    published = repo_addon_path or (REPO_ROOT.parent / "repo-addon")
+    return published / load_repository_addon_manifest().artifact_filename
 
 
 @router.get("/repo-health")
@@ -105,18 +110,14 @@ async def repo_info():
     # Source repo addon from workspace/repo-addon/ (authoritative published location)
     repo_addon_path = REPO_ROOT.parent / "repo-addon"
 
-    latest_zip = repo_addon_path / "repository.kodi-mcp-latest.zip"
-    versioned_zips = [f for f in repo_addon_path.glob("repository.kodi-mcp-*.zip")
-                      if not f.name.endswith("-latest.zip") and f.is_file()]
-
-    # Get latest versioned zip
-    latest_versioned = max(versioned_zips, key=os.path.getmtime) if versioned_zips else None
+    canonical = canonical_repository_artifact(repo_addon_path)
+    canonical_exists = canonical.is_file()
+    manifest = load_repository_addon_manifest()
 
     # Generate checksum if zip exists
     zip_checksum = None
-    if latest_versioned and latest_versioned.exists():
-        import hashlib
-        with open(latest_versioned, 'rb') as f:
+    if canonical_exists:
+        with open(canonical, 'rb') as f:
             zip_checksum = hashlib.sha256(f.read()).hexdigest()
 
     return JSONResponse(
@@ -130,7 +131,7 @@ async def repo_info():
                 # Canonical served repo root (mounted by mount_repo_static)
                 "dev_repo_url": f"{REPO_BASE_URL}/repo/content/",
                 "install_dir": f"{REPO_BASE_URL}/repo/install/",
-                "latest_zip_url": f"{REPO_BASE_URL}/repo/install/latest.zip" if latest_zip else None,
+                "latest_zip_url": f"{REPO_BASE_URL}/repo/install/latest.zip" if canonical_exists else None,
             },
             "install_urls": {
                 "canonical_repo_root": f"{REPO_BASE_URL}/repo/content/",
@@ -138,14 +139,14 @@ async def repo_info():
                 "addons_metadata": f"{REPO_BASE_URL}/repo/content/addons.xml.gz"
                 if (REPO_ROOT / "dev-repo" / "addons.xml.gz").exists()
                 else f"{REPO_BASE_URL}/repo/content/addons.xml",
-                "repository_addon_zip": f"{REPO_BASE_URL}/repo/install/latest.zip" if latest_zip else None,
+                "repository_addon_zip": f"{REPO_BASE_URL}/repo/install/latest.zip" if canonical_exists else None,
                 "repository_addon_checksum": zip_checksum,
             },
             "latest_repo_addon": {
-                "zip_path": str(latest_versioned) if latest_versioned else None,
-                "zip_url": f"{REPO_BASE_URL}/repo/install/latest.zip" if latest_zip else None,
-                "version": latest_versioned.stem.split("-")[-1] if latest_versioned else None,
-                "size_bytes": latest_versioned.stat().st_size if latest_versioned else None,
+                "zip_path": str(canonical) if canonical_exists else None,
+                "zip_url": f"{REPO_BASE_URL}/repo/install/latest.zip" if canonical_exists else None,
+                "version": manifest.version,
+                "size_bytes": canonical.stat().st_size if canonical_exists else None,
                 "published_location": str(repo_addon_path),
             },
         }
@@ -171,7 +172,8 @@ async def install_dir_index():
 
     # Get all repo addon zips - only show repository.kodi-mcp packages
     zips = [f for f in repo_addon_path.glob("repository.kodi-mcp-*.zip")]
-    zips.sort(key=lambda x: x.name, reverse=True)  # Newest first
+    zips.sort(key=lambda x: x.name, reverse=True)
+    canonical = canonical_repository_artifact(repo_addon_path)
 
     if not zips:
         from fastapi.responses import PlainTextResponse
@@ -184,13 +186,13 @@ async def install_dir_index():
     for zip_path in zips:
         size = zip_path.stat().st_size
         size_kb = size / 1024
-        is_latest = zip_path.name.endswith("-latest.zip")
+        is_latest = zip_path == canonical
         size_str = f"{size_kb:.1f} KB"
 
         # Simple list item with link
         lines.append(f'<li><a href="{zip_path.name}">{zip_path.name}</a> ({size_str})')
         if is_latest:
-            lines.append(f'<small>[LATEST]</small></li>')
+            lines.append(f'<small>[CANONICAL]</small></li>')
         else:
             lines.append('</li>')
 
@@ -203,7 +205,7 @@ async def install_dir_index():
 
 @router.get("/repo/install/latest.zip")
 async def latest_zip_redirect():
-    """Serve latest.zip - finds the latest versioned zip from published location.
+    """Serve latest.zip as the exact manifest-selected canonical artifact.
 
     Only exposes the canonical repository.kodi-mcp package from workspace/repo-addon/.
     This prevents stale repo addon versions from being served.
@@ -211,31 +213,13 @@ async def latest_zip_redirect():
     # Source repo addon from workspace/repo-addon/ (authoritative published location)
     repo_addon_path = REPO_ROOT.parent / "repo-addon"
 
-    # First check for explicit latest symlink
-    latest_symlink = repo_addon_path / "repository.kodi-mcp-latest.zip"
-    if latest_symlink.exists() and latest_symlink.is_symlink():
-        try:
-            actual_zip = latest_symlink.resolve()
-            return FileResponse(
-                actual_zip,
-                media_type="application/zip",
-                filename="repository.kodi-mcp-latest.zip"
-            )
-        except Exception:
-            pass
-
-    # Fallback: find latest versioned zip (not -latest.zip itself)
-    versioned_zips = [f for f in repo_addon_path.glob("repository.kodi-mcp-*.zip")
-                      if not f.name.endswith("-latest.zip") and f.is_file()]
-
-    if not versioned_zips:
-        raise HTTPException(status_code=404, detail="No repository addon found")
-
-    latest = max(versioned_zips, key=os.path.getmtime)
+    canonical = canonical_repository_artifact(repo_addon_path)
+    if not canonical.is_file():
+        raise HTTPException(status_code=404, detail="Canonical repository addon not found")
 
     # Serve directly without redirect (better for Kodi)
     return FileResponse(
-        latest,
+        canonical,
         media_type="application/zip",
         filename="repository.kodi-mcp-latest.zip"
     )

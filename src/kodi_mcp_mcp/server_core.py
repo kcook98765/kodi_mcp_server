@@ -47,6 +47,8 @@ from kodi_mcp_mcp.output_contracts import (
 
 from kodi_mcp_server import __version__
 from kodi_mcp_server.bridge_bootstrap import inspect_bootstrap_state
+from kodi_mcp_server.repository_bootstrap import install_repository_bootstrap
+from kodi_mcp_server.repository_readiness import inspect_repository_readiness
 from kodi_mcp_server.composition import (
     build_bridge_tool,
     build_jsonrpc_tool,
@@ -977,6 +979,32 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     "Classify the secure first-install state for service.kodi_mcp using stock "
                     "Kodi JSON-RPC and the configured authoritative bridge bundle. This tool is "
                     "read-only and returns explicit user action when Kodi requires it."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="repository_bootstrap_install",
+                description=(
+                    "Install or enable only the canonical server-generated repository.kodi-mcp "
+                    "bootstrap on the configured Kodi bridge. The operation accepts no artifact, "
+                    "path, URL, addon id, or command."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="repository_readiness",
+                description=(
+                    "Report bounded read-only readiness for the fixed repository.kodi-mcp on "
+                    "the configured Kodi, including Kodi-side metadata, checksum, and package "
+                    "reachability. The operation accepts no URL, path, addon id, or HTTP options."
                 ),
                 inputSchema={
                     "type": "object",
@@ -2062,6 +2090,8 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
             "bridge_status",
             "bridge_runtime_info",
             "bridge_bootstrap_status",
+            "repository_bootstrap_install",
+            "repository_readiness",
             "bridge_log_tail",
             "bridge_log_markers",
             "bridge_log_recent_errors",
@@ -2484,6 +2514,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         manifest_path=BRIDGE_BOOTSTRAP_MANIFEST_PATH,
                         base_url=REPO_BASE_URL,
                     )
+                elif tool_name == "repository_bootstrap_install":
+                    raw_result = await install_repository_bootstrap(runtime["bridge"])
+                elif tool_name == "repository_readiness":
+                    raw_result = await inspect_repository_readiness(runtime["bridge"])
                 elif tool_name in {"bridge_log_tail", "bridge_log_markers"}:
                     args = params.arguments or {}
                     if not isinstance(args, dict):

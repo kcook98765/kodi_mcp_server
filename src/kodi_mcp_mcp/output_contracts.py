@@ -663,6 +663,8 @@ _DATA_SCHEMAS: dict[str, dict[str, Any]] = {
     "bridge_status": _OBJECT,
     "bridge_runtime_info": _OBJECT,
     "bridge_bootstrap_status": _OBJECT,
+    "repository_bootstrap_install": _OBJECT,
+    "repository_readiness": _OBJECT,
     "bridge_log_tail": _LOG_METADATA_DATA,
     "bridge_log_markers": _LOG_METADATA_DATA,
     "bridge_log_recent_errors": _LOG_METADATA_DATA,
@@ -744,6 +746,7 @@ _READ_ONLY = frozenset(
         "managed_addon_list",
         "managed_addon_get",
         "managed_addon_validate_state",
+        "repository_readiness",
     }
 )
 _NONDESTRUCTIVE_MUTATIONS = frozenset(
@@ -756,6 +759,7 @@ _NONDESTRUCTIVE_MUTATIONS = frozenset(
         "kodi_player_stop",
         "artifact_upload_zip",
         "kodi_setting_set",
+        "repository_bootstrap_install",
     }
 )
 _DESTRUCTIVE_MUTATIONS = frozenset(

@@ -11,6 +11,8 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
 
+from kodi_mcp_server.repository_addon_manifest import load_repository_addon_manifest
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]  # Project repo root (not workspace root)
 # Canonical source: templates/repository-addon/addon.xml (used by build_repo_addon)
 CANONICAL_ADDON_XML = PROJECT_ROOT / "templates" / "repository-addon" / "addon.xml"
@@ -26,25 +28,13 @@ def ensure_live_zip_path(parent: Path) -> None:
     parent.mkdir(parents=True, exist_ok=True)
 
 
-def find_latest_repo_artifact(base_path: Path) -> Optional[Path]:
-    """Find the latest repository.kodi-mcp-*.zip artifact in the build output directory.
-    
-    Searches for files matching repository.kodi-mcp-*.zip pattern, returns the most recently
-    modified file (excluding live-* files which are publication artifacts, not source artifacts).
-    """
+def find_canonical_repo_artifact(base_path: Path) -> Optional[Path]:
+    """Find the exact manifest-selected repository addon artifact."""
     if not base_path.exists():
         return None
-    
-    candidates = [
-        f for f in base_path.glob("repository.kodi-mcp-*.zip")
-        if not f.name.startswith("repository.kodi-mcp-live-")
-    ]
-    
-    if not candidates:
-        return None
-    
-    # Return most recently modified
-    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+    candidate = base_path / load_repository_addon_manifest().artifact_filename
+    return candidate if candidate.is_file() else None
 
 
 def sync_zip_artifact(source: Path, dest_dir: Path) -> Path:
@@ -73,8 +63,8 @@ def main() -> int:
     print(f"published={PUBLISHED_ADDON_XML}")
     
     # Sync the built repository zip artifact to the live published path
-    # Source: find latest repository.kodi-mcp-*.zip in repo-addon/ (matching repo_generator.py output)
-    built_artifact = find_latest_repo_artifact(DEFAULT_ARTIFACT_PATH)
+    # Source: use the exact version named by the canonical manifest.
+    built_artifact = find_canonical_repo_artifact(DEFAULT_ARTIFACT_PATH)
     
     if built_artifact:
         published_zip = sync_zip_artifact(built_artifact, PROJECT_ROOT / "repo")

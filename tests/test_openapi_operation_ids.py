@@ -80,7 +80,9 @@ def test_repository_install_compatibility_alias_remains_routable(tmp_path, monke
     repo_addon = tmp_path / "repo-addon"
     repo_addon.mkdir()
     payload = b"PK\x03\x04test-only-repository-package"
-    (repo_addon / "repository.kodi-mcp-1.0.0.zip").write_bytes(payload)
+    from kodi_mcp_server.repository_addon_manifest import load_repository_addon_manifest
+
+    (repo_addon / load_repository_addon_manifest().artifact_filename).write_bytes(payload)
     monkeypatch.setattr(repo_server, "REPO_ROOT", repo_root)
     isolated_app = FastAPI()
     isolated_app.include_router(repo_server.router)

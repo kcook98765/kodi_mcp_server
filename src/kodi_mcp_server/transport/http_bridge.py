@@ -256,6 +256,33 @@ class HttpBridgeClient:
             self._make_request, "GET", "/control/capabilities", request_id=request_id, max_retries=1
         )
 
+    async def install_repository_bootstrap(self) -> ResponseMessage:
+        """Invoke the bridge's zero-argument canonical repository installer."""
+        import asyncio
+
+        request_id = "bridge-repository-bootstrap-install"
+        result = await asyncio.to_thread(
+            self._make_request, "POST", "/repo/bootstrap/install", payload={}
+        )
+        return self._response(
+            request_id=request_id,
+            result=result.result,
+            error=result.error,
+            error_type=result.error_type,
+            error_code=result.error_code,
+            latency_ms=result.latency_ms,
+        )
+
+    async def get_repository_readiness(self) -> ResponseMessage:
+        """Read fixed repository readiness evidence from the configured bridge."""
+        return await self._retry_wrapper(
+            self._make_request,
+            "GET",
+            "/repo/readiness",
+            request_id="bridge-repository-readiness",
+            max_retries=1,
+        )
+
     async def gui_action(self, action: str) -> ResponseMessage:
         import asyncio
 

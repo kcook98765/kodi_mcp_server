@@ -54,6 +54,7 @@ _READ_ONLY_TOOLS = {
     "managed_addon_list",
     "managed_addon_get",
     "managed_addon_validate_state",
+    "repository_readiness",
 }
 
 _NONDESTRUCTIVE_MUTATIONS = {
@@ -65,6 +66,7 @@ _NONDESTRUCTIVE_MUTATIONS = {
     "kodi_player_stop",
     "artifact_upload_zip",
     "kodi_setting_set",
+    "repository_bootstrap_install",
 }
 
 _DESTRUCTIVE_MUTATIONS = {
