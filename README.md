@@ -75,10 +75,37 @@ step is not repeated.
 
 **First-time repository/managed-addon onboarding (after bridge verification)**
 1) Start this server and confirm `bridge_bootstrap_status` is verified.
-2) Install + launch the Kodi setup helper addon: `script.kodi_mcp_setup`.
-3) In **Kodi MCP Setup**, confirm the server URL and choose **Prepare repository add-on zip**.
-4) Choose **Open Install from zip file**, then select `repository.kodi-mcp-latest.zip`.
-5) For a brand-new target addon, use Kodi UI: **Add-ons → Install from repository → Kodi MCP Repository → target addon → Install**.
+2) Call `repository_bootstrap_install`. It accepts no arguments, generates and
+   validates only the manifest-declared `repository.kodi-mcp`, uploads it through the configured
+   bridge connection, and asks the bridge to install only that fixed staged ZIP.
+3) For a brand-new target addon, use Kodi UI: **Add-ons → Install from repository → Kodi MCP Repository → target addon → Install**.
+
+This bounded repository bootstrap does not expose a generic ZIP, URL, addon-id,
+filesystem-path, or Kodi-builtin installer. It works when the server and Kodi are
+on different hosts because the artifact is transferred over the configured bridge
+HTTP connection; no shared filesystem is required.
+
+`repository_readiness` is the zero-argument read-only companion. It compares
+the installed fixed repository identity with the canonical manifest and asks the
+configured bridge to parse the installed repository URLs and probe metadata,
+checksum, and one metadata-derived package from Kodi's network context. The
+bridge reports repository timestamps and linked entries from Kodi's addon
+database as best-effort internal evidence, while explicitly declining to infer
+refresh completion or catalog freshness.
+
+`repository.kodi-mcp` is generated per server so its repository URLs come from
+that server's configured `REPO_BASE_URL`. Its invariant identity is declared in
+`src/kodi_mcp_server/repository_addon_manifest.json`; the current canonical
+version is 1.0.4. Versions increase monotonically under semantic versioning, and
+1.0.0 through 1.0.3 remain historical identities that must not be reused for a
+different canonical payload. Generation, automatic staging, bootstrap validation,
+and the `latest.zip` alias all derive from the manifest. Artifact modification
+time is never version authority. A future canonical payload requires a manifest
+version bump before generation or use.
+
+Because only invariant identity lives in the manifest, the same implementation
+supports a server and Kodi on localhost, separate LAN hosts, or behind a reverse
+proxy. No environment URL is stored in the manifest.
 
 **Managed addon loop (after repo is installed in Kodi)**
 1) Register local addon: `managed_addon_register`

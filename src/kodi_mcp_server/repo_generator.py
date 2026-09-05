@@ -5,18 +5,17 @@ the server-served repository URL.
 """
 
 import hashlib
-import json
 import os
 import shutil
 import tempfile
 import zipfile
-from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from jinja2 import Environment, FileSystemLoader
 
 from kodi_mcp_server.config import REPO_BASE_URL, REPO_ROOT
+from kodi_mcp_server.repository_addon_manifest import load_repository_addon_manifest
 
 
 class RepoGeneratorError(Exception):
@@ -83,7 +82,7 @@ def render_template(
 
 
 def build_repo_addon(
-    repo_version: str = "1.0.0",
+    repo_version: Optional[str] = None,
     repo_base_url: Optional[str] = None,
     output_zip: Optional[Path] = None,
     repo_root: Path = REPO_ROOT,
@@ -91,7 +90,8 @@ def build_repo_addon(
     """Build an installable Kodi repository addon zip.
 
     Args:
-        repo_version: Version string for the repo addon
+        repo_version: Explicit test/development override. Production callers omit
+            this so the source-controlled canonical manifest supplies the version.
         repo_base_url: Canonical URL where repo is served (e.g. http://host:8001)
         output_zip: Output path for generated .zip (auto-generated if None)
         repo_root: Path to repository root directory
@@ -99,13 +99,15 @@ def build_repo_addon(
     Returns:
         Dict with build status, output path, and metadata
     """
-    repo_base_url = repo_base_url or REPO_BASE_URL
+    manifest = load_repository_addon_manifest()
+    repo_version = repo_version or manifest.version
+    repo_base_url = (repo_base_url or REPO_BASE_URL).rstrip("/")
 
     if output_zip is None:
-        output_zip = repo_root.parent / "repo-addon" / f"repository.kodi-mcp-{repo_version}.zip"
+        output_zip = repo_root.parent / "repo-addon" / f"{manifest.addon_id}-{repo_version}.zip"
 
     # Kodi expects addon zips to contain a top-level folder named the addon id.
-    addon_id = "repository.kodi-mcp"
+    addon_id = manifest.addon_id
 
     # Create staging directory
     staging = tempfile.mkdtemp(prefix="repo-addon-")
@@ -118,6 +120,10 @@ def build_repo_addon(
 
         # Prepare template context
         context = {
+            "addon_id": manifest.addon_id,
+            "addon_name": manifest.name,
+            "addon_provider": manifest.provider,
+            "repository_extension": manifest.repository_extension,
             "repo_version": repo_version,
             "repo_base_url": repo_base_url,
         }
@@ -148,15 +154,23 @@ def build_repo_addon(
         output_zip.parent.mkdir(parents=True, exist_ok=True)
 
         with zipfile.ZipFile(output_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-            for file_path in staging_path.rglob("*"):
-                if file_path.is_file():
-                    arc_name = file_path.relative_to(staging_path)
-                    zf.write(file_path, arc_name)
+            for relative in (
+                f"{addon_id}/addon.xml",
+                f"{addon_id}/service.py",
+                f"{addon_id}/addons.xml",
+            ):
+                file_path = staging_path / relative
+                info = zipfile.ZipInfo(relative, date_time=(1980, 1, 1, 0, 0, 0))
+                info.create_system = 3
+                info.external_attr = 0o100644 << 16
+                info.compress_type = zipfile.ZIP_DEFLATED
+                zf.writestr(info, file_path.read_bytes())
 
         return {
             "status": "ok",
             "output_zip": str(output_zip),
             "repo_version": repo_version,
+            "addon_id": manifest.addon_id,
             "repo_base_url": repo_base_url,
             "addon_count": addon_count,
             "staging_path": str(staging_path),

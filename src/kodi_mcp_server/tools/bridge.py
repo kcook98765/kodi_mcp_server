@@ -51,6 +51,23 @@ class BridgeTool:
     async def get_bridge_control_capabilities(self) -> ResponseMessage:
         return await self.client.get_control_capabilities()
 
+    async def stage_repository_bootstrap(
+        self, *, zip_path: str, version: str, sha256: str
+    ) -> ResponseMessage:
+        return await self.client.repo_stage_upload(
+            repo_id="dev-repo",
+            zip_path=zip_path,
+            mode="overwrite",
+            repo_version=version,
+            sha256=sha256,
+        )
+
+    async def install_repository_bootstrap(self) -> ResponseMessage:
+        return await self.client.install_repository_bootstrap()
+
+    async def get_repository_readiness(self) -> ResponseMessage:
+        return await self.client.get_repository_readiness()
+
     async def gui_action(self, action: str) -> ResponseMessage:
         return await self.client.gui_action(action=action)
 

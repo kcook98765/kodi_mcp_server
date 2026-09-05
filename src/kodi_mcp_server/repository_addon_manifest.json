@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "addon_id": "repository.kodi-mcp",
+  "version": "1.0.4",
+  "name": "Kodi MCP Repository",
+  "provider": "Kodi MCP",
+  "repository_extension": "xbmc.addon.repository"
+}

@@ -53,5 +53,7 @@ EXPECTED_TOOL_NAMES = frozenset(
         "repo_publish_stage_apply_artifact",
         "repo_stage_and_apply_addon",
         "repo_stage_current_dev_repo",
+        "repository_bootstrap_install",
+        "repository_readiness",
     }
 )

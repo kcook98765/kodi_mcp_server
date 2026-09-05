@@ -38,6 +38,9 @@ where = ["src"]
 namespaces = true
 include = ["kodi_mcp_server*", "kodi_mcp_mcp*"]
 
+[tool.setuptools.package-data]
+kodi_mcp_server = ["repository_addon_manifest.json"]
+
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
