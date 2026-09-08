@@ -60,3 +60,74 @@ EXPECTED_TOOL_NAMES = frozenset(
         "target_list",
     }
 )
+
+# Phase 4A Batch A is intentionally limited to observational tools whose
+# target dependency is already an injected JSON-RPC or bridge tool.  Future
+# batches extend this set only after their dispatch paths have been migrated.
+BATCH_A_TARGET_TOOL_NAMES = frozenset(
+    {
+        "addon_details",
+        "addon_list",
+        "bridge_health",
+        "bridge_log_markers",
+        "bridge_log_recent_errors",
+        "bridge_log_tail",
+        "bridge_runtime_info",
+        "bridge_status",
+        "jsonrpc_introspect",
+        "kodi_album_songs",
+        "kodi_artist_albums",
+        "kodi_gui_state",
+        "kodi_library_browse",
+        "kodi_library_search",
+        "kodi_library_summary",
+        "kodi_music_browse",
+        "kodi_music_search",
+        "kodi_music_summary",
+        "kodi_player_active",
+        "kodi_player_item",
+        "kodi_setting_get",
+        "kodi_status",
+        "kodi_tv_episodes",
+        "kodi_tv_seasons",
+    }
+)
+
+SERVER_LOCAL_TOOL_NAMES = frozenset(
+    {
+        "addon_project_map_status",
+        "addon_source_inspect",
+        "addon_source_tree",
+        "artifact_upload_zip",
+        "kodi_settings_list",
+        "managed_addon_get",
+        "managed_addon_list",
+        "managed_addon_register",
+        "repo_publish_artifact",
+        "target_info",
+        "target_list",
+    }
+)
+
+HYBRID_TOOL_NAMES = frozenset(
+    {
+        "addon_dev_loop",
+        "bridge_bootstrap_status",
+        "managed_addon_build_publish_and_stage",
+        "managed_addon_build_publish_stage_and_apply",
+        "managed_addon_validate_state",
+        "repo_publish_stage_apply_artifact",
+        "repo_stage_and_apply_addon",
+        "repo_stage_current_dev_repo",
+        "repository_bootstrap_install",
+        "repository_readiness",
+    }
+)
+
+TARGET_SCOPED_TOOL_NAMES = EXPECTED_TOOL_NAMES - SERVER_LOCAL_TOOL_NAMES - HYBRID_TOOL_NAMES
+
+assert len(EXPECTED_TOOL_NAMES) == 56
+assert len(TARGET_SCOPED_TOOL_NAMES) == 35
+assert len(SERVER_LOCAL_TOOL_NAMES) == 11
+assert len(HYBRID_TOOL_NAMES) == 10
+assert BATCH_A_TARGET_TOOL_NAMES <= TARGET_SCOPED_TOOL_NAMES

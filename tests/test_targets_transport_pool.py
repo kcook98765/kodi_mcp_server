@@ -1,5 +1,6 @@
 import json
 
+import kodi_mcp_server.targets.transport_pool as transport_pool_module
 from kodi_mcp_server.targets.registry import LegacyTargetSettings, TargetRegistry
 from kodi_mcp_server.targets.transport_pool import (
     ResolvedTargetAuth,
@@ -99,6 +100,43 @@ def test_transport_pool_resolves_refs_and_keeps_distinct_target_state():
     assert secondary.bridge.client.base_url == "https://secondary:8766"
     assert secondary.bridge.client.token == "second-token"
     assert secondary.notifications.websocket_url == "wss://secondary:9091/jsonrpc"
+
+
+def test_cached_target_id_lookup_does_not_resolve_again(monkeypatch):
+    pool = TargetTransportPool(_registry(), environ={})
+    first = pool.get("default")
+
+    def _unexpected_resolution(*_args, **_kwargs):
+        raise AssertionError("cached target id must not be resolved again")
+
+    monkeypatch.setattr(transport_pool_module, "resolve_target", _unexpected_resolution)
+
+    assert pool.get("default") is first
+
+
+def test_transport_pool_accepts_an_already_resolved_target_without_resolving_again(monkeypatch):
+    registry = _registry()
+    target = registry.get("secondary")
+    pool = TargetTransportPool(
+        registry,
+        environ={
+            "SECONDARY_USER": "second-user",
+            "SECONDARY_PASSWORD": "second-password",
+            "SECONDARY_TOKEN": "second-token",
+        },
+    )
+
+    def _unexpected_resolution(*_args, **_kwargs):
+        raise AssertionError("already-resolved target must not be resolved again")
+
+    monkeypatch.setattr(transport_pool_module, "resolve_target", _unexpected_resolution)
+
+    first = pool.get_for_target(target)
+    second = pool.get_for_target(target)
+
+    assert second is first
+    assert first.jsonrpc.transport.url == "https://secondary:8443/jsonrpc"
+    assert first.bridge.client.base_url == "https://secondary:8766"
 
 
 def test_resolved_auth_repr_does_not_expose_credential_values():

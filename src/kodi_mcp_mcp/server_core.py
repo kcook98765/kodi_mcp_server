@@ -44,6 +44,12 @@ from kodi_mcp_mcp.output_contracts import (
     apply_output_contract,
     output_schema_for,
 )
+from kodi_mcp_mcp.target_routing import (
+    finalize_target_envelope,
+    resolve_target_context,
+    schema_with_optional_target,
+)
+from kodi_mcp_mcp.tool_contract import BATCH_A_TARGET_TOOL_NAMES
 
 from kodi_mcp_server import __version__
 from kodi_mcp_server.bridge_bootstrap import inspect_bootstrap_state
@@ -63,7 +69,6 @@ from kodi_mcp_server.targets.discovery import (
 )
 from kodi_mcp_server.targets.health import probe_target_health
 from kodi_mcp_server.targets.resolver import TargetNotFoundError, resolve_target
-from kodi_mcp_server.targets.security import redact_target_sensitive
 from kodi_mcp_server.managed_addons import (
     managed_addon_build_publish_and_stage,
     managed_addon_get,
@@ -1022,12 +1027,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 ),
                 inputSchema={
                     "type": "object",
-                    "properties": {
-                        "target": {
-                            "type": "string",
-                            "pattern": r"^[a-z0-9](?:[a-z0-9._-]{0,63})$",
-                        }
-                    },
+                    "properties": {},
                     "additionalProperties": False,
                 },
             ),
@@ -1045,12 +1045,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 description="Get bridge addon status payload (bridge-provided runtime summary).",
                 inputSchema={
                     "type": "object",
-                    "properties": {
-                        "target": {
-                            "type": "string",
-                            "pattern": r"^[a-z0-9](?:[a-z0-9._-]{0,63})$",
-                        }
-                    },
+                    "properties": {},
                     "additionalProperties": False,
                 },
             ),
@@ -1246,12 +1241,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 description="Return compact Kodi GUI/window/player state through the bridge addon for UI verification.",
                 inputSchema={
                     "type": "object",
-                    "properties": {
-                        "target": {
-                            "type": "string",
-                            "pattern": r"^[a-z0-9](?:[a-z0-9._-]{0,63})$",
-                        }
-                    },
+                    "properties": {},
                     "additionalProperties": False,
                 },
             ),
@@ -2166,6 +2156,11 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
         tools = [
             tool.model_copy(
                 update={
+                    "input_schema": (
+                        schema_with_optional_target(tool.input_schema)
+                        if tool.name in BATCH_A_TARGET_TOOL_NAMES
+                        else tool.input_schema
+                    ),
                     "output_schema": output_schema_for(tool.name),
                     "annotations": ToolAnnotations(**annotation_values_for(tool.name)),
                 }
@@ -2596,10 +2591,25 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 return validation_error
 
             pending_image_content: ImageContent | None = None
-            explicit_target = None
+            target_context = None
             start = time.time()
             envelope: dict[str, Any]
             try:
+                if tool_name in BATCH_A_TARGET_TOOL_NAMES:
+                    target_context = resolve_target_context(
+                        runtime, params.arguments or {}
+                    )
+                jsonrpc_tool = (
+                    target_context.jsonrpc
+                    if target_context is not None
+                    else runtime["jsonrpc"]
+                )
+                bridge_tool = (
+                    target_context.bridge
+                    if target_context is not None
+                    else runtime["bridge"]
+                )
+
                 if tool_name == "target_list":
                     args = params.arguments or {}
                     raw_result = list_public_targets(
@@ -2630,18 +2640,11 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     transports = runtime["transport_pool"].get(target_id)
                     raw_result = await probe_target_health(target, transports)
                 elif tool_name == "bridge_health":
-                    raw_result = await runtime["bridge"].get_bridge_health()
+                    raw_result = await bridge_tool.get_bridge_health()
                 elif tool_name == "bridge_status":
-                    args = params.arguments or {}
-                    target_id = args.get("target")
-                    if target_id is None:
-                        raw_result = await runtime["bridge"].get_bridge_status()
-                    else:
-                        explicit_target = resolve_target(runtime["registry"], target_id)
-                        transports = runtime["transport_pool"].get(target_id)
-                        raw_result = await transports.bridge.get_bridge_status()
+                    raw_result = await bridge_tool.get_bridge_status()
                 elif tool_name == "bridge_runtime_info":
-                    raw_result = await runtime["bridge"].get_bridge_runtime_info()
+                    raw_result = await bridge_tool.get_bridge_runtime_info()
                 elif tool_name == "bridge_bootstrap_status":
                     raw_result = await inspect_bootstrap_state(
                         jsonrpc_tool=runtime["jsonrpc"],
@@ -2669,9 +2672,9 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         max_bytes = LOG_DEFAULT_MAX_BYTES
 
                     if tool_name == "bridge_log_tail":
-                        raw_result = await runtime["bridge"].get_bridge_log_tail(lines=lines)
+                        raw_result = await bridge_tool.get_bridge_log_tail(lines=lines)
                     else:
-                        raw_result = await runtime["bridge"].get_bridge_log_markers(lines=lines)
+                        raw_result = await bridge_tool.get_bridge_log_markers(lines=lines)
                     raw_result = _bound_log_response(raw_result, max_bytes)
                 elif tool_name == "bridge_log_recent_errors":
                     args = params.arguments or {}
@@ -2683,7 +2686,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     max_bytes = max_bytes if isinstance(max_bytes, int) else LOG_DEFAULT_MAX_BYTES
                     pattern = args.get("pattern")
                     raw_result = await _bridge_log_recent_errors(
-                        runtime["bridge"],
+                        bridge_tool,
                         lines=lines,
                         pattern=pattern if isinstance(pattern, str) and pattern.strip() else None,
                         max_bytes=max_bytes,
@@ -2696,7 +2699,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     addon_type = args.get("type")
                     enabled = args.get("enabled")
 
-                    raw_result = await runtime["jsonrpc"].list_addons(
+                    raw_result = await jsonrpc_tool.list_addons(
                         type=addon_type if isinstance(addon_type, str) and addon_type else None,
                         enabled=enabled if isinstance(enabled, bool) else None,
                     )
@@ -2705,7 +2708,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     if not isinstance(args, dict):
                         args = {}
                     addonid = args.get("addonid")
-                    raw_result = await runtime["jsonrpc"].get_addon_details(addonid=addonid)
+                    raw_result = await jsonrpc_tool.get_addon_details(addonid=addonid)
                 elif tool_name == "addon_execute":
                     args = params.arguments or {}
                     if not isinstance(args, dict):
@@ -2869,12 +2872,12 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     max_entries = max_entries if isinstance(max_entries, int) else 200
                     raw_result = _addon_source_tree(str(args.get("source_path") or "").strip(), max_entries=max_entries)
                 elif tool_name == "kodi_library_summary":
-                    raw_result = await LibraryTool(runtime["jsonrpc"]).summary()
+                    raw_result = await LibraryTool(jsonrpc_tool).summary()
                 elif tool_name == "kodi_music_summary":
-                    raw_result = await MusicTool(runtime["jsonrpc"]).summary()
+                    raw_result = await MusicTool(jsonrpc_tool).summary()
                 elif tool_name == "kodi_music_search":
                     args = params.arguments or {}
-                    raw_result = await MusicTool(runtime["jsonrpc"]).search(
+                    raw_result = await MusicTool(jsonrpc_tool).search(
                         query=args["query"],
                         media_type=args["media_type"],
                         start=args.get("start", 0),
@@ -2882,7 +2885,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     )
                 elif tool_name == "kodi_music_browse":
                     args = params.arguments or {}
-                    raw_result = await MusicTool(runtime["jsonrpc"]).browse(
+                    raw_result = await MusicTool(jsonrpc_tool).browse(
                         category=args["category"],
                         start=args.get("start", 0),
                         limit=args.get("limit", 10),
@@ -2899,7 +2902,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     )
                 elif tool_name == "kodi_setting_get":
                     args = params.arguments or {}
-                    raw_result = await SettingsTool(runtime["jsonrpc"]).get_setting(
+                    raw_result = await SettingsTool(jsonrpc_tool).get_setting(
                         setting_id=args["setting_id"]
                     )
                 elif tool_name == "kodi_setting_set":
@@ -2909,21 +2912,21 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     )
                 elif tool_name == "kodi_artist_albums":
                     args = params.arguments or {}
-                    raw_result = await MusicTool(runtime["jsonrpc"]).artist_albums(
+                    raw_result = await MusicTool(jsonrpc_tool).artist_albums(
                         artist_id=args["artist_id"],
                         start=args.get("start", 0),
                         limit=args.get("limit", 10),
                     )
                 elif tool_name == "kodi_album_songs":
                     args = params.arguments or {}
-                    raw_result = await MusicTool(runtime["jsonrpc"]).album_songs(
+                    raw_result = await MusicTool(jsonrpc_tool).album_songs(
                         album_id=args["album_id"],
                         start=args.get("start", 0),
                         limit=args.get("limit", 10),
                     )
                 elif tool_name == "kodi_library_search":
                     args = params.arguments or {}
-                    raw_result = await LibraryTool(runtime["jsonrpc"]).search(
+                    raw_result = await LibraryTool(jsonrpc_tool).search(
                         query=args["query"],
                         media_type=args["media_type"],
                         start=args.get("start", 0),
@@ -2931,28 +2934,28 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     )
                 elif tool_name == "kodi_library_browse":
                     args = params.arguments or {}
-                    raw_result = await LibraryTool(runtime["jsonrpc"]).browse(
+                    raw_result = await LibraryTool(jsonrpc_tool).browse(
                         category=args["category"],
                         start=args.get("start", 0),
                         limit=args.get("limit", 10),
                     )
                 elif tool_name == "kodi_tv_seasons":
                     args = params.arguments or {}
-                    raw_result = await LibraryTool(runtime["jsonrpc"]).seasons(
+                    raw_result = await LibraryTool(jsonrpc_tool).seasons(
                         tvshow_id=args["tvshow_id"],
                         start=args.get("start", 0),
                         limit=args.get("limit", 10),
                     )
                 elif tool_name == "kodi_tv_episodes":
                     args = params.arguments or {}
-                    raw_result = await LibraryTool(runtime["jsonrpc"]).episodes(
+                    raw_result = await LibraryTool(jsonrpc_tool).episodes(
                         tvshow_id=args["tvshow_id"],
                         season=args["season"],
                         start=args.get("start", 0),
                         limit=args.get("limit", 10),
                     )
                 elif tool_name == "kodi_player_active":
-                    raw_result = await runtime["jsonrpc"].get_active_players()
+                    raw_result = await jsonrpc_tool.get_active_players()
                 elif tool_name == "kodi_player_open":
                     args = params.arguments or {}
                     raw_result = await runtime["jsonrpc"].open_library_item(
@@ -2964,7 +2967,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     if not isinstance(args, dict):
                         args = {}
                     playerid = args.get("playerid", 1)
-                    raw_result = await runtime["jsonrpc"].get_player_item(playerid=playerid)
+                    raw_result = await jsonrpc_tool.get_player_item(playerid=playerid)
                 elif tool_name == "kodi_player_seek":
                     args = params.arguments or {}
                     if not isinstance(args, dict):
@@ -3067,7 +3070,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     def _as_bool(v: Any, default: bool) -> bool:
                         return v if isinstance(v, bool) else default
 
-                    raw_result = await runtime["jsonrpc"].introspect_jsonrpc(
+                    raw_result = await jsonrpc_tool.introspect_jsonrpc(
                         summary=_as_bool(summary, True),
                         getdescriptions=_as_bool(getdescriptions, False),
                         getmetadata=_as_bool(getmetadata, False),
@@ -3183,14 +3186,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         raw_value["result"] = bridge_result
                         raw_result = raw_value
                 elif tool_name == "kodi_gui_state":
-                    args = params.arguments or {}
-                    target_id = args.get("target")
-                    if target_id is None:
-                        raw_result = await runtime["bridge"].gui_state()
-                    else:
-                        explicit_target = resolve_target(runtime["registry"], target_id)
-                        transports = runtime["transport_pool"].get(target_id)
-                        raw_result = await transports.bridge.gui_state()
+                    raw_result = await bridge_tool.gui_state()
                 elif tool_name == "managed_addon_register":
                     args = params.arguments or {}
                     if not isinstance(args, dict):
@@ -3457,15 +3453,13 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         runtime_jsonrpc_tool=runtime["jsonrpc"],
                     )
                 elif tool_name == "kodi_status":
-                    args = params.arguments or {}
-                    target_id = args.get("target")
-                    if target_id is None:
+                    if target_context is None or not target_context.explicit:
                         raw_result = await _kodi_status(runtime)
                     else:
-                        explicit_target = resolve_target(runtime["registry"], target_id)
-                        transports = runtime["transport_pool"].get(target_id)
                         raw_result = await _kodi_status(
-                            runtime, target=explicit_target, transports=transports
+                            runtime,
+                            target=target_context.target,
+                            transports=target_context.transports,
                         )
                 else:
                     raise NotImplementedError(f"no dispatch implementation for whitelisted tool {tool_name!r}")
@@ -3534,13 +3528,8 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     "raw": None,
                 }
 
-            if explicit_target is not None:
-                envelope = redact_target_sensitive(envelope, explicit_target)
-                raw = envelope.get("raw")
-                raw = dict(raw) if isinstance(raw, dict) else {"response": raw}
-                raw["target_id"] = explicit_target.target_id
-                raw["target_name"] = explicit_target.name
-                envelope["raw"] = raw
+            if target_context is not None:
+                envelope = finalize_target_envelope(envelope, target_context)
 
             extra_content = (
                 [pending_image_content]
