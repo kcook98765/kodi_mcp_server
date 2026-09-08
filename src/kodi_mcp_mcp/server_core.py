@@ -49,11 +49,6 @@ from kodi_mcp_server import __version__
 from kodi_mcp_server.bridge_bootstrap import inspect_bootstrap_state
 from kodi_mcp_server.repository_bootstrap import install_repository_bootstrap
 from kodi_mcp_server.repository_readiness import inspect_repository_readiness
-from kodi_mcp_server.composition import (
-    build_bridge_tool,
-    build_jsonrpc_tool,
-    build_notification_probe,
-)
 from kodi_mcp_server.config import (
     BRIDGE_BOOTSTRAP_MANIFEST_PATH,
     KODI_BRIDGE_BASE_URL,
@@ -61,6 +56,7 @@ from kodi_mcp_server.config import (
     REPO_BASE_URL,
     VISION_ENABLED,
 )
+from kodi_mcp_server.targets.runtime import build_target_runtime
 from kodi_mcp_server.managed_addons import (
     managed_addon_build_publish_and_stage,
     managed_addon_get,
@@ -899,20 +895,9 @@ async def _kodi_status(runtime: Runtime) -> dict[str, Any]:
 
 
 def build_runtime() -> Runtime:
-    """Build the shared runtime once at startup."""
+    """Build the shared, registry-aware runtime once at startup."""
 
-    notifications = None
-    try:
-        # Optional dependency (`websockets`) may not be installed in all environments.
-        notifications = build_notification_probe()
-    except Exception:
-        notifications = None
-
-    return {
-        "bridge": build_bridge_tool(),
-        "jsonrpc": build_jsonrpc_tool(),
-        "notifications": notifications,
-    }
+    return build_target_runtime()
 
 
 def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
