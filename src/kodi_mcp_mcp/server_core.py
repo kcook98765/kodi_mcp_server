@@ -61,7 +61,9 @@ from kodi_mcp_server.targets.discovery import (
     get_public_target_info,
     list_public_targets,
 )
-from kodi_mcp_server.targets.resolver import TargetNotFoundError
+from kodi_mcp_server.targets.health import probe_target_health
+from kodi_mcp_server.targets.resolver import TargetNotFoundError, resolve_target
+from kodi_mcp_server.targets.security import redact_target_sensitive
 from kodi_mcp_server.managed_addons import (
     managed_addon_build_publish_and_stage,
     managed_addon_get,
@@ -818,29 +820,42 @@ async def _bridge_log_recent_errors(
     }
 
 
-async def _kodi_status(runtime: Runtime) -> dict[str, Any]:
+async def _kodi_status(
+    runtime: Runtime,
+    *,
+    target: Any | None = None,
+    transports: Any | None = None,
+) -> dict[str, Any]:
     """Direct-call implementation for `kodi_status`.
 
     Returns a dict matching the FastAPI `/status` endpoint shape.
     """
 
+    jsonrpc_url = KODI_JSONRPC_URL if target is None else target.endpoints.jsonrpc_url
+    bridge_url = KODI_BRIDGE_BASE_URL if target is None else target.endpoints.bridge_url
+    jsonrpc_tool = runtime["jsonrpc"] if transports is None else transports.jsonrpc
+    bridge_tool = runtime["bridge"] if transports is None else transports.bridge
+
     result: dict[str, Any] = {
         "server": {"status": "running"},
-        "config": {"loaded": bool(KODI_JSONRPC_URL and KODI_BRIDGE_BASE_URL)},
-        "jsonrpc": {"status": "unknown", "url": KODI_JSONRPC_URL},
+        "config": {"loaded": bool(jsonrpc_url and bridge_url)},
+        "jsonrpc": {"status": "unknown"},
         "kodi": {"status": "unknown"},
-        "bridge": {"status": "unknown", "url": KODI_BRIDGE_BASE_URL},
+        "bridge": {"status": "unknown"},
         "vision": {
             "enabled": VISION_ENABLED,
             "tools_available": [],
             "note": "Screenshot capture is available; vision analysis tools require explicit vision model configuration.",
         },
     }
+    if target is None:
+        result["jsonrpc"]["url"] = KODI_JSONRPC_URL
+        result["bridge"]["url"] = KODI_BRIDGE_BASE_URL
 
     # Test JSON-RPC connectivity (simple ping)
-    if KODI_JSONRPC_URL:
+    if jsonrpc_url:
         try:
-            jsonrpc_response = await runtime["jsonrpc"].get_jsonrpc_version()
+            jsonrpc_response = await jsonrpc_tool.get_jsonrpc_version()
             if getattr(jsonrpc_response, "error", None):
                 result["jsonrpc"]["status"] = "error"
                 result["jsonrpc"]["error"] = getattr(jsonrpc_response, "error", None)
@@ -852,9 +867,7 @@ async def _kodi_status(runtime: Runtime) -> dict[str, Any]:
                 if isinstance(jsonrpc_result, dict) and "version" in jsonrpc_result:
                     result["jsonrpc"]["version"] = jsonrpc_result["version"]
 
-                application_response = await runtime[
-                    "jsonrpc"
-                ].get_application_properties()
+                application_response = await jsonrpc_tool.get_application_properties()
                 if getattr(application_response, "error", None):
                     result["kodi"]["status"] = "error"
                     result["kodi"]["error"] = getattr(
@@ -884,9 +897,9 @@ async def _kodi_status(runtime: Runtime) -> dict[str, Any]:
             result["kodi"]["error"] = str(exc)
 
     # Test bridge connectivity
-    if KODI_BRIDGE_BASE_URL:
+    if bridge_url:
         try:
-            bridge_response = await runtime["bridge"].get_bridge_health()
+            bridge_response = await bridge_tool.get_bridge_health()
             if getattr(bridge_response, "error", None):
                 result["bridge"]["status"] = "error"
                 result["bridge"]["error"] = getattr(bridge_response, "error", None)
@@ -968,6 +981,24 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 },
             ),
             Tool(
+                name="target_health",
+                description=(
+                    "Probe JSON-RPC, bridge, and configured WebSocket connectivity "
+                    "for one registered Kodi target without changing routing state."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "target_id": {
+                            "type": "string",
+                            "pattern": r"^[a-z0-9](?:[a-z0-9._-]{0,63})$",
+                        }
+                    },
+                    "required": ["target_id"],
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
                 name="kodi_status",
                 description=(
                     "Get end-to-end server status, including config loaded state "
@@ -975,7 +1006,12 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 ),
                 inputSchema={
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "target": {
+                            "type": "string",
+                            "pattern": r"^[a-z0-9](?:[a-z0-9._-]{0,63})$",
+                        }
+                    },
                     "additionalProperties": False,
                 },
             ),
@@ -993,7 +1029,12 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 description="Get bridge addon status payload (bridge-provided runtime summary).",
                 inputSchema={
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "target": {
+                            "type": "string",
+                            "pattern": r"^[a-z0-9](?:[a-z0-9._-]{0,63})$",
+                        }
+                    },
                     "additionalProperties": False,
                 },
             ),
@@ -1189,7 +1230,12 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 description="Return compact Kodi GUI/window/player state through the bridge addon for UI verification.",
                 inputSchema={
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "target": {
+                            "type": "string",
+                            "pattern": r"^[a-z0-9](?:[a-z0-9._-]{0,63})$",
+                        }
+                    },
                     "additionalProperties": False,
                 },
             ),
@@ -2120,6 +2166,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
         if tool_name in {
             "target_list",
             "target_info",
+            "target_health",
             "kodi_status",
             "bridge_health",
             "bridge_status",
@@ -2533,6 +2580,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 return validation_error
 
             pending_image_content: ImageContent | None = None
+            explicit_target = None
             start = time.time()
             envelope: dict[str, Any]
             try:
@@ -2559,10 +2607,23 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                             "error_code": 404,
                             "latency_ms": None,
                         }
+                elif tool_name == "target_health":
+                    args = params.arguments or {}
+                    target_id = args["target_id"]
+                    target = resolve_target(runtime["registry"], target_id)
+                    transports = runtime["transport_pool"].get(target_id)
+                    raw_result = await probe_target_health(target, transports)
                 elif tool_name == "bridge_health":
                     raw_result = await runtime["bridge"].get_bridge_health()
                 elif tool_name == "bridge_status":
-                    raw_result = await runtime["bridge"].get_bridge_status()
+                    args = params.arguments or {}
+                    target_id = args.get("target")
+                    if target_id is None:
+                        raw_result = await runtime["bridge"].get_bridge_status()
+                    else:
+                        explicit_target = resolve_target(runtime["registry"], target_id)
+                        transports = runtime["transport_pool"].get(target_id)
+                        raw_result = await transports.bridge.get_bridge_status()
                 elif tool_name == "bridge_runtime_info":
                     raw_result = await runtime["bridge"].get_bridge_runtime_info()
                 elif tool_name == "bridge_bootstrap_status":
@@ -3106,7 +3167,14 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         raw_value["result"] = bridge_result
                         raw_result = raw_value
                 elif tool_name == "kodi_gui_state":
-                    raw_result = await runtime["bridge"].gui_state()
+                    args = params.arguments or {}
+                    target_id = args.get("target")
+                    if target_id is None:
+                        raw_result = await runtime["bridge"].gui_state()
+                    else:
+                        explicit_target = resolve_target(runtime["registry"], target_id)
+                        transports = runtime["transport_pool"].get(target_id)
+                        raw_result = await transports.bridge.gui_state()
                 elif tool_name == "managed_addon_register":
                     args = params.arguments or {}
                     if not isinstance(args, dict):
@@ -3373,7 +3441,16 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         runtime_jsonrpc_tool=runtime["jsonrpc"],
                     )
                 elif tool_name == "kodi_status":
-                    raw_result = await _kodi_status(runtime)
+                    args = params.arguments or {}
+                    target_id = args.get("target")
+                    if target_id is None:
+                        raw_result = await _kodi_status(runtime)
+                    else:
+                        explicit_target = resolve_target(runtime["registry"], target_id)
+                        transports = runtime["transport_pool"].get(target_id)
+                        raw_result = await _kodi_status(
+                            runtime, target=explicit_target, transports=transports
+                        )
                 else:
                     raise NotImplementedError(f"no dispatch implementation for whitelisted tool {tool_name!r}")
 
@@ -3414,6 +3491,19 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     }
                 if tool_name in LOG_TOOL_NAMES and envelope.get("ok"):
                     envelope["raw"] = _compact_log_raw(raw_value, envelope.get("data"))
+            except TargetNotFoundError as exc:
+                latency_ms = int((time.time() - start) * 1000)
+                envelope = {
+                    "ok": False,
+                    "tool": tool_name,
+                    "data": None,
+                    "error": str(exc),
+                    "error_type": "not_found",
+                    "error_code": 404,
+                    "latency_ms": latency_ms,
+                    "request_id": None,
+                    "raw": None,
+                }
             except Exception as exc:
                 latency_ms = int((time.time() - start) * 1000)
                 envelope = {
@@ -3427,6 +3517,14 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     "request_id": None,
                     "raw": None,
                 }
+
+            if explicit_target is not None:
+                envelope = redact_target_sensitive(envelope, explicit_target)
+                raw = envelope.get("raw")
+                raw = dict(raw) if isinstance(raw, dict) else {"response": raw}
+                raw["target_id"] = explicit_target.target_id
+                raw["target_name"] = explicit_target.name
+                envelope["raw"] = raw
 
             extra_content = (
                 [pending_image_content]

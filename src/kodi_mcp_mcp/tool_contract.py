@@ -55,6 +55,7 @@ EXPECTED_TOOL_NAMES = frozenset(
         "repo_stage_current_dev_repo",
         "repository_bootstrap_install",
         "repository_readiness",
+        "target_health",
         "target_info",
         "target_list",
     }
