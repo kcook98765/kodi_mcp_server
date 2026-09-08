@@ -122,6 +122,57 @@ _TARGET_INFO_DATA = {
     "additionalProperties": False,
 }
 
+_TARGET_HEALTH_ERROR = {
+    "type": ["object", "null"],
+    "properties": {
+        "type": {"type": "string", "minLength": 1},
+        "code": {"type": ["integer", "string", "null"]},
+        "message": {"type": "string", "minLength": 1},
+    },
+    "required": ["type", "code", "message"],
+    "additionalProperties": False,
+}
+
+_TARGET_HEALTH_CHANNEL = {
+    "type": "object",
+    "properties": {
+        "configured": {"type": "boolean"},
+        "status": {"enum": ["healthy", "unhealthy", "not_configured"]},
+        "latency_ms": {"type": ["integer", "null"], "minimum": 0},
+        "error": _TARGET_HEALTH_ERROR,
+    },
+    "required": ["configured", "status", "latency_ms", "error"],
+    "additionalProperties": False,
+}
+
+_TARGET_HEALTH_DATA = {
+    "type": "object",
+    "properties": {
+        "target_id": {"type": "string"},
+        "target_name": {"type": "string"},
+        "expected_kodi_version": _NULLABLE_STRING,
+        "overall_status": {"enum": ["healthy", "degraded", "unhealthy"]},
+        "channels": {
+            "type": "object",
+            "properties": {
+                "jsonrpc": _TARGET_HEALTH_CHANNEL,
+                "bridge": _TARGET_HEALTH_CHANNEL,
+                "websocket": _TARGET_HEALTH_CHANNEL,
+            },
+            "required": ["jsonrpc", "bridge", "websocket"],
+            "additionalProperties": False,
+        },
+    },
+    "required": [
+        "target_id",
+        "target_name",
+        "expected_kodi_version",
+        "overall_status",
+        "channels",
+    ],
+    "additionalProperties": False,
+}
+
 _STATUS_DATA = {
     "type": "object",
     "properties": {
@@ -756,6 +807,7 @@ _TV_EPISODES_DATA = {
 _DATA_SCHEMAS: dict[str, dict[str, Any]] = {
     "target_list": _TARGET_LIST_DATA,
     "target_info": _TARGET_INFO_DATA,
+    "target_health": _TARGET_HEALTH_DATA,
     "kodi_status": _STATUS_DATA,
     "bridge_health": _OBJECT,
     "bridge_status": _OBJECT,
@@ -813,6 +865,7 @@ _READ_ONLY = frozenset(
     {
         "target_list",
         "target_info",
+        "target_health",
         "kodi_status",
         "bridge_health",
         "bridge_status",

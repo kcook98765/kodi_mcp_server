@@ -23,6 +23,7 @@ _SCHEMALESS_TOOLS = {"addon_execute", "jsonrpc_introspect"}
 _READ_ONLY_TOOLS = {
     "target_list",
     "target_info",
+    "target_health",
     "kodi_status",
     "bridge_health",
     "bridge_status",
@@ -187,9 +188,27 @@ async def test_tools_list_advertises_reviewed_output_contract_scope_without_inpu
         Draft202012Validator.check_schema(tool.output_schema)
         assert tool.output_schema["type"] == "object"
 
-    assert by_name["kodi_status"].input_schema == {
+    optional_target_schema = {
         "type": "object",
-        "properties": {},
+        "properties": {
+            "target": {
+                "type": "string",
+                "pattern": r"^[a-z0-9](?:[a-z0-9._-]{0,63})$",
+            }
+        },
+        "additionalProperties": False,
+    }
+    for name in ("kodi_status", "bridge_status", "kodi_gui_state"):
+        assert by_name[name].input_schema == optional_target_schema
+    assert by_name["target_health"].input_schema == {
+        "type": "object",
+        "properties": {
+            "target_id": {
+                "type": "string",
+                "pattern": r"^[a-z0-9](?:[a-z0-9._-]{0,63})$",
+            }
+        },
+        "required": ["target_id"],
         "additionalProperties": False,
     }
     assert by_name["addon_execute"].input_schema["anyOf"] == [
@@ -424,6 +443,32 @@ async def test_all_advertised_contracts_validate_canonical_success_and_failure_f
                 "bridge": {"configured": True, "scheme": "http"},
                 "websocket": {"configured": False, "scheme": None},
                 "tcp": {"configured": False},
+            },
+        },
+        "target_health": {
+            "target_id": "default",
+            "target_name": "Default Kodi",
+            "expected_kodi_version": None,
+            "overall_status": "healthy",
+            "channels": {
+                "jsonrpc": {
+                    "configured": True,
+                    "status": "healthy",
+                    "latency_ms": 1,
+                    "error": None,
+                },
+                "bridge": {
+                    "configured": True,
+                    "status": "healthy",
+                    "latency_ms": 1,
+                    "error": None,
+                },
+                "websocket": {
+                    "configured": False,
+                    "status": "not_configured",
+                    "latency_ms": None,
+                    "error": None,
+                },
             },
         },
         "kodi_status": {

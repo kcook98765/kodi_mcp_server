@@ -120,6 +120,26 @@ async def test_v2_tools_list_complete_and_schemas_stable():
                 "required": ["target_id"],
                 "additionalProperties": False,
             }
+            assert by_name["target_health"].input_schema == by_name[
+                "target_info"
+            ].input_schema
+            optional_target_schema = {
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "pattern": r"^[a-z0-9](?:[a-z0-9._-]{0,63})$",
+                    }
+                },
+                "additionalProperties": False,
+            }
+            for name in ("kodi_status", "bridge_status", "kodi_gui_state"):
+                assert by_name[name].input_schema == optional_target_schema
+            assert {
+                name
+                for name, tool in by_name.items()
+                if "target" in tool.input_schema.get("properties", {})
+            } == {"kodi_status", "bridge_status", "kodi_gui_state"}
 
 
 @pytest.mark.asyncio
