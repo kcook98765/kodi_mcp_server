@@ -27,6 +27,7 @@ _CREDENTIAL_FIELDS = frozenset(
 )
 _LOCATION_FIELDS = frozenset(
     {
+        "address",
         "bridge_url",
         "endpoint",
         "endpoint_url",
@@ -39,6 +40,7 @@ _LOCATION_FIELDS = frozenset(
         "websocket_url",
     }
 )
+_PORT_FIELDS = frozenset({"bind_port", "port"})
 _ERROR_TEXT_FIELDS = frozenset(
     {"description", "detail", "diagnostic", "error", "message", "reason"}
 )
@@ -111,6 +113,8 @@ def redact_target_sensitive(
             return [redact_field(nested) for nested in item]
         if isinstance(item, tuple):
             return tuple(redact_field(nested) for nested in item)
+        if item is not None:
+            return "[redacted]"
         return item
 
     def redact(item: Any, *, in_error: bool = False) -> Any:
@@ -124,12 +128,13 @@ def redact_target_sensitive(
                     ("_password", "_secret", "_token", "_username")
                 )
                 location_field = normalized in _LOCATION_FIELDS or normalized.endswith(
-                    ("_endpoint", "_host", "_hostname", "_url")
+                    ("_address", "_endpoint", "_host", "_hostname", "_url")
                 )
+                port_field = normalized in _PORT_FIELDS or normalized.endswith("_port")
                 if credential_field:
                     sanitized[key] = redact_field(nested)
-                elif location_field:
-                    sanitized[key] = redact(nested, in_error=True)
+                elif location_field or port_field:
+                    sanitized[key] = redact_field(nested)
                 else:
                     error_field = normalized in _ERROR_TEXT_FIELDS or (
                         normalized.endswith("_error")

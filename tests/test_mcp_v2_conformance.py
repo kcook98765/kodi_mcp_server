@@ -123,23 +123,44 @@ async def test_v2_tools_list_complete_and_schemas_stable():
             assert by_name["target_health"].input_schema == by_name[
                 "target_info"
             ].input_schema
-            optional_target_schema = {
-                "type": "object",
-                "properties": {
-                    "target": {
-                        "type": "string",
-                        "pattern": r"^[a-z0-9](?:[a-z0-9._-]{0,63})$",
-                    }
-                },
-                "additionalProperties": False,
+            target_property = {
+                "type": "string",
+                "pattern": r"^[a-z0-9](?:[a-z0-9._-]{0,63})$",
             }
-            for name in ("kodi_status", "bridge_status", "kodi_gui_state"):
-                assert by_name[name].input_schema == optional_target_schema
+            batch_a_target_tools = {
+                "addon_details",
+                "addon_list",
+                "bridge_health",
+                "bridge_log_markers",
+                "bridge_log_recent_errors",
+                "bridge_log_tail",
+                "bridge_runtime_info",
+                "bridge_status",
+                "jsonrpc_introspect",
+                "kodi_album_songs",
+                "kodi_artist_albums",
+                "kodi_gui_state",
+                "kodi_library_browse",
+                "kodi_library_search",
+                "kodi_library_summary",
+                "kodi_music_browse",
+                "kodi_music_search",
+                "kodi_music_summary",
+                "kodi_player_active",
+                "kodi_player_item",
+                "kodi_setting_get",
+                "kodi_status",
+                "kodi_tv_episodes",
+                "kodi_tv_seasons",
+            }
+            for name in batch_a_target_tools:
+                assert by_name[name].input_schema["properties"]["target"] == target_property
+                assert "target" not in by_name[name].input_schema.get("required", [])
             assert {
                 name
                 for name, tool in by_name.items()
                 if "target" in tool.input_schema.get("properties", {})
-            } == {"kodi_status", "bridge_status", "kodi_gui_state"}
+            } == batch_a_target_tools
 
 
 @pytest.mark.asyncio

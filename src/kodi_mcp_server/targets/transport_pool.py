@@ -54,9 +54,16 @@ class TargetTransportPool:
         cached = self._cache.get(target_id)
         if cached is not None:
             return cached
-        target = resolve_target(self._registry, target_id)
+        return self.get_for_target(resolve_target(self._registry, target_id))
+
+    def get_for_target(self, target: Target) -> TargetTransports:
+        """Return transports for an already-resolved canonical target."""
+
+        cached = self._cache.get(target.target_id)
+        if cached is not None:
+            return cached
         transports = self._build(target)
-        self._cache[target_id] = transports
+        self._cache[target.target_id] = transports
         return transports
 
     def _build(self, target: Target) -> TargetTransports:

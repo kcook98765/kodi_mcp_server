@@ -151,6 +151,9 @@ class _Pool:
         self.calls.append(target_id)
         return self.bundles[target_id]
 
+    def get_for_target(self, target) -> _Bundle:
+        return self.get(target.target_id)
+
 
 def _target(target_id: str, *, websocket: bool = True) -> dict[str, Any]:
     upper = target_id.upper()
@@ -668,6 +671,54 @@ def test_target_redaction_never_rewrites_structural_or_identity_fields():
         "code": "server_error",
         "message": "credential [redacted] was rejected",
     }
+
+
+def test_target_redaction_intrinsically_redacts_location_and_numeric_port_fields():
+    runtime, _, _ = _runtime()
+    target = runtime["registry"].get("kodi21")
+    value = {
+        "tool": "bridge_runtime_info",
+        "target_id": "kodi21",
+        "addon_id": "service.kodi_mcp",
+        "status": "ok",
+        "version": "0.2.40",
+        "label": "Kodi MCP bridge runtime",
+        "transport_label": "Host and port policy is descriptive text",
+        "host": "top.internal",
+        "port": 8765,
+        "nested": {
+            "backend_host": "nested.internal",
+            "admin_hostname": "admin.internal",
+            "bind_address": "0.0.0.0",
+            "service_port": 9090,
+            "endpoint": "https://endpoint.internal/status",
+            "metadata_url": "https://metadata.internal/info",
+            "status": "healthy",
+            "version": "21.3",
+            "label": "ordinary description",
+        },
+    }
+
+    sanitized = redact_target_sensitive(value, target, environ={})
+
+    assert sanitized["host"] == "[redacted]"
+    assert sanitized["port"] == "[redacted]"
+    assert sanitized["nested"]["backend_host"] == "[redacted]"
+    assert sanitized["nested"]["admin_hostname"] == "[redacted]"
+    assert sanitized["nested"]["bind_address"] == "[redacted]"
+    assert sanitized["nested"]["service_port"] == "[redacted]"
+    assert sanitized["nested"]["endpoint"] == "[redacted]"
+    assert sanitized["nested"]["metadata_url"] == "[redacted]"
+    assert sanitized["tool"] == "bridge_runtime_info"
+    assert sanitized["target_id"] == "kodi21"
+    assert sanitized["addon_id"] == "service.kodi_mcp"
+    assert sanitized["status"] == "ok"
+    assert sanitized["version"] == "0.2.40"
+    assert sanitized["label"] == "Kodi MCP bridge runtime"
+    assert sanitized["transport_label"] == "Host and port policy is descriptive text"
+    assert sanitized["nested"]["status"] == "healthy"
+    assert sanitized["nested"]["version"] == "21.3"
+    assert sanitized["nested"]["label"] == "ordinary description"
 
 
 @pytest.mark.asyncio
