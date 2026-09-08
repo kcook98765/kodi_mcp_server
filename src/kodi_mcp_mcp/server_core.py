@@ -57,6 +57,11 @@ from kodi_mcp_server.config import (
     VISION_ENABLED,
 )
 from kodi_mcp_server.targets.runtime import build_target_runtime
+from kodi_mcp_server.targets.discovery import (
+    get_public_target_info,
+    list_public_targets,
+)
+from kodi_mcp_server.targets.resolver import TargetNotFoundError
 from kodi_mcp_server.managed_addons import (
     managed_addon_build_publish_and_stage,
     managed_addon_get,
@@ -919,6 +924,49 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
         """Return the tool list."""
 
         tools: list[Tool] = [
+            Tool(
+                name="target_list",
+                description=(
+                    "List configured Kodi targets using safe public metadata only. "
+                    "This read-only configuration view does not check reachability."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "group": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": r"\S",
+                        },
+                        "tag": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "pattern": r"\S",
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+            ),
+            Tool(
+                name="target_info",
+                description=(
+                    "Inspect safe configuration metadata for one Kodi target without "
+                    "constructing transports or checking reachability."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "target_id": {
+                            "type": "string",
+                            "pattern": r"^[a-z0-9](?:[a-z0-9._-]{0,63})$",
+                        }
+                    },
+                    "required": ["target_id"],
+                    "additionalProperties": False,
+                },
+            ),
             Tool(
                 name="kodi_status",
                 description=(
@@ -2070,6 +2118,8 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
         tool_name = params.name
 
         if tool_name in {
+            "target_list",
+            "target_info",
             "kodi_status",
             "bridge_health",
             "bridge_status",
@@ -2486,7 +2536,30 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
             start = time.time()
             envelope: dict[str, Any]
             try:
-                if tool_name == "bridge_health":
+                if tool_name == "target_list":
+                    args = params.arguments or {}
+                    raw_result = list_public_targets(
+                        runtime["registry"],
+                        group=args.get("group"),
+                        tag=args.get("tag"),
+                    )
+                elif tool_name == "target_info":
+                    args = params.arguments or {}
+                    target_id = args["target_id"]
+                    try:
+                        raw_result = get_public_target_info(
+                            runtime["registry"], target_id
+                        )
+                    except TargetNotFoundError as exc:
+                        raw_result = {
+                            "request_id": None,
+                            "result": None,
+                            "error": str(exc),
+                            "error_type": "not_found",
+                            "error_code": 404,
+                            "latency_ms": None,
+                        }
+                elif tool_name == "bridge_health":
                     raw_result = await runtime["bridge"].get_bridge_health()
                 elif tool_name == "bridge_status":
                     raw_result = await runtime["bridge"].get_bridge_status()

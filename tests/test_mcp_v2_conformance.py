@@ -91,6 +91,35 @@ async def test_v2_tools_list_complete_and_schemas_stable():
                 assert tool.input_schema["additionalProperties"] is False, tool_name
             status = by_name["kodi_status"]
             assert status.description.startswith("Get end-to-end server status")
+            assert by_name["target_list"].input_schema == {
+                "type": "object",
+                "properties": {
+                    "group": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": r"\S",
+                    },
+                    "tag": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128,
+                        "pattern": r"\S",
+                    },
+                },
+                "additionalProperties": False,
+            }
+            assert by_name["target_info"].input_schema == {
+                "type": "object",
+                "properties": {
+                    "target_id": {
+                        "type": "string",
+                        "pattern": r"^[a-z0-9](?:[a-z0-9._-]{0,63})$",
+                    }
+                },
+                "required": ["target_id"],
+                "additionalProperties": False,
+            }
 
 
 @pytest.mark.asyncio
