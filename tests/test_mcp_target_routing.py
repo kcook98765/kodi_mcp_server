@@ -7,11 +7,13 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
+from mcp.client import Client
 from mcp.types import CallToolRequestParams
 
 from kodi_mcp_mcp.server_core import build_mcp_server
 from kodi_mcp_server.models.messages import ResponseMessage
 from kodi_mcp_server.targets.registry import LegacyTargetSettings, TargetRegistry
+from kodi_mcp_server.targets.security import redact_target_sensitive
 
 
 class _JsonRpc:
@@ -107,8 +109,29 @@ class _Notifications:
 
 class _RaisingBridge(_Bridge):
     async def get_bridge_status(self):
-        raise RuntimeError(
-            "https://kodi21.routing-secret.invalid/bridge resolved-token"
+        raise RuntimeError("https://kodi21.routing-secret.invalid/bridge mcp")
+
+
+class _IdentityBridge(_Bridge):
+    async def get_bridge_status(self):
+        self.calls.append("get_bridge_status")
+        return ResponseMessage(
+            request_id=f"bridge-status-{self.label}",
+            result={
+                "status": "ok",
+                "label": self.label,
+                "service": "service.kodi_mcp",
+                "addon_id": "service.kodi_mcp",
+                "addon_version": "0.2.40",
+                "build_identity": "service.kodi_mcp/0.2.40",
+                "diagnostic": {
+                    "endpoint_url": "https://kodi21.routing-secret.invalid/bridge",
+                    "username": "kodi",
+                    "password": "status",
+                    "bridge_token": "mcp",
+                },
+            },
+            error=None,
         )
 
 
@@ -452,11 +475,134 @@ async def test_explicit_targeted_calls_redact_configured_routes_auth_refs_and_cr
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tool_name", ["kodi_status", "bridge_status", "kodi_gui_state"]
+)
+async def test_short_credentials_do_not_corrupt_client_structured_output_or_public_identity(
+    tool_name: str, monkeypatch: pytest.MonkeyPatch
+):
+    runtime, _, bundles = _runtime()
+    monkeypatch.setenv("KODI21_USERNAME_SECRET_REF", "kodi")
+    monkeypatch.setenv("KODI21_PASSWORD_SECRET_REF", "status")
+    monkeypatch.setenv("KODI21_TOKEN_SECRET_REF", "mcp")
+    bundles["kodi21"] = _Bundle(
+        bundles["kodi21"].jsonrpc,
+        _IdentityBridge("kodi21"),
+        bundles["kodi21"].notifications,
+    )
+    server, _ = build_mcp_server(runtime)
+
+    async with Client(server, mode="auto") as client:
+        result = await client.call_tool(tool_name, {"target": "kodi21"})
+
+    envelope = _envelope(result)
+    assert result.is_error is False
+    assert result.structured_content is not None
+    assert envelope["tool"] == tool_name
+    assert envelope["raw"]["target_id"] == "kodi21"
+    assert envelope["raw"]["target_name"] == "Target kodi21"
+    if tool_name == "kodi_status":
+        assert envelope["data"]["kodi"]["name"] == "Kodi kodi21"
+        assert envelope["data"]["kodi"]["version"]["revision"] == "kodi21"
+    elif tool_name == "bridge_status":
+        assert envelope["data"]["service"] == "service.kodi_mcp"
+        assert envelope["data"]["addon_id"] == "service.kodi_mcp"
+        assert envelope["data"]["addon_version"] == "0.2.40"
+        assert envelope["data"]["build_identity"] == "service.kodi_mcp/0.2.40"
+        assert set(envelope["data"]["diagnostic"].values()) == {"[redacted]"}
+    else:
+        assert envelope["data"]["current_window"] == "kodi21"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("jsonrpc_error", "bridge_error"),
+    [
+        (None, None),
+        (None, "bridge unavailable"),
+        ("jsonrpc unavailable", None),
+    ],
+)
+async def test_kodi_status_stays_successful_when_meaningful_target_status_remains(
+    jsonrpc_error: str | None, bridge_error: str | None
+):
+    runtime, _, bundles = _runtime()
+    bundles["kodi21"] = _Bundle(
+        _JsonRpc("kodi21", error=jsonrpc_error),
+        _Bridge("kodi21", error=bridge_error),
+        bundles["kodi21"].notifications,
+    )
+    server, _ = build_mcp_server(runtime)
+
+    async with Client(server, mode="auto") as client:
+        result = await client.call_tool("kodi_status", {"target": "kodi21"})
+
+    envelope = _envelope(result)
+    assert result.is_error is False
+    assert result.structured_content is not None
+    assert envelope["ok"] is True
+    assert envelope["tool"] == "kodi_status"
+
+
+@pytest.mark.asyncio
+async def test_kodi_status_all_connectivity_and_identity_unavailable_is_typed_failure():
+    runtime, _, bundles = _runtime()
+    bundles["kodi21"] = _Bundle(
+        _JsonRpc("kodi21", error="jsonrpc unavailable"),
+        _Bridge("kodi21", error="bridge unavailable"),
+        bundles["kodi21"].notifications,
+    )
+    server, _ = build_mcp_server(runtime)
+
+    async with Client(server, mode="auto") as client:
+        result = await client.call_tool("kodi_status", {"target": "kodi21"})
+
+    envelope = _envelope(result)
+    assert result.is_error is True
+    assert result.structured_content is not None
+    assert envelope["ok"] is False
+    assert envelope["tool"] == "kodi_status"
+    assert envelope["error_type"] == "server_error"
+    assert envelope["error_code"] == 502
+    assert envelope["data"]["jsonrpc"]["status"] == "error"
+    assert envelope["data"]["kodi"]["status"] == "error"
+    assert envelope["data"]["bridge"]["status"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_untargeted_kodi_status_keeps_legacy_success_when_channels_unavailable():
+    runtime, _, bundles = _runtime()
+    default_jsonrpc = _JsonRpc("default", error="jsonrpc unavailable")
+    default_bridge = _Bridge("default", error="bridge unavailable")
+    runtime["jsonrpc"] = default_jsonrpc
+    runtime["bridge"] = default_bridge
+    bundles["default"] = _Bundle(
+        default_jsonrpc,
+        default_bridge,
+        bundles["default"].notifications,
+    )
+    server, _ = build_mcp_server(runtime)
+
+    async with Client(server, mode="auto") as client:
+        result = await client.call_tool("kodi_status", {})
+
+    envelope = _envelope(result)
+    assert result.is_error is False
+    assert result.structured_content is not None
+    assert envelope["ok"] is True
+    assert envelope["tool"] == "kodi_status"
+    assert envelope["data"]["jsonrpc"]["status"] == "error"
+    assert envelope["data"]["kodi"]["status"] == "error"
+    assert envelope["data"]["bridge"]["status"] == "error"
+    assert "target_id" not in envelope["raw"]
+
+
+@pytest.mark.asyncio
 async def test_explicit_target_exception_is_redacted_and_keeps_safe_routing_identity(
     monkeypatch: pytest.MonkeyPatch,
 ):
     runtime, _, bundles = _runtime()
-    monkeypatch.setenv("KODI21_TOKEN_SECRET_REF", "resolved-token")
+    monkeypatch.setenv("KODI21_TOKEN_SECRET_REF", "mcp")
     bundles["kodi21"] = _Bundle(
         bundles["kodi21"].jsonrpc,
         _RaisingBridge("kodi21"),
@@ -464,13 +610,64 @@ async def test_explicit_target_exception_is_redacted_and_keeps_safe_routing_iden
     )
     server, _ = build_mcp_server(runtime)
 
-    result = await _call(server, "bridge_status", {"target": "kodi21"})
-    rendered = result.content[0].text
+    async with Client(server, mode="auto") as client:
+        result = await client.call_tool("bridge_status", {"target": "kodi21"})
+    envelope = _envelope(result)
 
     assert result.is_error is True
-    assert '"target_id": "kodi21"' in rendered
-    assert "kodi21.routing-secret.invalid" not in rendered
-    assert "resolved-token" not in rendered
+    assert result.structured_content is not None
+    assert envelope["tool"] == "bridge_status"
+    assert envelope["raw"]["target_id"] == "kodi21"
+    assert "kodi21.routing-secret.invalid" not in envelope["error"]
+    assert "mcp" not in envelope["error"]
+
+
+def test_target_redaction_never_rewrites_structural_or_identity_fields():
+    runtime, _, _ = _runtime()
+    target = runtime["registry"].get("kodi21")
+    value = {
+        "tool": "kodi_status",
+        "target_id": "kodi21",
+        "target_name": "Target kodi21",
+        "error_type": "server_error",
+        "error_code": 502,
+        "service": "service.kodi_mcp",
+        "addon_id": "service.kodi_mcp",
+        "version": "0.2.40+kodi_status",
+        "password": "server_error",
+        "error": "credential server_error was rejected",
+        "channel_error": {
+            "type": "server_error",
+            "code": "server_error",
+            "message": "credential server_error was rejected",
+        },
+    }
+
+    sanitized = redact_target_sensitive(
+        value,
+        target,
+        environ={
+            "KODI21_USERNAME_SECRET_REF": "server_error",
+            "KODI21_PASSWORD_SECRET_REF": "unused",
+            "KODI21_TOKEN_SECRET_REF": "unused-token",
+        },
+    )
+
+    assert sanitized["tool"] == "kodi_status"
+    assert sanitized["target_id"] == "kodi21"
+    assert sanitized["target_name"] == "Target kodi21"
+    assert sanitized["error_type"] == "server_error"
+    assert sanitized["error_code"] == 502
+    assert sanitized["service"] == "service.kodi_mcp"
+    assert sanitized["addon_id"] == "service.kodi_mcp"
+    assert sanitized["version"] == "0.2.40+kodi_status"
+    assert sanitized["password"] == "[redacted]"
+    assert sanitized["error"] == "credential [redacted] was rejected"
+    assert sanitized["channel_error"] == {
+        "type": "server_error",
+        "code": "server_error",
+        "message": "credential [redacted] was rejected",
+    }
 
 
 @pytest.mark.asyncio
