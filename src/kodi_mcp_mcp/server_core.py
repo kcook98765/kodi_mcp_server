@@ -909,6 +909,22 @@ async def _kodi_status(
             result["bridge"]["status"] = "error"
             result["bridge"]["error"] = str(exc)
 
+    if target is not None and all(
+        result[channel].get("status") == "error"
+        for channel in ("jsonrpc", "kodi", "bridge")
+    ):
+        result.update(
+            {
+                "ok": False,
+                "error": (
+                    "Kodi target is unreachable: JSON-RPC, bridge, and "
+                    "application identity are unavailable"
+                ),
+                "error_type": "server_error",
+                "error_code": 502,
+            }
+        )
+
     return result
 
 
