@@ -26,6 +26,102 @@ _ARRAY: dict[str, Any] = {"type": "array"}
 _ANY: dict[str, Any] = {}
 _NULLABLE_STRING = {"type": ["string", "null"]}
 
+_TARGET_SUMMARY_DATA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string"},
+        "name": {"type": "string"},
+        "groups": {"type": "array", "items": {"type": "string"}, "uniqueItems": True},
+        "tags": {"type": "array", "items": {"type": "string"}, "uniqueItems": True},
+        "expected_kodi_version": _NULLABLE_STRING,
+        "is_default": {"type": "boolean"},
+        "endpoint_types": {
+            "type": "array",
+            "items": {"enum": ["jsonrpc", "bridge", "websocket", "tcp"]},
+            "uniqueItems": True,
+        },
+    },
+    "required": [
+        "id",
+        "name",
+        "groups",
+        "tags",
+        "expected_kodi_version",
+        "is_default",
+        "endpoint_types",
+    ],
+    "additionalProperties": False,
+}
+
+_TARGET_LIST_DATA = {
+    "type": "object",
+    "properties": {
+        "count": {"type": "integer", "minimum": 0},
+        "filters": {
+            "type": "object",
+            "properties": {
+                "group": _NULLABLE_STRING,
+                "tag": _NULLABLE_STRING,
+            },
+            "required": ["group", "tag"],
+            "additionalProperties": False,
+        },
+        "targets": {"type": "array", "items": _TARGET_SUMMARY_DATA},
+    },
+    "required": ["count", "filters", "targets"],
+    "additionalProperties": False,
+}
+
+_TARGET_TRANSPORT_DATA = {
+    "type": "object",
+    "properties": {
+        "configured": {"type": "boolean"},
+        "scheme": {"type": ["string", "null"]},
+    },
+    "required": ["configured", "scheme"],
+    "additionalProperties": False,
+}
+
+_TARGET_INFO_DATA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string"},
+        "name": {"type": "string"},
+        "groups": {"type": "array", "items": {"type": "string"}, "uniqueItems": True},
+        "tags": {"type": "array", "items": {"type": "string"}, "uniqueItems": True},
+        "expected_kodi_version": _NULLABLE_STRING,
+        "is_default": {"type": "boolean"},
+        "timeout_seconds": {"type": "integer", "minimum": 1},
+        "transports": {
+            "type": "object",
+            "properties": {
+                "jsonrpc": _TARGET_TRANSPORT_DATA,
+                "bridge": _TARGET_TRANSPORT_DATA,
+                "websocket": _TARGET_TRANSPORT_DATA,
+                "tcp": {
+                    "type": "object",
+                    "properties": {"configured": {"type": "boolean"}},
+                    "required": ["configured"],
+                    "additionalProperties": False,
+                },
+            },
+            "required": ["jsonrpc", "bridge", "websocket", "tcp"],
+            "additionalProperties": False,
+        },
+    },
+    "required": [
+        "id",
+        "name",
+        "groups",
+        "tags",
+        "expected_kodi_version",
+        "is_default",
+        "timeout_seconds",
+        "transports",
+    ],
+    "additionalProperties": False,
+}
+
 _STATUS_DATA = {
     "type": "object",
     "properties": {
@@ -658,6 +754,8 @@ _TV_EPISODES_DATA = {
 }
 
 _DATA_SCHEMAS: dict[str, dict[str, Any]] = {
+    "target_list": _TARGET_LIST_DATA,
+    "target_info": _TARGET_INFO_DATA,
     "kodi_status": _STATUS_DATA,
     "bridge_health": _OBJECT,
     "bridge_status": _OBJECT,
@@ -713,6 +811,8 @@ _DATA_SCHEMAS: dict[str, dict[str, Any]] = {
 
 _READ_ONLY = frozenset(
     {
+        "target_list",
+        "target_info",
         "kodi_status",
         "bridge_health",
         "bridge_status",

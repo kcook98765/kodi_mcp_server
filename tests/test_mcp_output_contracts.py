@@ -21,6 +21,8 @@ _PNG = png_rgba([[(32, 48, 64, 255)]])
 _SCHEMALESS_TOOLS = {"addon_execute", "jsonrpc_introspect"}
 
 _READ_ONLY_TOOLS = {
+    "target_list",
+    "target_info",
     "kodi_status",
     "bridge_health",
     "bridge_status",
@@ -394,6 +396,36 @@ async def test_all_advertised_contracts_validate_canonical_success_and_failure_f
         "constraints": {},
     }
     specific_data = {
+        "target_list": {
+            "count": 1,
+            "filters": {"group": None, "tag": None},
+            "targets": [
+                {
+                    "id": "default",
+                    "name": "Default Kodi",
+                    "groups": [],
+                    "tags": [],
+                    "expected_kodi_version": None,
+                    "is_default": True,
+                    "endpoint_types": ["jsonrpc", "bridge"],
+                }
+            ],
+        },
+        "target_info": {
+            "id": "default",
+            "name": "Default Kodi",
+            "groups": [],
+            "tags": [],
+            "expected_kodi_version": None,
+            "is_default": True,
+            "timeout_seconds": 10,
+            "transports": {
+                "jsonrpc": {"configured": True, "scheme": "http"},
+                "bridge": {"configured": True, "scheme": "http"},
+                "websocket": {"configured": False, "scheme": None},
+                "tcp": {"configured": False},
+            },
+        },
         "kodi_status": {
             "server": {"status": "running"},
             "config": {"loaded": True},
