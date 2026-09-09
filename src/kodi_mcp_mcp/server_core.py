@@ -45,6 +45,7 @@ from kodi_mcp_mcp.output_contracts import (
     output_schema_for,
 )
 from kodi_mcp_mcp.target_routing import (
+    finalize_notification_target_envelope,
     finalize_target_envelope,
     resolve_target_context,
     schema_with_optional_target,
@@ -183,6 +184,7 @@ def _validate_tool_arguments(
     sanitize_unresolved_arguments = tool_name in {
         "addon_execute",
         "bridge_bootstrap_status",
+        "kodi_notifications_sample",
     }
     if redact_arguments or sanitize_unresolved_arguments:
         detail = (
@@ -3099,7 +3101,12 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         filterbytransport=_as_bool(filterbytransport, False),
                     )
                 elif tool_name == "kodi_notifications_sample":
-                    if runtime.get("notifications") is None:
+                    notification_tool = (
+                        target_context.notifications
+                        if target_context is not None and target_context.explicit
+                        else runtime.get("notifications")
+                    )
+                    if notification_tool is None:
                         raise RuntimeError("notifications probe unavailable (missing optional dependency: websockets)")
 
                     args = params.arguments or {}
@@ -3118,10 +3125,16 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     if listen_seconds < 1:
                         listen_seconds = 1
 
-                    raw_result = await runtime["notifications"].listen(
-                        sample_size=sample_size,
-                        listen_seconds=listen_seconds,
-                    )
+                    if target_context is not None and target_context.explicit:
+                        raw_result = await notification_tool.listen_target_bound(
+                            sample_size=sample_size,
+                            listen_seconds=listen_seconds,
+                        )
+                    else:
+                        raw_result = await notification_tool.listen(
+                            sample_size=sample_size,
+                            listen_seconds=listen_seconds,
+                        )
                 elif tool_name == "bridge_write_log_marker":
                     args = params.arguments or {}
                     if not isinstance(args, dict):
@@ -3551,7 +3564,11 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 }
 
             if target_context is not None:
-                envelope = finalize_target_envelope(envelope, target_context)
+                envelope = (
+                    finalize_notification_target_envelope(envelope, target_context)
+                    if tool_name == "kodi_notifications_sample"
+                    else finalize_target_envelope(envelope, target_context)
+                )
 
             extra_content = (
                 [pending_image_content]

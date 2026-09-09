@@ -149,6 +149,7 @@ async def test_v2_tools_list_complete_and_schemas_stable():
                 "kodi_music_browse",
                 "kodi_music_search",
                 "kodi_music_summary",
+                "kodi_notifications_sample",
                 "kodi_player_active",
                 "kodi_player_item",
                 "kodi_player_open",

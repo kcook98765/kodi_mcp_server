@@ -8,7 +8,10 @@ from typing import Any, Mapping
 
 from kodi_mcp_server.targets.model import Target
 from kodi_mcp_server.targets.resolver import resolve_target
-from kodi_mcp_server.targets.security import redact_target_sensitive
+from kodi_mcp_server.targets.security import (
+    redact_target_sensitive,
+    sanitize_notification_event_payload,
+)
 from kodi_mcp_server.targets.transport_pool import TargetTransports
 
 
@@ -95,4 +98,71 @@ def finalize_target_envelope(
     raw["target_id"] = context.target.target_id
     raw["target_name"] = context.target.name
     routed["raw"] = raw
+    return routed
+
+
+def finalize_notification_target_envelope(
+    envelope: dict[str, Any], context: TargetContext
+) -> dict[str, Any]:
+    """Strictly redact transport metadata while preserving safe event provenance."""
+
+    if not context.explicit or context.target is None:
+        return envelope
+
+    prepared = deepcopy(envelope)
+    data = prepared.get("data")
+    raw = prepared.get("raw")
+    raw_result = raw.get("result") if isinstance(raw, dict) else None
+    data_has_messages = isinstance(data, dict) and "messages" in data
+    raw_has_messages = isinstance(raw_result, dict) and "messages" in raw_result
+    event_messages = (
+        data.get("messages")
+        if data_has_messages
+        else raw_result.get("messages") if raw_has_messages else None
+    )
+
+    if data_has_messages:
+        data["messages"] = []
+    if raw_has_messages:
+        raw_result["messages"] = []
+
+    def redact_transport_value(item: Any) -> Any:
+        if isinstance(item, str):
+            return "[redacted]" if item else item
+        if isinstance(item, dict):
+            return {key: redact_transport_value(nested) for key, nested in item.items()}
+        if isinstance(item, list):
+            return [redact_transport_value(nested) for nested in item]
+        if isinstance(item, tuple):
+            return tuple(redact_transport_value(nested) for nested in item)
+        return "[redacted]" if item is not None else item
+
+    def redact_transport_locations(item: Any) -> Any:
+        if isinstance(item, dict):
+            return {
+                key: (
+                    redact_transport_value(nested)
+                    if str(key).lower().replace("-", "_") in {"proxy", "location"}
+                    else redact_transport_locations(nested)
+                )
+                for key, nested in item.items()
+            }
+        if isinstance(item, list):
+            return [redact_transport_locations(nested) for nested in item]
+        if isinstance(item, tuple):
+            return tuple(redact_transport_locations(nested) for nested in item)
+        return item
+
+    prepared = redact_transport_locations(prepared)
+    routed = finalize_target_envelope(prepared, context)
+    sanitized_messages = sanitize_notification_event_payload(event_messages)
+    routed_data = routed.get("data")
+    routed_raw = routed.get("raw")
+    routed_raw_result = (
+        routed_raw.get("result") if isinstance(routed_raw, dict) else None
+    )
+    if data_has_messages and isinstance(routed_data, dict):
+        routed_data["messages"] = deepcopy(sanitized_messages)
+    if raw_has_messages and isinstance(routed_raw_result, dict):
+        routed_raw_result["messages"] = deepcopy(sanitized_messages)
     return routed
