@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import Any, Mapping
-from urllib.parse import urlparse
+from urllib.parse import unquote_plus, urlparse, urlsplit, urlunsplit
 
 from .model import Target
 
@@ -48,6 +49,140 @@ _ARGUMENT_SECRET_FIELDS = (
     _CREDENTIAL_FIELDS
     | frozenset({"access_token", "api_key", "auth", "passwd"})
 ) - frozenset({"jsonrpc_username", "username"})
+_NOTIFICATION_CREDENTIAL_FIELDS = frozenset(
+    {
+        "access_token",
+        "access_tokens",
+        "api_key",
+        "api_keys",
+        "auth",
+        "authorization",
+        "cookie",
+        "cookies",
+        "credential",
+        "credentials",
+        "passwd",
+        "password",
+        "passwords",
+        "secret",
+        "secrets",
+        "set_cookie",
+        "token",
+        "tokens",
+    }
+)
+_NOTIFICATION_CREDENTIAL_SUFFIXES = (
+    "_access_token",
+    "_access_tokens",
+    "_api_key",
+    "_api_keys",
+    "_auth",
+    "_authorization",
+    "_cookie",
+    "_cookies",
+    "_credential",
+    "_credentials",
+    "_passwd",
+    "_password",
+    "_passwords",
+    "_secret",
+    "_secrets",
+    "_set_cookie",
+    "_token",
+    "_tokens",
+)
+_REDACTED_QUERY_VALUE = "%5Bredacted%5D"
+_ACRONYM_WORD_BOUNDARY = re.compile(r"(?<=[A-Z])(?=[A-Z][a-z])")
+_LOWER_WORD_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_NON_WORD_SEPARATOR = re.compile(r"[^A-Za-z0-9]+")
+_URI_WITH_SLASHES = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*)://")
+
+
+def _normalized_security_key(key: Any) -> str:
+    value = _ACRONYM_WORD_BOUNDARY.sub("_", str(key))
+    value = _LOWER_WORD_BOUNDARY.sub("_", value)
+    return _NON_WORD_SEPARATOR.sub("_", value).strip("_").lower()
+
+
+def _is_notification_credential_key(key: Any) -> bool:
+    normalized = _normalized_security_key(key)
+    return normalized in _NOTIFICATION_CREDENTIAL_FIELDS or normalized.endswith(
+        _NOTIFICATION_CREDENTIAL_SUFFIXES
+    )
+
+
+def _is_notification_url(value: str) -> bool:
+    match = _URI_WITH_SLASHES.match(value)
+    return match is not None and len(match.group(1)) > 1
+
+
+def _sanitize_notification_url(value: str) -> str:
+    """Redact credential query values and remove all URL fragments."""
+    if not _is_notification_url(value):
+        return value
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return value
+
+    netloc = parsed.netloc.rsplit("@", 1)[-1]
+    query_parts = []
+    for part in parsed.query.split("&") if parsed.query else []:
+        key, separator, nested = part.partition("=")
+        if _is_notification_credential_key(unquote_plus(key)):
+            query_parts.append(f"{key}={_REDACTED_QUERY_VALUE}")
+        else:
+            query_parts.append(f"{key}{separator}{nested}")
+    sanitized_query = "&".join(query_parts)
+    if not parsed.netloc:
+        prefix = _URI_WITH_SLASHES.match(value)
+        assert prefix is not None
+        return (
+            f"{prefix.group(0)}{parsed.path}"
+            f"{'?' + sanitized_query if sanitized_query else ''}"
+        )
+    return urlunsplit(
+        (parsed.scheme, netloc, parsed.path, sanitized_query, "")
+    )
+
+
+def sanitize_notification_event_payload(value: Any) -> Any:
+    """Return a credential-sanitized copy of a notification event payload.
+
+    Location and provenance fields remain visible. Credential fields and URL
+    credential components are redacted recursively without global substitution.
+    """
+
+    def redact_credential(item: Any) -> Any:
+        if isinstance(item, dict):
+            return {key: redact_credential(nested) for key, nested in item.items()}
+        if isinstance(item, list):
+            return [redact_credential(nested) for nested in item]
+        if isinstance(item, tuple):
+            return tuple(redact_credential(nested) for nested in item)
+        if item is None or item == "":
+            return item
+        return "[redacted]"
+
+    def sanitize(item: Any) -> Any:
+        if isinstance(item, str):
+            return _sanitize_notification_url(item)
+        if isinstance(item, dict):
+            return {
+                key: (
+                    redact_credential(nested)
+                    if _is_notification_credential_key(key)
+                    else sanitize(nested)
+                )
+                for key, nested in item.items()
+            }
+        if isinstance(item, list):
+            return [sanitize(nested) for nested in item]
+        if isinstance(item, tuple):
+            return tuple(sanitize(nested) for nested in item)
+        return item
+
+    return sanitize(value)
 
 
 def redact_unresolved_sensitive_arguments(value: Any) -> Any:

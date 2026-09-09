@@ -1,14 +1,28 @@
 """Experimental Kodi JSON-RPC WebSocket notification listener."""
 
 import asyncio
+import ipaddress
 import json
 import socket
 from collections.abc import Awaitable, Callable
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import websockets
+from websockets.uri import parse_uri
 
 from ..models.messages import ResponseMessage
+
+
+class _TargetBoundEndpointNotConfigured(ValueError):
+    """The probe lacks a usable endpoint authored for its target."""
+
+
+_REDIRECT_STATUS_CODES = frozenset({300, 301, 302, 303, 307, 308})
+_CROSS_ORIGIN_REDIRECT_ERROR = (
+    "cross-origin redirect rejected for target-bound WebSocket endpoint"
+)
+_TARGET_BOUND_REDIRECT_ERROR = "WebSocket redirect failed for target-bound endpoint"
+_MAX_EXCEPTION_GRAPH_NODES = 64
 
 
 class WebSocketNotificationProbe:
@@ -45,6 +59,150 @@ class WebSocketNotificationProbe:
             return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
         except ValueError:
             return "<configured WebSocket endpoint>"
+
+    def _target_bound_endpoint(self) -> tuple[str, str, int]:
+        """Return an authored endpoint and its normalized effective origin."""
+        authored_url = self.websocket_url
+        if authored_url == "":
+            if not isinstance(self.tcp_host, str):
+                raise _TargetBoundEndpointNotConfigured(
+                    "target WebSocket endpoint is not configured"
+                )
+            host = self.tcp_host.strip()
+            if not host:
+                raise _TargetBoundEndpointNotConfigured(
+                    "target WebSocket endpoint is not configured"
+                )
+            if any(character.isspace() for character in host) or any(
+                character in host for character in "/?#@[]"
+            ):
+                raise _TargetBoundEndpointNotConfigured(
+                    "target WebSocket endpoint is not configured"
+                )
+            if ":" in host:
+                try:
+                    ipaddress.IPv6Address(host)
+                except ValueError as exc:
+                    raise _TargetBoundEndpointNotConfigured(
+                        "target WebSocket endpoint is not configured"
+                    ) from exc
+                rendered_host = f"[{host}]"
+            else:
+                rendered_host = host
+            if (
+                isinstance(self.tcp_port, bool)
+                or not isinstance(self.tcp_port, int)
+                or not 1 <= self.tcp_port <= 65535
+            ):
+                raise _TargetBoundEndpointNotConfigured(
+                    "target WebSocket endpoint is not configured"
+                )
+            websocket_url = f"ws://{rendered_host}:{self.tcp_port}/jsonrpc"
+        else:
+            if (
+                not isinstance(authored_url, str)
+                or not authored_url.strip()
+                or authored_url != authored_url.strip()
+                or any(character.isspace() for character in authored_url)
+                or "\\" in authored_url
+            ):
+                raise _TargetBoundEndpointNotConfigured(
+                    "target WebSocket endpoint is not configured"
+                )
+            websocket_url = authored_url
+
+        try:
+            raw_uri = urlsplit(websocket_url)
+            raw_authority = raw_uri.netloc
+            raw_host = raw_uri.hostname
+            explicit_port = raw_uri.port
+            parsed_uri = parse_uri(websocket_url)
+            normalized_raw_host = (
+                raw_host.encode("idna").decode().lower()
+                if raw_host is not None
+                else None
+            )
+        except (ValueError, UnicodeError, websockets.exceptions.InvalidURI) as exc:
+            raise _TargetBoundEndpointNotConfigured(
+                "target WebSocket endpoint is not configured"
+            ) from exc
+        dns_host = parsed_uri.host.rstrip(".")
+        valid_dns_host = bool(dns_host) and len(parsed_uri.host) <= 253 and all(
+            label
+            and len(label) <= 63
+            and label[0].isalnum()
+            and label[-1].isalnum()
+            and all(character.isalnum() or character == "-" for character in label)
+            for label in dns_host.split(".")
+        )
+        valid_ip_host = False
+        if ":" in parsed_uri.host:
+            try:
+                ipaddress.IPv6Address(parsed_uri.host)
+            except ValueError:
+                pass
+            else:
+                valid_ip_host = True
+        if (
+            not raw_authority
+            or raw_authority.endswith(":")
+            or parsed_uri.username is not None
+            or parsed_uri.password is not None
+            or normalized_raw_host != parsed_uri.host
+            or not (valid_dns_host or valid_ip_host)
+            or explicit_port == 0
+            or not 1 <= parsed_uri.port <= 65535
+        ):
+            raise _TargetBoundEndpointNotConfigured(
+                "target WebSocket endpoint is not configured"
+            )
+        return websocket_url, parsed_uri.host, parsed_uri.port
+
+    def _redirect_responses(
+        self,
+        exc: BaseException,
+    ) -> tuple[tuple[tuple[str, ...], ...], bool]:
+        """Collect redirect Location values from both exception-chain branches."""
+        worklist: list[BaseException] = [exc]
+        visited: set[int] = set()
+        responses: list[tuple[str, ...]] = []
+        while worklist and len(visited) < _MAX_EXCEPTION_GRAPH_NODES:
+            current = worklist.pop()
+            if id(current) in visited:
+                continue
+            visited.add(id(current))
+            if (
+                isinstance(current, websockets.exceptions.InvalidStatus)
+                and current.response.status_code in _REDIRECT_STATUS_CODES
+            ):
+                responses.append(tuple(current.response.headers.get_all("Location")))
+            for related in (current.__cause__, current.__context__):
+                if related is not None and id(related) not in visited:
+                    worklist.append(related)
+        return tuple(responses), not worklist
+
+    def _redirect_crosses_authored_origin(
+        self,
+        authored_url: str,
+        location: str,
+    ) -> bool | None:
+        """Compare normalized origins; return None for an unsafe redirect URI."""
+        try:
+            authored = parse_uri(authored_url)
+            redirected = parse_uri(urljoin(authored_url, location))
+        except Exception:
+            return None
+        if redirected.username is not None or redirected.password is not None:
+            return None
+        return (
+            authored.secure,
+            authored.host,
+            authored.port,
+        ) != (
+            redirected.secure,
+            redirected.host,
+            redirected.port,
+        )
 
     def _classify_error(self, exc: BaseException) -> str:
         """Return a likely failure cause for the current error."""
@@ -110,6 +268,116 @@ class WebSocketNotificationProbe:
             trigger=None,
             trigger_name=None,
         )
+
+    async def listen_target_bound(
+        self,
+        sample_size: int = 3,
+        listen_seconds: int = 5,
+    ) -> ResponseMessage:
+        """Collect one sample without proxy discovery or cross-origin redirects."""
+        try:
+            ws_url, bound_host, bound_port = self._target_bound_endpoint()
+        except _TargetBoundEndpointNotConfigured as exc:
+            return ResponseMessage(
+                request_id="websocket-notifications",
+                result={
+                    "connected": False,
+                    "websocket_url": "<configured WebSocket endpoint>",
+                    "messages": [],
+                    "message_count": 0,
+                    "listen_seconds": listen_seconds,
+                    "event_trigger_used": None,
+                    "diagnostic_code": "endpoint_not_configured",
+                    "likely_cause": "target WebSocket endpoint is not configured",
+                },
+                error=str(exc),
+            )
+
+        display_url = self._display_websocket_url(ws_url)
+        try:
+            # websockets 17.1 documents proxy=None as disabling system proxy
+            # discovery. Explicit host and port pin the TCP destination and
+            # make its redirect policy reject every cross-origin redirect.
+            async with websockets.connect(
+                ws_url,
+                open_timeout=self.timeout,
+                proxy=None,
+                host=bound_host,
+                port=bound_port,
+            ) as websocket:
+                messages = []
+                deadline = asyncio.get_running_loop().time() + listen_seconds
+                while len(messages) < sample_size:
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    if remaining <= 0:
+                        break
+                    try:
+                        message = await asyncio.wait_for(websocket.recv(), timeout=remaining)
+                    except asyncio.TimeoutError:
+                        break
+                    try:
+                        messages.append(json.loads(message))
+                    except json.JSONDecodeError:
+                        continue
+
+                return ResponseMessage(
+                    request_id="websocket-notifications",
+                    result={
+                        "connected": True,
+                        "websocket_url": display_url,
+                        "messages": messages,
+                        "message_count": len(messages),
+                        "listen_seconds": listen_seconds,
+                        "event_trigger_used": None,
+                        "trigger_result": None,
+                    },
+                    error=None,
+                )
+        except Exception as exc:
+            redirect_responses, graph_complete = self._redirect_responses(exc)
+            redirect_origin_changes = [
+                self._redirect_crosses_authored_origin(ws_url, locations[0])
+                for locations in redirect_responses
+                if len(locations) == 1
+            ]
+            cross_origin_redirect = True in redirect_origin_changes
+            redirect_failure = bool(redirect_responses) or not graph_complete
+            if cross_origin_redirect:
+                error_text = _CROSS_ORIGIN_REDIRECT_ERROR
+            elif redirect_failure:
+                error_text = _TARGET_BOUND_REDIRECT_ERROR
+            else:
+                error_text = str(exc).replace(ws_url, display_url)
+            return ResponseMessage(
+                request_id="websocket-notifications",
+                result={
+                    "connected": False,
+                    "websocket_url": display_url,
+                    "messages": [],
+                    "message_count": 0,
+                    "listen_seconds": listen_seconds,
+                    "event_trigger_used": None,
+                    "diagnostic_code": (
+                        "cross_origin_redirect"
+                        if cross_origin_redirect
+                        else (
+                            "redirect_failure"
+                            if redirect_failure
+                            else self._diagnostic_code(exc)
+                        )
+                    ),
+                    "likely_cause": (
+                        _CROSS_ORIGIN_REDIRECT_ERROR
+                        if cross_origin_redirect
+                        else (
+                            _TARGET_BOUND_REDIRECT_ERROR
+                            if redirect_failure
+                            else self._classify_error(exc)
+                        )
+                    ),
+                },
+                error=error_text,
+            )
 
     async def listen_with_trigger(
         self,
