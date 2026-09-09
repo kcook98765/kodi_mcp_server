@@ -44,6 +44,67 @@ _PORT_FIELDS = frozenset({"bind_port", "port"})
 _ERROR_TEXT_FIELDS = frozenset(
     {"description", "detail", "diagnostic", "error", "message", "reason"}
 )
+_ARGUMENT_SECRET_FIELDS = (
+    _CREDENTIAL_FIELDS
+    | frozenset({"access_token", "api_key", "auth", "passwd"})
+) - frozenset({"jsonrpc_username", "username"})
+
+
+def redact_unresolved_sensitive_arguments(value: Any) -> Any:
+    """Return a field-sanitized copy without requiring target resolution."""
+
+    def redact_field(item: Any) -> Any:
+        if isinstance(item, str):
+            return "[redacted]" if item else item
+        if isinstance(item, dict):
+            return {key: redact_field(nested) for key, nested in item.items()}
+        if isinstance(item, list):
+            return [redact_field(nested) for nested in item]
+        if isinstance(item, tuple):
+            return tuple(redact_field(nested) for nested in item)
+        return "[redacted]" if item is not None else item
+
+    def is_url_shaped(item: Any) -> bool:
+        if not isinstance(item, str):
+            return False
+        parsed = urlparse(item)
+        return bool(parsed.scheme and parsed.netloc)
+
+    def redact(item: Any) -> Any:
+        if isinstance(item, dict):
+            sanitized: dict[Any, Any] = {}
+            for key, nested in item.items():
+                normalized = str(key).lower().replace("-", "_")
+                secret_field = normalized in _ARGUMENT_SECRET_FIELDS or normalized.endswith(
+                    (
+                        "_auth",
+                        "_api_key",
+                        "_authorization",
+                        "_credential",
+                        "_credentials",
+                        "_passwd",
+                        "_password",
+                        "_secret",
+                        "_token",
+                    )
+                )
+                location_field = normalized in _LOCATION_FIELDS or normalized.endswith(
+                    ("_address", "_endpoint", "_host", "_hostname", "_url")
+                )
+                port_field = normalized in _PORT_FIELDS or normalized.endswith("_port")
+                malformed_target = normalized == "target" and is_url_shaped(nested)
+                if secret_field or location_field or port_field or malformed_target:
+                    sanitized[key] = redact_field(nested)
+                else:
+                    sanitized[key] = redact(nested)
+            return sanitized
+        if isinstance(item, list):
+            return [redact(nested) for nested in item]
+        if isinstance(item, tuple):
+            return tuple(redact(nested) for nested in item)
+        return item
+
+    return redact(value)
 
 
 def _sensitive_values(

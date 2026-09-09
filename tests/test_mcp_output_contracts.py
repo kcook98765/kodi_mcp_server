@@ -18,7 +18,7 @@ from tests.png_fixtures import png_rgba
 _PNG = png_rgba([[(32, 48, 64, 255)]])
 
 
-_SCHEMALESS_TOOLS = {"addon_execute", "jsonrpc_introspect"}
+_SCHEMALESS_TOOLS = {"jsonrpc_introspect"}
 
 _READ_ONLY_TOOLS = {
     "target_list",
