@@ -129,6 +129,7 @@ async def test_v2_tools_list_complete_and_schemas_stable():
             }
             explicit_target_tools = {
                 "addon_details",
+                "addon_execute",
                 "addon_list",
                 "bridge_health",
                 "bridge_log_markers",

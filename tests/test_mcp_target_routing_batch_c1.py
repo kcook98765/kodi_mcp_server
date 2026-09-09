@@ -25,7 +25,6 @@ C1_TOOL_NAMES = frozenset({"kodi_setting_set"})
 SETTING_ID = "filelists.showextensions"
 DEFERRED_TOOL_NAMES = frozenset(
     {
-        "addon_execute",
         "bridge_write_log_marker",
         "kodi_gui_screenshot",
         "kodi_notifications_sample",
@@ -167,7 +166,7 @@ def _envelope(result):
 
 
 @pytest.mark.asyncio
-async def test_exact_c1_schema_inventory_and_deferred_exclusions():
+async def test_exact_schema_inventory_through_c2_and_deferred_exclusions():
     runtime, _, _, _ = _runtime()
     server, _ = build_mcp_server(runtime)
     listed = await server.get_request_handler("tools/list").handler(None, None)
@@ -177,7 +176,12 @@ async def test_exact_c1_schema_inventory_and_deferred_exclusions():
         if "target" in tool.input_schema.get("properties", {})
     }
 
-    assert targeted == BATCH_A_TARGET_TOOL_NAMES | BATCH_B_TARGET_TOOL_NAMES | C1_TOOL_NAMES
+    assert targeted == (
+        BATCH_A_TARGET_TOOL_NAMES
+        | BATCH_B_TARGET_TOOL_NAMES
+        | C1_TOOL_NAMES
+        | {"addon_execute"}
+    )
     by_name = {tool.name: tool for tool in listed.tools}
     assert by_name["kodi_setting_set"].input_schema["properties"]["target"] == {
         "type": "string",

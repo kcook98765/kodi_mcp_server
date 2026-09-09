@@ -107,13 +107,17 @@ BATCH_B_TARGET_TOOL_NAMES = frozenset(
 )
 
 # Phase 4A Batch C1 adds only the bounded, policy-controlled setting mutation.
-# Addon execution and all hybrid/library mutation work remain deferred.
 BATCH_C1_TARGET_TOOL_NAMES = frozenset({"kodi_setting_set"})
+
+# Phase 4A Batch C2 adds only open-world addon execution. All remaining
+# target-scoped mutation families stay deferred.
+BATCH_C2_TARGET_TOOL_NAMES = frozenset({"addon_execute"})
 
 EXPLICIT_TARGET_TOOL_NAMES = (
     BATCH_A_TARGET_TOOL_NAMES
     | BATCH_B_TARGET_TOOL_NAMES
     | BATCH_C1_TARGET_TOOL_NAMES
+    | BATCH_C2_TARGET_TOOL_NAMES
 )
 
 SERVER_LOCAL_TOOL_NAMES = frozenset(
@@ -156,7 +160,11 @@ assert len(HYBRID_TOOL_NAMES) == 10
 assert BATCH_A_TARGET_TOOL_NAMES <= TARGET_SCOPED_TOOL_NAMES
 assert BATCH_B_TARGET_TOOL_NAMES <= TARGET_SCOPED_TOOL_NAMES
 assert BATCH_C1_TARGET_TOOL_NAMES <= TARGET_SCOPED_TOOL_NAMES
+assert BATCH_C2_TARGET_TOOL_NAMES <= TARGET_SCOPED_TOOL_NAMES
 assert BATCH_A_TARGET_TOOL_NAMES.isdisjoint(BATCH_B_TARGET_TOOL_NAMES)
 assert BATCH_C1_TARGET_TOOL_NAMES.isdisjoint(
     BATCH_A_TARGET_TOOL_NAMES | BATCH_B_TARGET_TOOL_NAMES
+)
+assert BATCH_C2_TARGET_TOOL_NAMES.isdisjoint(
+    BATCH_A_TARGET_TOOL_NAMES | BATCH_B_TARGET_TOOL_NAMES | BATCH_C1_TARGET_TOOL_NAMES
 )

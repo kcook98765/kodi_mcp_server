@@ -69,6 +69,7 @@ from kodi_mcp_server.targets.discovery import (
 )
 from kodi_mcp_server.targets.health import probe_target_health
 from kodi_mcp_server.targets.resolver import TargetNotFoundError, resolve_target
+from kodi_mcp_server.targets.security import redact_unresolved_sensitive_arguments
 from kodi_mcp_server.managed_addons import (
     managed_addon_build_publish_and_stage,
     managed_addon_get,
@@ -179,11 +180,16 @@ def _validate_tool_arguments(
     error = errors[0]
     field = ".".join(str(part) for part in error.absolute_path)
     redact_arguments = tool_name in {"kodi_setting_get", "kodi_setting_set"}
-    if redact_arguments:
+    sanitize_addon_arguments = tool_name == "addon_execute"
+    if redact_arguments or sanitize_addon_arguments:
         detail = (
             f"invalid argument {field}: does not satisfy the advertised schema"
             if field
-            else "invalid settings arguments: do not satisfy the advertised schema"
+            else (
+                "invalid settings arguments: do not satisfy the advertised schema"
+                if redact_arguments
+                else "invalid arguments: do not satisfy the advertised schema"
+            )
         )
     else:
         detail = (
@@ -196,7 +202,7 @@ def _validate_tool_arguments(
             "field": ".".join(str(part) for part in item.absolute_path) or None,
             "message": (
                 "does not satisfy the advertised schema"
-                if redact_arguments
+                if redact_arguments or sanitize_addon_arguments
                 else item.message
             ),
             "validator": item.validator,
@@ -209,7 +215,11 @@ def _validate_tool_arguments(
             "values_redacted": True,
         }
         if redact_arguments
-        else candidate
+        else (
+            redact_unresolved_sensitive_arguments(candidate)
+            if sanitize_addon_arguments
+            else candidate
+        )
     )
     return _invalid_params_result(tool_name, safe_candidate, detail, validation)
 
@@ -2249,7 +2259,14 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         "error_code": None,
                         "latency_ms": 0,
                         "request_id": None,
-                        "raw": {"arguments": args, "accepted_aliases": ["addonid", "addon_id"]},
+                        "raw": {
+                            "arguments": (
+                                redact_unresolved_sensitive_arguments(args)
+                                if tool_name == "addon_execute"
+                                else args
+                            ),
+                            "accepted_aliases": ["addonid", "addon_id"],
+                        },
                     }
                     return _result_from_envelope(envelope)
 
@@ -2718,7 +2735,9 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     wait = wait if isinstance(wait, bool) else False
                     params = args.get("params")
                     params = params if isinstance(params, dict) else {}
-                    execute_result = await runtime["jsonrpc"].execute_addon(addonid=addonid, params=params, wait=wait)
+                    execute_result = await jsonrpc_tool.execute_addon(
+                        addonid=addonid, params=params, wait=wait
+                    )
 
                     expect_player = args.get("expect_player", False)
                     expect_player = expect_player if isinstance(expect_player, bool) else False
@@ -2748,7 +2767,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     execute_ok = not (isinstance(execute_value, dict) and execute_value.get("error") is not None)
                     observation_timeout = timeout_seconds if expect_player else observe_seconds
                     player_observation = await _observe_active_players(
-                        runtime["jsonrpc"],
+                        jsonrpc_tool,
                         timeout_seconds=observation_timeout,
                         poll_interval_ms=poll_interval_ms,
                     )
@@ -2757,7 +2776,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     gui_verification = None
                     if gui_verification_required:
                         gui_verification = await _observe_gui_state(
-                            runtime["bridge"],
+                            bridge_tool,
                             expect_window=expect_window,
                             expect_fullscreen=expect_fullscreen,
                             timeout_seconds=window_timeout_seconds,
@@ -2772,7 +2791,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                             "request_id": None,
                         }
                     elif include_gui_state:
-                        gui_state = await _read_gui_state(runtime["bridge"])
+                        gui_state = await _read_gui_state(bridge_tool)
                     else:
                         gui_state = {
                             "captured": False,

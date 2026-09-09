@@ -40,7 +40,6 @@ VALID_ARGUMENTS = {
 
 EXCLUDED_TOOL_NAMES = frozenset(
     {
-        "addon_execute",
         "bridge_write_log_marker",
         "kodi_gui_screenshot",
         "kodi_notifications_sample",
@@ -201,7 +200,7 @@ def _envelope(result):
 
 
 @pytest.mark.asyncio
-async def test_exact_schema_inventory_through_batch_c1_and_exclusions():
+async def test_exact_schema_inventory_through_batch_c2_and_exclusions():
     runtime, _, _, _ = _runtime()
     server, _ = build_mcp_server(runtime)
 
@@ -213,7 +212,10 @@ async def test_exact_schema_inventory_through_batch_c1_and_exclusions():
     }
 
     assert targeted == (
-        BATCH_A_TARGET_TOOL_NAMES | BATCH_B_TOOL_NAMES | BATCH_C1_TARGET_TOOL_NAMES
+        BATCH_A_TARGET_TOOL_NAMES
+        | BATCH_B_TOOL_NAMES
+        | BATCH_C1_TARGET_TOOL_NAMES
+        | {"addon_execute"}
     )
     by_name = {tool.name: tool for tool in listed.tools}
     for name in BATCH_B_TOOL_NAMES:

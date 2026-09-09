@@ -15,7 +15,7 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 
-SCHEMALESS_TOOLS = frozenset({"addon_execute", "jsonrpc_introspect"})
+SCHEMALESS_TOOLS = frozenset({"jsonrpc_introspect"})
 LOG_TOOLS = frozenset(
     {"bridge_log_tail", "bridge_log_markers", "bridge_log_recent_errors"}
 )
@@ -824,6 +824,7 @@ _DATA_SCHEMAS: dict[str, dict[str, Any]] = {
     "kodi_gui_state": _GUI_STATE_DATA,
     "addon_list": _OBJECT,
     "addon_details": _OBJECT,
+    "addon_execute": _ANY,
     "addon_source_inspect": _SOURCE_INSPECT_DATA,
     "addon_project_map_status": _OBJECT,
     "addon_source_tree": _SOURCE_TREE_DATA,
