@@ -49,7 +49,7 @@ from kodi_mcp_mcp.target_routing import (
     resolve_target_context,
     schema_with_optional_target,
 )
-from kodi_mcp_mcp.tool_contract import BATCH_A_TARGET_TOOL_NAMES
+from kodi_mcp_mcp.tool_contract import EXPLICIT_TARGET_TOOL_NAMES
 
 from kodi_mcp_server import __version__
 from kodi_mcp_server.bridge_bootstrap import inspect_bootstrap_state
@@ -2158,7 +2158,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 update={
                     "input_schema": (
                         schema_with_optional_target(tool.input_schema)
-                        if tool.name in BATCH_A_TARGET_TOOL_NAMES
+                        if tool.name in EXPLICIT_TARGET_TOOL_NAMES
                         else tool.input_schema
                     ),
                     "output_schema": output_schema_for(tool.name),
@@ -2595,7 +2595,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
             start = time.time()
             envelope: dict[str, Any]
             try:
-                if tool_name in BATCH_A_TARGET_TOOL_NAMES:
+                if tool_name in EXPLICIT_TARGET_TOOL_NAMES:
                     target_context = resolve_target_context(
                         runtime, params.arguments or {}
                     )
@@ -2958,7 +2958,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     raw_result = await jsonrpc_tool.get_active_players()
                 elif tool_name == "kodi_player_open":
                     args = params.arguments or {}
-                    raw_result = await runtime["jsonrpc"].open_library_item(
+                    raw_result = await jsonrpc_tool.open_library_item(
                         media_type=args["media_type"],
                         item_id=args["item_id"],
                     )
@@ -2974,13 +2974,13 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         args = {}
                     playerid = args.get("playerid", 1)
                     seconds = args.get("seconds")
-                    raw_result = await runtime["jsonrpc"].seek_player_to_seconds(playerid=playerid, seconds=float(seconds))
+                    raw_result = await jsonrpc_tool.seek_player_to_seconds(playerid=playerid, seconds=float(seconds))
                 elif tool_name == "kodi_player_pause":
                     args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
                     playerid = args.get("playerid", 1)
-                    raw_result = await runtime["jsonrpc"].pause_player(playerid=playerid)
+                    raw_result = await jsonrpc_tool.pause_player(playerid=playerid)
                 elif tool_name == "kodi_player_stop":
                     args = params.arguments or {}
                     if not isinstance(args, dict):
@@ -2997,7 +2997,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     stable_checks = args.get("stable_checks", 5)
                     stable_checks = stable_checks if isinstance(stable_checks, int) else 5
                     stable_checks = max(1, min(20, stable_checks))
-                    stop_result = await runtime["jsonrpc"].stop_player(playerid=playerid)
+                    stop_result = await jsonrpc_tool.stop_player(playerid=playerid)
                     stop_value = _as_dict(stop_result)
                     if not verify or getattr(stop_result, "error", None) is not None:
                         raw_result = stop_result
@@ -3010,7 +3010,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         stop_attempts = 1
                         for attempt in range(verify_attempts):
                             attempts_made = attempt + 1
-                            active_result = await runtime["jsonrpc"].get_active_players()
+                            active_result = await jsonrpc_tool.get_active_players()
                             active_value = _as_dict(active_result)
                             active_players = active_value.get("result") if isinstance(active_value, dict) else None
                             if not isinstance(active_players, list):
@@ -3024,7 +3024,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                             if still_active:
                                 stable_inactive_checks = 0
                                 if attempt < verify_attempts - 1:
-                                    retry_stop = await runtime["jsonrpc"].stop_player(playerid=playerid)
+                                    retry_stop = await jsonrpc_tool.stop_player(playerid=playerid)
                                     stop_attempts += 1
                                     stop_value = _as_dict(retry_stop)
                                     if getattr(retry_stop, "error", None) is not None:
@@ -3112,7 +3112,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         args = {}
                     action = str(args.get("action") or "").strip()
                     if action == "stop":
-                        action_result = await runtime["jsonrpc"].execute_input_action(action=action)
+                        action_result = await jsonrpc_tool.execute_input_action(action=action)
                         action_value = _as_dict(action_result)
                         action_error = getattr(action_result, "error", None)
                         raw_result = {
@@ -3126,7 +3126,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                             "request_id": getattr(action_result, "request_id", None),
                         }
                     else:
-                        raw_result = await runtime["bridge"].gui_action(action=action)
+                        raw_result = await bridge_tool.gui_action(action=action)
                 elif tool_name == "kodi_gui_screenshot":
                     args = params.arguments or {}
                     if not isinstance(args, dict):

@@ -93,6 +93,21 @@ BATCH_A_TARGET_TOOL_NAMES = frozenset(
     }
 )
 
+# Phase 4A Batch B adds only deterministic GUI/navigation and playback
+# mutations. Screenshot creation, log markers, and all other mutation
+# families remain deferred to later batches.
+BATCH_B_TARGET_TOOL_NAMES = frozenset(
+    {
+        "kodi_gui_action",
+        "kodi_player_open",
+        "kodi_player_pause",
+        "kodi_player_seek",
+        "kodi_player_stop",
+    }
+)
+
+EXPLICIT_TARGET_TOOL_NAMES = BATCH_A_TARGET_TOOL_NAMES | BATCH_B_TARGET_TOOL_NAMES
+
 SERVER_LOCAL_TOOL_NAMES = frozenset(
     {
         "addon_project_map_status",
@@ -131,3 +146,5 @@ assert len(TARGET_SCOPED_TOOL_NAMES) == 35
 assert len(SERVER_LOCAL_TOOL_NAMES) == 11
 assert len(HYBRID_TOOL_NAMES) == 10
 assert BATCH_A_TARGET_TOOL_NAMES <= TARGET_SCOPED_TOOL_NAMES
+assert BATCH_B_TARGET_TOOL_NAMES <= TARGET_SCOPED_TOOL_NAMES
+assert BATCH_A_TARGET_TOOL_NAMES.isdisjoint(BATCH_B_TARGET_TOOL_NAMES)
