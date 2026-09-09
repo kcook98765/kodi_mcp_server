@@ -2672,7 +2672,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 elif tool_name == "repository_bootstrap_install":
                     raw_result = await install_repository_bootstrap(runtime["bridge"])
                 elif tool_name == "repository_readiness":
-                    raw_result = await inspect_repository_readiness(runtime["bridge"])
+                    raw_result = await inspect_repository_readiness(bridge_tool)
                 elif tool_name in {"bridge_log_tail", "bridge_log_markers"}:
                     args = params.arguments or {}
                     if not isinstance(args, dict):

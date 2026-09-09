@@ -87,7 +87,7 @@ async def test_bridge_error_is_surfaced():
 
 
 @pytest.mark.asyncio
-async def test_public_tool_is_read_only_zero_argument_and_rejects_inputs():
+async def test_public_tool_is_read_only_optional_target_and_rejects_other_inputs():
     bridge = _Bridge()
     server, _ = build_mcp_server(
         {"bridge": bridge, "jsonrpc": object(), "notifications": None}
@@ -97,9 +97,15 @@ async def test_public_tool_is_read_only_zero_argument_and_rejects_inputs():
     tool = next(item for item in tools if item.name == "repository_readiness")
     assert tool.input_schema == {
         "type": "object",
-        "properties": {},
+        "properties": {
+            "target": {
+                "type": "string",
+                "pattern": r"^[a-z0-9](?:[a-z0-9._-]{0,63})$",
+            }
+        },
         "additionalProperties": False,
     }
+    assert "target" not in tool.input_schema.get("required", [])
     assert tool.annotations.read_only_hint is True
     assert tool.annotations.open_world_hint is False
 

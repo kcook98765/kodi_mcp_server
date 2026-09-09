@@ -201,6 +201,7 @@ async def test_exact_c2_inventory_schema_output_and_annotations():
         | tool_contract.BATCH_B_TARGET_TOOL_NAMES
         | tool_contract.BATCH_C1_TARGET_TOOL_NAMES
         | C2_TOOL_NAMES
+        | tool_contract.BATCH_D1_TARGET_TOOL_NAMES
     )
     addon_tool = by_name["addon_execute"]
     assert set(addon_tool.input_schema["properties"]) == EXISTING_ADDON_EXECUTE_FIELDS | {
