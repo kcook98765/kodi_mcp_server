@@ -180,8 +180,11 @@ def _validate_tool_arguments(
     error = errors[0]
     field = ".".join(str(part) for part in error.absolute_path)
     redact_arguments = tool_name in {"kodi_setting_get", "kodi_setting_set"}
-    sanitize_addon_arguments = tool_name == "addon_execute"
-    if redact_arguments or sanitize_addon_arguments:
+    sanitize_unresolved_arguments = tool_name in {
+        "addon_execute",
+        "bridge_bootstrap_status",
+    }
+    if redact_arguments or sanitize_unresolved_arguments:
         detail = (
             f"invalid argument {field}: does not satisfy the advertised schema"
             if field
@@ -202,7 +205,7 @@ def _validate_tool_arguments(
             "field": ".".join(str(part) for part in item.absolute_path) or None,
             "message": (
                 "does not satisfy the advertised schema"
-                if redact_arguments or sanitize_addon_arguments
+                if redact_arguments or sanitize_unresolved_arguments
                 else item.message
             ),
             "validator": item.validator,
@@ -217,7 +220,7 @@ def _validate_tool_arguments(
         if redact_arguments
         else (
             redact_unresolved_sensitive_arguments(candidate)
-            if sanitize_addon_arguments
+            if sanitize_unresolved_arguments
             else candidate
         )
     )
@@ -2664,8 +2667,8 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     raw_result = await bridge_tool.get_bridge_runtime_info()
                 elif tool_name == "bridge_bootstrap_status":
                     raw_result = await inspect_bootstrap_state(
-                        jsonrpc_tool=runtime["jsonrpc"],
-                        bridge_tool=runtime["bridge"],
+                        jsonrpc_tool=jsonrpc_tool,
+                        bridge_tool=bridge_tool,
                         manifest_path=BRIDGE_BOOTSTRAP_MANIFEST_PATH,
                         base_url=REPO_BASE_URL,
                     )

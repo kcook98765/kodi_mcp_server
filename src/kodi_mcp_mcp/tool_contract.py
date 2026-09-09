@@ -117,12 +117,17 @@ BATCH_C2_TARGET_TOOL_NAMES = frozenset({"addon_execute"})
 # comparison. Its server-local canonical repository configuration stays global.
 BATCH_D1_TARGET_TOOL_NAMES = frozenset({"repository_readiness"})
 
+# Phase 4A Batch D2 adds only the read-only hybrid bridge bootstrap status.
+# Its canonical bootstrap manifest and expected build identity stay global.
+BATCH_D2_TARGET_TOOL_NAMES = frozenset({"bridge_bootstrap_status"})
+
 EXPLICIT_TARGET_TOOL_NAMES = (
     BATCH_A_TARGET_TOOL_NAMES
     | BATCH_B_TARGET_TOOL_NAMES
     | BATCH_C1_TARGET_TOOL_NAMES
     | BATCH_C2_TARGET_TOOL_NAMES
     | BATCH_D1_TARGET_TOOL_NAMES
+    | BATCH_D2_TARGET_TOOL_NAMES
 )
 
 SERVER_LOCAL_TOOL_NAMES = frozenset(
@@ -167,6 +172,7 @@ assert BATCH_B_TARGET_TOOL_NAMES <= TARGET_SCOPED_TOOL_NAMES
 assert BATCH_C1_TARGET_TOOL_NAMES <= TARGET_SCOPED_TOOL_NAMES
 assert BATCH_C2_TARGET_TOOL_NAMES <= TARGET_SCOPED_TOOL_NAMES
 assert BATCH_D1_TARGET_TOOL_NAMES <= HYBRID_TOOL_NAMES
+assert BATCH_D2_TARGET_TOOL_NAMES <= HYBRID_TOOL_NAMES
 assert BATCH_A_TARGET_TOOL_NAMES.isdisjoint(BATCH_B_TARGET_TOOL_NAMES)
 assert BATCH_C1_TARGET_TOOL_NAMES.isdisjoint(
     BATCH_A_TARGET_TOOL_NAMES | BATCH_B_TARGET_TOOL_NAMES
@@ -179,4 +185,11 @@ assert BATCH_D1_TARGET_TOOL_NAMES.isdisjoint(
     | BATCH_B_TARGET_TOOL_NAMES
     | BATCH_C1_TARGET_TOOL_NAMES
     | BATCH_C2_TARGET_TOOL_NAMES
+)
+assert BATCH_D2_TARGET_TOOL_NAMES.isdisjoint(
+    BATCH_A_TARGET_TOOL_NAMES
+    | BATCH_B_TARGET_TOOL_NAMES
+    | BATCH_C1_TARGET_TOOL_NAMES
+    | BATCH_C2_TARGET_TOOL_NAMES
+    | BATCH_D1_TARGET_TOOL_NAMES
 )
