@@ -132,6 +132,7 @@ async def test_v2_tools_list_complete_and_schemas_stable():
                 "addon_execute",
                 "addon_list",
                 "bridge_health",
+                "bridge_bootstrap_status",
                 "bridge_log_markers",
                 "bridge_log_recent_errors",
                 "bridge_log_tail",
