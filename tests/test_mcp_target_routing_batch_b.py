@@ -12,7 +12,10 @@ from mcp.client import Client
 from mcp.types import CallToolRequestParams
 
 from kodi_mcp_mcp.server_core import build_mcp_server
-from kodi_mcp_mcp.tool_contract import BATCH_A_TARGET_TOOL_NAMES
+from kodi_mcp_mcp.tool_contract import (
+    BATCH_A_TARGET_TOOL_NAMES,
+    BATCH_C1_TARGET_TOOL_NAMES,
+)
 from kodi_mcp_server.models.messages import ErrorType, ResponseMessage
 from kodi_mcp_server.targets.registry import LegacyTargetSettings, TargetRegistry
 
@@ -41,7 +44,6 @@ EXCLUDED_TOOL_NAMES = frozenset(
         "bridge_write_log_marker",
         "kodi_gui_screenshot",
         "kodi_notifications_sample",
-        "kodi_setting_set",
         "managed_addon_build_publish_stage_and_apply",
         "repo_stage_and_apply_addon",
         "repository_bootstrap_install",
@@ -199,7 +201,7 @@ def _envelope(result):
 
 
 @pytest.mark.asyncio
-async def test_exact_batch_b_schema_inventory_and_exclusions():
+async def test_exact_schema_inventory_through_batch_c1_and_exclusions():
     runtime, _, _, _ = _runtime()
     server, _ = build_mcp_server(runtime)
 
@@ -210,7 +212,9 @@ async def test_exact_batch_b_schema_inventory_and_exclusions():
         if "target" in tool.input_schema.get("properties", {})
     }
 
-    assert targeted == BATCH_A_TARGET_TOOL_NAMES | BATCH_B_TOOL_NAMES
+    assert targeted == (
+        BATCH_A_TARGET_TOOL_NAMES | BATCH_B_TOOL_NAMES | BATCH_C1_TARGET_TOOL_NAMES
+    )
     by_name = {tool.name: tool for tool in listed.tools}
     for name in BATCH_B_TOOL_NAMES:
         assert by_name[name].input_schema["properties"]["target"] == {

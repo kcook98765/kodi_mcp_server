@@ -154,6 +154,7 @@ async def test_v2_tools_list_complete_and_schemas_stable():
                 "kodi_player_seek",
                 "kodi_player_stop",
                 "kodi_setting_get",
+                "kodi_setting_set",
                 "kodi_status",
                 "kodi_tv_episodes",
                 "kodi_tv_seasons",

@@ -2907,7 +2907,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     )
                 elif tool_name == "kodi_setting_set":
                     args = params.arguments or {}
-                    raw_result = await SettingsTool(runtime["jsonrpc"]).set_setting(
+                    raw_result = await SettingsTool(jsonrpc_tool).set_setting(
                         setting_id=args["setting_id"], value=args["value"]
                     )
                 elif tool_name == "kodi_artist_albums":
