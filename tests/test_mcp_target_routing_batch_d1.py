@@ -21,7 +21,6 @@ DEFERRED_TOOL_NAMES = frozenset(
     {
         "bridge_write_log_marker",
         "kodi_gui_screenshot",
-        "kodi_notifications_sample",
         "managed_addon_build_publish_and_stage",
         "managed_addon_build_publish_stage_and_apply",
         "managed_addon_validate_state",
@@ -185,7 +184,7 @@ async def test_exact_d1_inventory_and_optional_target_schema():
 
     assert getattr(tool_contract, "BATCH_D1_TARGET_TOOL_NAMES", None) == D1_TOOL_NAMES
     assert targeted == tool_contract.EXPLICIT_TARGET_TOOL_NAMES
-    assert len(targeted) == 33
+    assert len(targeted) == 34
     readiness_schema = by_name["repository_readiness"].input_schema
     assert readiness_schema == {
         "type": "object",
