@@ -127,7 +127,7 @@ async def test_v2_tools_list_complete_and_schemas_stable():
                 "type": "string",
                 "pattern": r"^[a-z0-9](?:[a-z0-9._-]{0,63})$",
             }
-            batch_a_target_tools = {
+            explicit_target_tools = {
                 "addon_details",
                 "addon_list",
                 "bridge_health",
@@ -140,6 +140,7 @@ async def test_v2_tools_list_complete_and_schemas_stable():
                 "kodi_album_songs",
                 "kodi_artist_albums",
                 "kodi_gui_state",
+                "kodi_gui_action",
                 "kodi_library_browse",
                 "kodi_library_search",
                 "kodi_library_summary",
@@ -148,19 +149,23 @@ async def test_v2_tools_list_complete_and_schemas_stable():
                 "kodi_music_summary",
                 "kodi_player_active",
                 "kodi_player_item",
+                "kodi_player_open",
+                "kodi_player_pause",
+                "kodi_player_seek",
+                "kodi_player_stop",
                 "kodi_setting_get",
                 "kodi_status",
                 "kodi_tv_episodes",
                 "kodi_tv_seasons",
             }
-            for name in batch_a_target_tools:
+            for name in explicit_target_tools:
                 assert by_name[name].input_schema["properties"]["target"] == target_property
                 assert "target" not in by_name[name].input_schema.get("required", [])
             assert {
                 name
                 for name, tool in by_name.items()
                 if "target" in tool.input_schema.get("properties", {})
-            } == batch_a_target_tools
+            } == explicit_target_tools
 
 
 @pytest.mark.asyncio
