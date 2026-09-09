@@ -15,6 +15,7 @@ from kodi_mcp_mcp.server_core import build_mcp_server
 from kodi_mcp_mcp.tool_contract import (
     BATCH_A_TARGET_TOOL_NAMES,
     BATCH_B_TARGET_TOOL_NAMES,
+    BATCH_D1_TARGET_TOOL_NAMES,
 )
 from kodi_mcp_server.models.messages import ErrorType, ResponseMessage
 from kodi_mcp_server.targets.registry import LegacyTargetSettings, TargetRegistry
@@ -181,6 +182,7 @@ async def test_exact_schema_inventory_through_c2_and_deferred_exclusions():
         | BATCH_B_TARGET_TOOL_NAMES
         | C1_TOOL_NAMES
         | {"addon_execute"}
+        | BATCH_D1_TARGET_TOOL_NAMES
     )
     by_name = {tool.name: tool for tool in listed.tools}
     assert by_name["kodi_setting_set"].input_schema["properties"]["target"] == {

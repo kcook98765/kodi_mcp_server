@@ -159,6 +159,7 @@ async def test_v2_tools_list_complete_and_schemas_stable():
                 "kodi_status",
                 "kodi_tv_episodes",
                 "kodi_tv_seasons",
+                "repository_readiness",
             }
             for name in explicit_target_tools:
                 assert by_name[name].input_schema["properties"]["target"] == target_property
