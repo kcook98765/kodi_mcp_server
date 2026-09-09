@@ -724,3 +724,653 @@ def test_repeated_refusal_remains_visible_without_false_recovery(monkeypatch):
         assert response.result["diagnostic_code"] == "connection_refused"
         assert response.result["likely_cause"] == _TCP_GUIDANCE
         assert "recovered" not in response.result
+
+
+def _redirect_status(*locations: str):
+    from websockets import http11, exceptions
+    from websockets.datastructures import Headers
+
+    headers = Headers()
+    for location in locations:
+        headers["Location"] = location
+    response = http11.Response(302, "Found", headers, b"")
+    return exceptions.InvalidStatus(response)
+
+
+class _RaisingConnect:
+    def __init__(self, exc):
+        self._exc = exc
+
+    async def __aenter__(self):
+        raise self._exc
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+def _listen_target_bound_with_connect_error(
+    monkeypatch,
+    exc,
+    *,
+    websocket_url="ws://origin.example:9090/start",
+):
+    import kodi_mcp_server.transport.websocket_notifications as ws_mod
+
+    monkeypatch.setattr(
+        ws_mod.websockets,
+        "connect",
+        lambda url, **kwargs: _RaisingConnect(exc),
+    )
+    probe = ws_mod.WebSocketNotificationProbe(
+        tcp_host="unused",
+        websocket_url=websocket_url,
+    )
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(probe.listen_target_bound())
+    finally:
+        loop.close()
+
+
+@pytest.mark.parametrize(
+    "graph_shape",
+    ["cause", "context", "split-branches", "multi-level", "cycle"],
+)
+def test_target_bound_redirect_searches_complete_exception_graph(
+    monkeypatch,
+    graph_shape,
+):
+    redirected = "ws://other.example:9191/graph-secret?token=hidden"
+    redirect = _redirect_status(redirected)
+    outer = RuntimeError("outer leaked ws://outer-secret.example/path")
+    if graph_shape == "cause":
+        outer.__cause__ = redirect
+    elif graph_shape == "context":
+        outer.__context__ = redirect
+    elif graph_shape == "split-branches":
+        outer.__cause__ = ValueError("unrelated cause")
+        outer.__context__ = redirect
+    elif graph_shape == "multi-level":
+        wrapper = ValueError("middle wrapper")
+        wrapper.__context__ = redirect
+        outer.__cause__ = wrapper
+    else:
+        wrapper = ValueError("cycle wrapper")
+        outer.__context__ = wrapper
+        wrapper.__context__ = outer
+        wrapper.__cause__ = redirect
+
+    response = _listen_target_bound_with_connect_error(monkeypatch, outer)
+
+    assert response.error == (
+        "cross-origin redirect rejected for target-bound WebSocket endpoint"
+    )
+    assert response.result is not None
+    assert response.result["diagnostic_code"] == "cross_origin_redirect"
+    serialized = json.dumps(response.to_dict())
+    assert "other.example" not in serialized
+    assert "graph-secret" not in serialized
+    assert "outer-secret" not in serialized
+
+
+def test_target_bound_exception_graph_cycle_without_redirect_terminates(monkeypatch):
+    outer = RuntimeError("ordinary transport failure")
+    wrapper = ValueError("cycle wrapper")
+    outer.__context__ = wrapper
+    wrapper.__cause__ = outer
+
+    response = _listen_target_bound_with_connect_error(monkeypatch, outer)
+
+    assert response.error == "ordinary transport failure"
+    assert response.result is not None
+    assert response.result["diagnostic_code"] == "transport_failure"
+
+
+def test_target_bound_exception_graph_traversal_limit_is_destination_free(monkeypatch):
+    outer = RuntimeError("outer-limit-secret ws://destination-secret.example/path")
+    current = outer
+    for index in range(65):
+        wrapped = RuntimeError(f"wrapped-limit-secret-{index}")
+        current.__cause__ = wrapped
+        current = wrapped
+
+    response = _listen_target_bound_with_connect_error(monkeypatch, outer)
+
+    assert response.error == "WebSocket redirect failed for target-bound endpoint"
+    assert response.result is not None
+    assert response.result["diagnostic_code"] == "redirect_failure"
+    serialized = json.dumps(response.to_dict())
+    assert "outer-limit-secret" not in serialized
+    assert "destination-secret" not in serialized
+    assert "wrapped-limit-secret" not in serialized
+
+
+@pytest.mark.parametrize(
+    ("locations", "forbidden"),
+    [
+        pytest.param((), "outer-secret", id="no-location"),
+        pytest.param(
+            (
+                "ws://first-secret.example/path",
+                "ws://second-secret.example/path",
+            ),
+            "secret.example",
+            id="duplicate-location",
+        ),
+        pytest.param(("ws://[malformed-location",), "malformed-location", id="malformed-location"),
+    ],
+)
+def test_target_bound_malformed_redirect_headers_are_destination_free(
+    monkeypatch,
+    locations,
+    forbidden,
+):
+    redirect = _redirect_status(*locations)
+    outer = RuntimeError("outer-secret redirect wrapper")
+    outer.__cause__ = redirect
+
+    response = _listen_target_bound_with_connect_error(monkeypatch, outer)
+
+    assert response.error == "WebSocket redirect failed for target-bound endpoint"
+    assert response.result is not None
+    assert response.result["diagnostic_code"] == "redirect_failure"
+    serialized = json.dumps(response.to_dict())
+    assert forbidden not in serialized
+    assert "outer-secret" not in serialized
+
+
+def test_target_bound_public_same_origin_redirect_delivers_event(monkeypatch):
+    """The public client follows a real local same-origin handshake redirect."""
+    import kodi_mcp_server.transport.websocket_notifications as ws_mod
+    from websockets.asyncio.client import connect as public_connect
+    from websockets.asyncio.server import serve
+
+    expected = {"method": "Player.OnPlay", "params": {"item": {"id": 7}}}
+    request_paths = []
+    monkeypatch.setattr(ws_mod.websockets, "connect", public_connect)
+
+    async def handler(websocket):
+        await websocket.send(json.dumps(expected))
+
+    async def process_request(connection, request):
+        request_paths.append(request.path)
+        if request.path == "/start":
+            response = connection.respond(302, "redirect")
+            response.headers["Location"] = "/final?source=redirect"
+            return response
+        return None
+
+    async def run_test():
+        server = await serve(
+            handler,
+            "127.0.0.1",
+            0,
+            process_request=process_request,
+        )
+        port = next(iter(server.sockets)).getsockname()[1]
+        probe = ws_mod.WebSocketNotificationProbe(
+            tcp_host="unused",
+            websocket_url=f"ws://127.0.0.1:{port}/start",
+        )
+        try:
+            return await probe.listen_target_bound(sample_size=1, listen_seconds=2)
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    loop = asyncio.new_event_loop()
+    try:
+        response = loop.run_until_complete(run_test())
+    finally:
+        loop.close()
+
+    assert request_paths == ["/start", "/final?source=redirect"]
+    assert response.error is None
+    assert response.result is not None
+    assert response.result["messages"] == [expected]
+
+
+@pytest.mark.parametrize("redirect_kind", ["cross-host", "cross-port", "ws-to-wss"])
+def test_target_bound_public_redirect_rejects_origin_change(
+    monkeypatch,
+    redirect_kind,
+):
+    """The public client rejects local redirect handshakes before destination use."""
+    import kodi_mcp_server.transport.websocket_notifications as ws_mod
+    from websockets.asyncio.client import connect as public_connect
+    from websockets.asyncio.server import serve
+
+    destination_connections = []
+    redirect_location = ""
+    monkeypatch.setattr(ws_mod.websockets, "connect", public_connect)
+
+    async def destination_handler(websocket):
+        destination_connections.append(True)
+        await websocket.send(json.dumps({"method": "forbidden"}))
+
+    async def source_handler(websocket):
+        pytest.fail("redirect source must not complete a WebSocket handshake")
+
+    async def process_request(connection, request):
+        response = connection.respond(302, "redirect")
+        response.headers["Location"] = redirect_location
+        return response
+
+    async def run_test():
+        nonlocal redirect_location
+        destination_server = await serve(destination_handler, "127.0.0.1", 0)
+        destination_port = next(iter(destination_server.sockets)).getsockname()[1]
+        source_server = await serve(
+            source_handler,
+            "127.0.0.1",
+            0,
+            process_request=process_request,
+        )
+        source_port = next(iter(source_server.sockets)).getsockname()[1]
+        if redirect_kind == "cross-host":
+            redirect_location = f"ws://localhost:{source_port}/redirect-secret"
+        elif redirect_kind == "cross-port":
+            redirect_location = (
+                f"ws://127.0.0.1:{destination_port}/redirect-secret"
+            )
+        else:
+            redirect_location = f"wss://127.0.0.1:{source_port}/redirect-secret"
+        probe = ws_mod.WebSocketNotificationProbe(
+            tcp_host="unused",
+            websocket_url=f"ws://127.0.0.1:{source_port}/start",
+        )
+        try:
+            return await probe.listen_target_bound(sample_size=1, listen_seconds=2)
+        finally:
+            source_server.close()
+            destination_server.close()
+            await source_server.wait_closed()
+            await destination_server.wait_closed()
+
+    loop = asyncio.new_event_loop()
+    try:
+        response = loop.run_until_complete(run_test())
+    finally:
+        loop.close()
+
+    assert destination_connections == []
+    assert response.error == (
+        "cross-origin redirect rejected for target-bound WebSocket endpoint"
+    )
+    assert response.result is not None
+    assert response.result["diagnostic_code"] == "cross_origin_redirect"
+    assert "redirect-secret" not in json.dumps(response.to_dict())
+
+
+def test_target_bound_structurally_classifies_wss_downgrade(monkeypatch):
+    import kodi_mcp_server.transport.websocket_notifications as ws_mod
+
+    redirect = _redirect_status(
+        "ws://origin.example/redirect-secret?location=downgrade"
+    )
+    outer = ws_mod.websockets.exceptions.SecurityError("wrapped destination")
+    outer.__cause__ = redirect
+    response = _listen_target_bound_with_connect_error(
+        monkeypatch,
+        outer,
+        websocket_url="wss://origin.example/start",
+    )
+
+    assert response.error == (
+        "cross-origin redirect rejected for target-bound WebSocket endpoint"
+    )
+    assert response.result is not None
+    assert response.result["diagnostic_code"] == "cross_origin_redirect"
+    serialized = json.dumps(response.to_dict())
+    assert "redirect-secret" not in serialized
+    assert "wrapped destination" not in serialized
+
+
+def test_target_bound_listen_disables_implicit_proxy_discovery(monkeypatch):
+    """Strict sampling connects directly to the authored endpoint."""
+    import kodi_mcp_server.transport.websocket_notifications as ws_mod
+
+    calls = []
+
+    def fake_connect(url, **kwargs):
+        calls.append((url, kwargs))
+        return _FakeWebSocket([json.dumps({"method": "System.OnQuit"})])
+
+    monkeypatch.setattr(ws_mod.websockets, "connect", fake_connect)
+    probe = ws_mod.WebSocketNotificationProbe(tcp_host="target.example", tcp_port=9191)
+
+    loop = asyncio.new_event_loop()
+    try:
+        response = loop.run_until_complete(
+            probe.listen_target_bound(sample_size=1, listen_seconds=2)
+        )
+    finally:
+        loop.close()
+
+    assert response.error is None
+    assert calls == [
+        (
+            "ws://target.example:9191/jsonrpc",
+            {
+                "open_timeout": 10,
+                "proxy": None,
+                "host": "target.example",
+                "port": 9191,
+            },
+        )
+    ]
+
+
+def test_target_bound_connection_failure_is_attempted_once(monkeypatch):
+    """One failed target-bound call is one connection attempt, without retry."""
+    import kodi_mcp_server.transport.websocket_notifications as ws_mod
+
+    calls = []
+
+    def refuse(url, **kwargs):
+        calls.append((url, kwargs))
+        raise ConnectionRefusedError(111, "Connection refused")
+
+    monkeypatch.setattr(ws_mod.websockets, "connect", refuse)
+    probe = ws_mod.WebSocketNotificationProbe(tcp_host="target.example")
+
+    loop = asyncio.new_event_loop()
+    try:
+        response = loop.run_until_complete(probe.listen_target_bound())
+    finally:
+        loop.close()
+
+    assert len(calls) == 1
+    assert response.error == "[Errno 111] Connection refused"
+    assert response.result is not None
+    assert response.result["diagnostic_code"] == "connection_refused"
+
+
+class _FrameSequenceWebSocket(_FakeWebSocket):
+    """Yield frames and raise queued exceptions in receive order."""
+
+    async def recv(self):
+        if self._queue:
+            item = self._queue.pop(0)
+            if isinstance(item, BaseException):
+                raise item
+            return item
+        await asyncio.Event().wait()
+
+
+@pytest.mark.parametrize("listen_method", ["listen", "listen_target_bound"])
+def test_partial_stream_failure_does_not_reconnect_or_return_partial_messages(
+    monkeypatch,
+    listen_method,
+):
+    """A mid-window close keeps the existing all-or-failure stream policy."""
+    import kodi_mcp_server.transport.websocket_notifications as ws_mod
+    from websockets.exceptions import ConnectionClosedError
+
+    first = {"method": "Player.OnPlay", "params": {"item": {"id": 1}}}
+    forbidden_second = {"method": "Player.OnStop", "params": {"item": {"id": 2}}}
+    connections = [
+        _FrameSequenceWebSocket(
+            [json.dumps(first), ConnectionClosedError(None, None)]
+        ),
+        _FakeWebSocket([json.dumps(forbidden_second)]),
+    ]
+    calls = []
+
+    def fake_connect(url, **kwargs):
+        calls.append((url, kwargs))
+        return connections.pop(0)
+
+    monkeypatch.setattr(ws_mod.websockets, "connect", fake_connect)
+    probe = ws_mod.WebSocketNotificationProbe(tcp_host="target.example")
+
+    loop = asyncio.new_event_loop()
+    try:
+        response = loop.run_until_complete(
+            getattr(probe, listen_method)(sample_size=2, listen_seconds=2)
+        )
+    finally:
+        loop.close()
+
+    assert len(calls) == 1
+    assert response.error == "no close frame received or sent"
+    assert response.result is not None
+    assert response.result["connected"] is False
+    assert response.result["messages"] == []
+    assert response.result["diagnostic_code"] == "connection_interrupted"
+    assert forbidden_second["method"] not in json.dumps(response.to_dict())
+
+
+class _OpeningGateWebSocket(_FakeWebSocket):
+    def __init__(self, queued, gate):
+        super().__init__(queued)
+        self._gate = gate
+
+    async def __aenter__(self):
+        await self._gate.wait()
+        return self
+
+
+def test_concurrent_target_bound_calls_on_cached_probe_use_distinct_websockets(monkeypatch):
+    """A cached probe shares endpoint config, never a live socket or receive buffer."""
+    import kodi_mcp_server.transport.websocket_notifications as ws_mod
+
+    gate = asyncio.Event()
+    sockets = []
+
+    def fake_connect(url, **kwargs):
+        index = len(sockets)
+        websocket = _OpeningGateWebSocket(
+            [json.dumps({"method": f"Event.{index}"})], gate
+        )
+        sockets.append(websocket)
+        if len(sockets) == 2:
+            gate.set()
+        return websocket
+
+    monkeypatch.setattr(ws_mod.websockets, "connect", fake_connect)
+    probe = ws_mod.WebSocketNotificationProbe(tcp_host="target.example")
+
+    async def run_calls():
+        return await asyncio.gather(
+            probe.listen_target_bound(sample_size=1, listen_seconds=2),
+            probe.listen_target_bound(sample_size=1, listen_seconds=2),
+        )
+
+    loop = asyncio.new_event_loop()
+    try:
+        responses = loop.run_until_complete(run_calls())
+    finally:
+        loop.close()
+
+    assert len(sockets) == 2
+    assert sockets[0] is not sockets[1]
+    assert [response.result["messages"] for response in responses] == [
+        [{"method": "Event.0"}],
+        [{"method": "Event.1"}],
+    ]
+
+
+def test_separate_target_bound_probes_cannot_cross_share_connection_state(monkeypatch):
+    """Two probe instances retain independent endpoints, sockets, and messages."""
+    import kodi_mcp_server.transport.websocket_notifications as ws_mod
+
+    gate = asyncio.Event()
+    calls = []
+
+    def fake_connect(url, **kwargs):
+        calls.append((url, kwargs["host"]))
+        websocket = _OpeningGateWebSocket(
+            [json.dumps({"method": f"Event.{kwargs['host']}"})], gate
+        )
+        if len(calls) == 2:
+            gate.set()
+        return websocket
+
+    monkeypatch.setattr(ws_mod.websockets, "connect", fake_connect)
+    probe_a = ws_mod.WebSocketNotificationProbe(tcp_host="a.example")
+    probe_b = ws_mod.WebSocketNotificationProbe(tcp_host="b.example")
+
+    async def run_calls():
+        return await asyncio.gather(
+            probe_a.listen_target_bound(sample_size=1, listen_seconds=2),
+            probe_b.listen_target_bound(sample_size=1, listen_seconds=2),
+        )
+
+    loop = asyncio.new_event_loop()
+    try:
+        response_a, response_b = loop.run_until_complete(run_calls())
+    finally:
+        loop.close()
+
+    assert calls == [
+        ("ws://a.example:9090/jsonrpc", "a.example"),
+        ("ws://b.example:9090/jsonrpc", "b.example"),
+    ]
+    assert response_a.result["messages"] == [{"method": "Event.a.example"}]
+    assert response_b.result["messages"] == [{"method": "Event.b.example"}]
+
+
+@pytest.mark.parametrize(
+    ("tcp_host", "websocket_url"),
+    [
+        pytest.param("", "", id="missing"),
+        pytest.param(
+            "derived.example",
+            "   ",
+            id="whitespace-authored-url-does-not-fallback",
+        ),
+        pytest.param("unused", "ws://user@target.example/jsonrpc", id="userinfo"),
+        pytest.param(
+            "unused",
+            "ws://user:password@target.example/jsonrpc",
+            id="username-password",
+        ),
+        pytest.param("unused", "ws:///jsonrpc", id="missing-host"),
+        pytest.param("unused", "http://target.example/jsonrpc", id="unsupported-scheme"),
+        pytest.param("unused", "ws://target.example:/jsonrpc", id="empty-port"),
+        pytest.param("unused", "ws://target.example:0/jsonrpc", id="zero-port"),
+        pytest.param("unused", "ws://target.example:65536/jsonrpc", id="port-too-large"),
+        pytest.param(
+            "unused",
+            "ws://target.example:9090:80/jsonrpc",
+            id="malformed-authority",
+        ),
+        pytest.param(
+            "unused",
+            r"ws://target.example\evil/jsonrpc",
+            id="backslash-ambiguity",
+        ),
+        pytest.param(
+            "unused",
+            "ws://target.example/jsonrpc#fragment",
+            id="fragment",
+        ),
+    ],
+)
+def test_target_bound_unusable_endpoint_fails_before_connect(
+    monkeypatch,
+    tcp_host,
+    websocket_url,
+):
+    """Strict sampling never falls back when no target endpoint was authored."""
+    import kodi_mcp_server.transport.websocket_notifications as ws_mod
+
+    def unexpected_connect(*args, **kwargs):
+        pytest.fail("strict endpoint validation must happen before connect")
+
+    monkeypatch.setattr(ws_mod.websockets, "connect", unexpected_connect)
+    probe = ws_mod.WebSocketNotificationProbe(
+        tcp_host=tcp_host,
+        websocket_url=websocket_url,
+    )
+
+    loop = asyncio.new_event_loop()
+    try:
+        response = loop.run_until_complete(probe.listen_target_bound())
+    finally:
+        loop.close()
+
+    assert response.error == "target WebSocket endpoint is not configured"
+    assert response.result is not None
+    assert response.result["connected"] is False
+    assert response.result["diagnostic_code"] == "endpoint_not_configured"
+
+
+@pytest.mark.parametrize(
+    ("websocket_url", "expected_host", "expected_port"),
+    [
+        pytest.param("ws://target.example/jsonrpc", "target.example", 80, id="ws"),
+        pytest.param("wss://target.example/jsonrpc", "target.example", 443, id="wss"),
+        pytest.param(
+            "ws://target.example:9191/events?channel=kodi",
+            "target.example",
+            9191,
+            id="explicit-port-and-query",
+        ),
+    ],
+)
+def test_target_bound_valid_authored_endpoint_connects_once(
+    monkeypatch,
+    websocket_url,
+    expected_host,
+    expected_port,
+):
+    import kodi_mcp_server.transport.websocket_notifications as ws_mod
+
+    calls = []
+
+    def fake_connect(url, **kwargs):
+        calls.append((url, kwargs))
+        return _FakeWebSocket([json.dumps({"method": "Player.OnPlay"})])
+
+    monkeypatch.setattr(ws_mod.websockets, "connect", fake_connect)
+    probe = ws_mod.WebSocketNotificationProbe(
+        tcp_host="unused",
+        websocket_url=websocket_url,
+    )
+    loop = asyncio.new_event_loop()
+    try:
+        response = loop.run_until_complete(
+            probe.listen_target_bound(sample_size=1, listen_seconds=2)
+        )
+    finally:
+        loop.close()
+
+    assert response.error is None
+    assert calls == [
+        (
+            websocket_url,
+            {
+                "open_timeout": 10,
+                "proxy": None,
+                "host": expected_host,
+                "port": expected_port,
+            },
+        )
+    ]
+
+
+def test_legacy_listen_connection_arguments_remain_unchanged(monkeypatch):
+    """The omitted/default path retains websockets' legacy proxy and redirect defaults."""
+    import kodi_mcp_server.transport.websocket_notifications as ws_mod
+
+    calls = []
+
+    def fake_connect(url, **kwargs):
+        calls.append((url, kwargs))
+        return _FakeWebSocket([json.dumps({"method": "Player.OnPlay"})])
+
+    monkeypatch.setattr(ws_mod.websockets, "connect", fake_connect)
+    probe = ws_mod.WebSocketNotificationProbe(tcp_host="legacy.example", timeout=6)
+
+    loop = asyncio.new_event_loop()
+    try:
+        response = loop.run_until_complete(probe.listen(sample_size=1, listen_seconds=2))
+    finally:
+        loop.close()
+
+    assert response.error is None
+    assert calls == [
+        ("ws://legacy.example:9090/jsonrpc", {"open_timeout": 6})
+    ]
