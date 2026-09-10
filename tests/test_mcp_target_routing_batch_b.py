@@ -19,6 +19,7 @@ from kodi_mcp_mcp.tool_contract import (
     BATCH_D2_TARGET_TOOL_NAMES,
     BATCH_D3_TARGET_TOOL_NAMES,
     BATCH_D4_TARGET_TOOL_NAMES,
+    BATCH_D5_TARGET_TOOL_NAMES,
 )
 from kodi_mcp_server.models.messages import ErrorType, ResponseMessage
 from kodi_mcp_server.targets.registry import LegacyTargetSettings, TargetRegistry
@@ -44,7 +45,6 @@ VALID_ARGUMENTS = {
 
 EXCLUDED_TOOL_NAMES = frozenset(
     {
-        "kodi_gui_screenshot",
         "managed_addon_build_publish_stage_and_apply",
         "repo_stage_and_apply_addon",
         "repository_bootstrap_install",
@@ -222,6 +222,7 @@ async def test_exact_schema_inventory_through_batch_c2_and_exclusions():
         | BATCH_D2_TARGET_TOOL_NAMES
         | BATCH_D3_TARGET_TOOL_NAMES
         | BATCH_D4_TARGET_TOOL_NAMES
+        | BATCH_D5_TARGET_TOOL_NAMES
     )
     by_name = {tool.name: tool for tool in listed.tools}
     for name in BATCH_B_TOOL_NAMES:

@@ -28,7 +28,6 @@ TARGET_PROPERTY = {
 }
 DEFERRED_TOOL_NAMES = frozenset(
     {
-        "kodi_gui_screenshot",
         "managed_addon_build_publish_and_stage",
         "managed_addon_build_publish_stage_and_apply",
         "managed_addon_validate_state",
@@ -284,9 +283,10 @@ async def test_exact_d2_inventory_and_canonical_optional_target_schema():
         | D2_TOOL_NAMES
         | tool_contract.BATCH_D3_TARGET_TOOL_NAMES
         | tool_contract.BATCH_D4_TARGET_TOOL_NAMES
+        | tool_contract.BATCH_D5_TARGET_TOOL_NAMES
     )
     assert targeted == tool_contract.EXPLICIT_TARGET_TOOL_NAMES
-    assert len(targeted) == 35
+    assert len(targeted) == 36
     assert by_name["bridge_bootstrap_status"].input_schema == {
         "type": "object",
         "properties": {"target": TARGET_PROPERTY},

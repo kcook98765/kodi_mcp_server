@@ -19,7 +19,6 @@ from kodi_mcp_server.targets.registry import LegacyTargetSettings, TargetRegistr
 D1_TOOL_NAMES = frozenset({"repository_readiness"})
 DEFERRED_TOOL_NAMES = frozenset(
     {
-        "kodi_gui_screenshot",
         "managed_addon_build_publish_and_stage",
         "managed_addon_build_publish_stage_and_apply",
         "managed_addon_validate_state",
@@ -183,7 +182,7 @@ async def test_exact_d1_inventory_and_optional_target_schema():
 
     assert getattr(tool_contract, "BATCH_D1_TARGET_TOOL_NAMES", None) == D1_TOOL_NAMES
     assert targeted == tool_contract.EXPLICIT_TARGET_TOOL_NAMES
-    assert len(targeted) == 35
+    assert len(targeted) == 36
     readiness_schema = by_name["repository_readiness"].input_schema
     assert readiness_schema == {
         "type": "object",
