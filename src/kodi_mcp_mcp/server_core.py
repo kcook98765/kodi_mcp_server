@@ -79,6 +79,7 @@ from kodi_mcp_server.managed_addons import (
     managed_addon_list,
     managed_addon_register,
 )
+from kodi_mcp_server.managed_addon_validation import validate_managed_addon_state
 from kodi_mcp_server.dev_loop_artifacts import (
     artifact_upload_zip as _artifact_upload_zip,
     repo_publish_artifact as _repo_publish_artifact,
@@ -90,7 +91,8 @@ from kodi_mcp_server.kodi_apply import managed_addon_build_publish_stage_and_app
 from kodi_mcp_server.tools.library import LibraryTool
 from kodi_mcp_server.tools.music import MusicTool
 from kodi_mcp_server.tools.settings import SettingsTool
-from kodi_mcp_server.milestone_a_bridge import read_addon_state
+from kodi_mcp_server.tools.bridge import BridgeTool
+from kodi_mcp_server.milestone_a_bridge import build_bridge_client
 from kodi_mcp_server.paths import AUTHORITATIVE_REPO_ROOT, PROJECT_ROOT
 from kodi_mcp_server.screenshot_store import (
     inspect_screenshot_from_base64,
@@ -3303,115 +3305,17 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         args = {}
                     managed_addon_id = str(args.get("managed_addon_id") or "").strip()
                     registry_result = managed_addon_get(managed_addon_id=managed_addon_id)
-
                     entry = (registry_result.get("managed_addon") if registry_result.get("ok") else None)
-                    last_build = entry.get("last_build") if isinstance(entry, dict) else None
-
-                    registry_exists = bool(registry_result.get("ok") and isinstance(entry, dict))
-                    enabled = bool(entry.get("enabled", False)) if isinstance(entry, dict) else False
-                    source_path = str(entry.get("source_path") or "") if isinstance(entry, dict) else ""
-                    addon_id = str(entry.get("addon_id") or "") if isinstance(entry, dict) else ""
-                    last_observed_version = str(entry.get("last_observed_version") or "") if isinstance(entry, dict) else ""
-
-                    # Artifact presence
-                    def _exists(p: str) -> bool:
-                        try:
-                            from pathlib import Path as _Path
-
-                            return bool(p and _Path(p).exists())
-                        except Exception:
-                            return False
-
-                    last_build_zip_exists = _exists(str((last_build or {}).get("zip_path") or "")) if isinstance(last_build, dict) else False
-                    published_repo_zip_exists = _exists(str((last_build or {}).get("repo_zip_path") or "")) if isinstance(last_build, dict) else False
-
-                    dev_repo_dir = AUTHORITATIVE_REPO_ROOT / "dev-repo"
-                    dev_repo_exists = dev_repo_dir.exists()
-                    addons_xml_exists = (dev_repo_dir / "addons.xml").exists()
-                    addons_xml_md5_exists = (dev_repo_dir / "addons.xml.md5").exists()
-
-                    # Best-effort bridge checks
-                    reachable = False
-                    bridge_error = None
-                    mcp_state_read_ok = False
-                    registration_present = None
-                    registration_stale = None
-                    repo_zip_file_exists = None
-                    repo_zip_special_path = None
-                    dev_setup_available = None
-
-                    try:
-                        health = await runtime["bridge"].get_bridge_health()
-                        bridge_error = getattr(health, "error", None)
-                        reachable = bool(bridge_error is None)
-                    except Exception as exc:
-                        reachable = False
-                        bridge_error = str(exc)
-
-                    if reachable:
-                        try:
-                            view, resp = await read_addon_state()
-                            mcp_state_read_ok = bool(view.transport_ok)
-                            derived = None
-                            repo_zip = None
-                            if resp.error is None and isinstance((resp.result or {}).get("result"), dict):
-                                result_obj = (resp.result.get("result") or {})
-                                derived = result_obj.get("derived")
-                                repo_zip = result_obj.get("repo_zip")
-                            if isinstance(derived, dict):
-                                registration_present = derived.get("registration_present")
-                                registration_stale = derived.get("registration_stale")
-                                repo_zip_file_exists = derived.get("repo_zip_file_exists")
-                                dev_setup_available = derived.get("dev_setup_available")
-                            if isinstance(repo_zip, dict):
-                                special_path = repo_zip.get("special_path")
-                                if isinstance(special_path, str) and special_path.strip():
-                                    repo_zip_special_path = special_path.strip()
-                        except Exception as exc:
-                            mcp_state_read_ok = False
-                            bridge_error = str(exc)
-
-                    # Overall readiness
-                    ready_for_build = bool(registry_exists and enabled and source_path and _exists(source_path) and _exists(str(Path(source_path) / "addon.xml")))
-                    ready_for_publish = bool(ready_for_build and last_build_zip_exists and dev_repo_exists)
-                    ready_for_stage = bool(ready_for_publish and reachable and mcp_state_read_ok and bool(registration_present) and not bool(registration_stale))
-                    ready_for_kodi_install = bool(ready_for_stage and bool(repo_zip_file_exists) and bool(dev_setup_available))
-
-                    raw_result = {
-                        "ok": True,
-                        "managed_addon_id": managed_addon_id,
-                        "registry": {
-                            "exists": registry_exists,
-                            "enabled": enabled,
-                            "addon_id": addon_id,
-                            "source_path": source_path,
-                            "last_observed_version": last_observed_version,
-                            "last_build": last_build if isinstance(last_build, dict) else None,
-                        },
-                        "artifacts": {
-                            "last_build_zip_exists": last_build_zip_exists,
-                            "published_repo_zip_exists": published_repo_zip_exists,
-                            "dev_repo_exists": dev_repo_exists,
-                            "addons_xml_exists": addons_xml_exists,
-                            "addons_xml_md5_exists": addons_xml_md5_exists,
-                        },
-                        "kodi_bridge": {
-                            "reachable": reachable,
-                            "mcp_state_read_ok": mcp_state_read_ok,
-                            "error": bridge_error,
-                            "registration_present": registration_present,
-                            "registration_stale": registration_stale,
-                            "repo_zip_file_exists": repo_zip_file_exists,
-                            "repo_zip_special_path": repo_zip_special_path,
-                            "dev_setup_available": dev_setup_available,
-                        },
-                        "summary": {
-                            "ready_for_build": ready_for_build,
-                            "ready_for_publish": ready_for_publish,
-                            "ready_for_stage": ready_for_stage,
-                            "ready_for_kodi_install": ready_for_kodi_install,
-                        },
-                    }
+                    managed_addon_record = entry if isinstance(entry, dict) else None
+                    health_bridge_tool = runtime["bridge"]
+                    state_bridge_tool = BridgeTool(build_bridge_client())
+                    raw_result = await validate_managed_addon_state(
+                        managed_addon_id=managed_addon_id,
+                        managed_addon_record=managed_addon_record,
+                        authoritative_repo_root=AUTHORITATIVE_REPO_ROOT,
+                        health_bridge_tool=health_bridge_tool,
+                        state_bridge_tool=state_bridge_tool,
+                    )
                 elif tool_name == "artifact_upload_zip":
                     args = params.arguments or {}
                     if not isinstance(args, dict):
