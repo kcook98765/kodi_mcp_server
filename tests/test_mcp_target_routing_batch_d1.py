@@ -21,7 +21,6 @@ DEFERRED_TOOL_NAMES = frozenset(
     {
         "managed_addon_build_publish_and_stage",
         "managed_addon_build_publish_stage_and_apply",
-        "managed_addon_validate_state",
         "repo_publish_stage_apply_artifact",
         "repo_stage_and_apply_addon",
         "repo_stage_current_dev_repo",
@@ -182,7 +181,7 @@ async def test_exact_d1_inventory_and_optional_target_schema():
 
     assert getattr(tool_contract, "BATCH_D1_TARGET_TOOL_NAMES", None) == D1_TOOL_NAMES
     assert targeted == tool_contract.EXPLICIT_TARGET_TOOL_NAMES
-    assert len(targeted) == 36
+    assert len(targeted) == 37
     readiness_schema = by_name["repository_readiness"].input_schema
     assert readiness_schema == {
         "type": "object",

@@ -580,7 +580,7 @@ async def test_unexpected_registry_exception_keeps_outer_unknown_error(
 
 
 @pytest.mark.asyncio
-async def test_external_contract_inventory_and_phase_4a_closure_are_unchanged() -> None:
+async def test_external_contract_inventory_preserves_phase_4a_memberships() -> None:
     server, _ = build_mcp_server(
         {
             "bridge": _Tripwire(),
@@ -598,9 +598,9 @@ async def test_external_contract_inventory_and_phase_4a_closure_are_unchanged() 
     tool = by_name["managed_addon_validate_state"]
 
     assert len(by_name) == 56
-    assert len(targeted) == 36
+    assert len(targeted) == 37
     assert targeted == tool_contract.EXPLICIT_TARGET_TOOL_NAMES
-    assert "managed_addon_validate_state" not in targeted
+    assert "managed_addon_validate_state" in targeted
     assert tool.input_schema == {
         "type": "object",
         "properties": {
@@ -608,7 +608,11 @@ async def test_external_contract_inventory_and_phase_4a_closure_are_unchanged() 
                 "type": "string",
                 "minLength": 1,
                 "pattern": r"^(?=.*[a-z0-9])[a-z0-9._@-]+$",
-            }
+            },
+            "target": {
+                "type": "string",
+                "pattern": r"^[a-z0-9](?:[a-z0-9._-]{0,63})$",
+            },
         },
         "required": ["managed_addon_id"],
         "additionalProperties": False,

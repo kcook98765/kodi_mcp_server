@@ -20,6 +20,7 @@ from kodi_mcp_mcp.tool_contract import (
     BATCH_D3_TARGET_TOOL_NAMES,
     BATCH_D4_TARGET_TOOL_NAMES,
     BATCH_D5_TARGET_TOOL_NAMES,
+    BATCH_P1_TARGET_TOOL_NAMES,
 )
 from kodi_mcp_server.models.messages import ErrorType, ResponseMessage
 from kodi_mcp_server.targets.registry import LegacyTargetSettings, TargetRegistry
@@ -188,6 +189,7 @@ async def test_exact_schema_inventory_through_c2_and_deferred_exclusions():
         | BATCH_D3_TARGET_TOOL_NAMES
         | BATCH_D4_TARGET_TOOL_NAMES
         | BATCH_D5_TARGET_TOOL_NAMES
+        | BATCH_P1_TARGET_TOOL_NAMES
     )
     by_name = {tool.name: tool for tool in listed.tools}
     assert by_name["kodi_setting_set"].input_schema["properties"]["target"] == {

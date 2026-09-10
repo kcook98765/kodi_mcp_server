@@ -163,6 +163,7 @@ async def test_v2_tools_list_complete_and_schemas_stable():
                 "kodi_status",
                 "kodi_tv_episodes",
                 "kodi_tv_seasons",
+                "managed_addon_validate_state",
                 "repository_readiness",
             }
             for name in explicit_target_tools:
