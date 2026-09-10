@@ -256,6 +256,16 @@ class HttpBridgeClient:
             self._make_request, "GET", "/control/capabilities", request_id=request_id, max_retries=1
         )
 
+    async def staged_repo_status(self) -> ResponseMessage:
+        """Read actual-byte status for the bridge-owned staged repository slot."""
+        return await self._retry_wrapper(
+            self._make_request,
+            "GET",
+            "/repo/staged/status",
+            request_id="bridge-staged-repository-status",
+            max_retries=1,
+        )
+
     async def install_repository_bootstrap(self) -> ResponseMessage:
         """Invoke the bridge's zero-argument canonical repository installer."""
         import asyncio

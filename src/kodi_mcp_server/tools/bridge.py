@@ -54,6 +54,9 @@ class BridgeTool:
     async def get_bridge_control_capabilities(self) -> ResponseMessage:
         return await self.client.get_control_capabilities()
 
+    async def get_staged_repo_status(self) -> ResponseMessage:
+        return await self.client.staged_repo_status()
+
     async def stage_repository_bootstrap(
         self, *, zip_path: str, version: str, sha256: str
     ) -> ResponseMessage:
