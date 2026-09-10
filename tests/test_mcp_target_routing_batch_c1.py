@@ -18,6 +18,7 @@ from kodi_mcp_mcp.tool_contract import (
     BATCH_D1_TARGET_TOOL_NAMES,
     BATCH_D2_TARGET_TOOL_NAMES,
     BATCH_D3_TARGET_TOOL_NAMES,
+    BATCH_D4_TARGET_TOOL_NAMES,
 )
 from kodi_mcp_server.models.messages import ErrorType, ResponseMessage
 from kodi_mcp_server.targets.registry import LegacyTargetSettings, TargetRegistry
@@ -28,7 +29,6 @@ C1_TOOL_NAMES = frozenset({"kodi_setting_set"})
 SETTING_ID = "filelists.showextensions"
 DEFERRED_TOOL_NAMES = frozenset(
     {
-        "bridge_write_log_marker",
         "kodi_gui_screenshot",
         "managed_addon_build_publish_stage_and_apply",
         "repo_stage_and_apply_addon",
@@ -186,6 +186,7 @@ async def test_exact_schema_inventory_through_c2_and_deferred_exclusions():
         | BATCH_D1_TARGET_TOOL_NAMES
         | BATCH_D2_TARGET_TOOL_NAMES
         | BATCH_D3_TARGET_TOOL_NAMES
+        | BATCH_D4_TARGET_TOOL_NAMES
     )
     by_name = {tool.name: tool for tool in listed.tools}
     assert by_name["kodi_setting_set"].input_schema["properties"]["target"] == {

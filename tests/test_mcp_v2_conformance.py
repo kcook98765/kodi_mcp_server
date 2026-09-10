@@ -138,6 +138,7 @@ async def test_v2_tools_list_complete_and_schemas_stable():
                 "bridge_log_tail",
                 "bridge_runtime_info",
                 "bridge_status",
+                "bridge_write_log_marker",
                 "jsonrpc_introspect",
                 "kodi_album_songs",
                 "kodi_artist_albums",

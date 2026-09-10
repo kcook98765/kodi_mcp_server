@@ -184,6 +184,7 @@ def _validate_tool_arguments(
     sanitize_unresolved_arguments = tool_name in {
         "addon_execute",
         "bridge_bootstrap_status",
+        "bridge_write_log_marker",
         "kodi_notifications_sample",
     }
     if redact_arguments or sanitize_unresolved_arguments:
@@ -2292,7 +2293,9 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         "error_code": None,
                         "latency_ms": 0,
                         "request_id": None,
-                        "raw": {"arguments": args},
+                        "raw": {
+                            "arguments": redact_unresolved_sensitive_arguments(args)
+                        },
                     }
                     return _result_from_envelope(envelope)
 
@@ -3140,7 +3143,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     if not isinstance(args, dict):
                         args = {}
                     message = args.get("message")
-                    raw_result = await runtime["bridge"].write_bridge_log_marker(message=message)
+                    raw_result = await bridge_tool.write_bridge_log_marker(message=message)
                 elif tool_name == "kodi_gui_action":
                     args = params.arguments or {}
                     if not isinstance(args, dict):
