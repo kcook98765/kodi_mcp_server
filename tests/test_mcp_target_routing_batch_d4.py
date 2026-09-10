@@ -27,7 +27,6 @@ STILL_UNTARGETED = frozenset(
     {
         "managed_addon_build_publish_and_stage",
         "managed_addon_build_publish_stage_and_apply",
-        "managed_addon_validate_state",
         "repo_publish_stage_apply_artifact",
         "repo_stage_and_apply_addon",
         "repo_stage_current_dev_repo",
@@ -191,9 +190,10 @@ async def test_exact_d4_inventory_and_marker_schema():
         | tool_contract.BATCH_D3_TARGET_TOOL_NAMES
         | D4_TOOL_NAMES
         | tool_contract.BATCH_D5_TARGET_TOOL_NAMES
+        | tool_contract.BATCH_P1_TARGET_TOOL_NAMES
     )
     assert targeted == tool_contract.EXPLICIT_TARGET_TOOL_NAMES
-    assert len(targeted) == 36
+    assert len(targeted) == 37
     assert by_name["bridge_write_log_marker"].input_schema == {
         "type": "object",
         "properties": {

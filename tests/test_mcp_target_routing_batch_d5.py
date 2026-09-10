@@ -252,7 +252,7 @@ async def test_exact_d5_inventory_and_screenshot_schema():
     )
     assert getattr(tool_contract, "BATCH_D5_TARGET_TOOL_NAMES", None) == D5_TOOL_NAMES
     assert targeted == tool_contract.EXPLICIT_TARGET_TOOL_NAMES
-    assert len(targeted) == 36
+    assert len(targeted) == 37
     assert by_name["kodi_gui_screenshot"].input_schema == {
         "type": "object",
         "properties": {
@@ -270,7 +270,7 @@ async def test_exact_d5_inventory_and_screenshot_schema():
         },
         "additionalProperties": False,
     }
-    assert "managed_addon_validate_state" not in targeted
+    assert "managed_addon_validate_state" in targeted
     assert not ({
         "managed_addon_build_publish_and_stage",
         "managed_addon_build_publish_stage_and_apply",

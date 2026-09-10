@@ -47,6 +47,7 @@ from kodi_mcp_mcp.output_contracts import (
 )
 from kodi_mcp_mcp.target_routing import (
     finalize_notification_target_envelope,
+    finalize_orchestration_target_envelope,
     finalize_screenshot_target_envelope,
     finalize_target_envelope,
     resolve_target_context,
@@ -185,17 +186,17 @@ def _validate_tool_arguments(
     error = errors[0]
     field = ".".join(str(part) for part in error.absolute_path)
     redact_arguments = tool_name in {"kodi_setting_get", "kodi_setting_set"}
+    rejected_target = any(
+        bool(item.absolute_path) and next(iter(item.absolute_path)) == "target"
+        for item in errors
+    )
     sanitize_unresolved_arguments = tool_name in {
         "addon_execute",
         "bridge_bootstrap_status",
         "bridge_write_log_marker",
         "kodi_gui_screenshot",
         "kodi_notifications_sample",
-    }
-    rejected_target = any(
-        bool(item.absolute_path) and next(iter(item.absolute_path)) == "target"
-        for item in errors
-    )
+    } or (tool_name == "managed_addon_validate_state" and rejected_target)
     sanitize_validation_error = (
         redact_arguments or sanitize_unresolved_arguments or rejected_target
     )
@@ -3307,8 +3308,12 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     registry_result = managed_addon_get(managed_addon_id=managed_addon_id)
                     entry = (registry_result.get("managed_addon") if registry_result.get("ok") else None)
                     managed_addon_record = entry if isinstance(entry, dict) else None
-                    health_bridge_tool = runtime["bridge"]
-                    state_bridge_tool = BridgeTool(build_bridge_client())
+                    if target_context is not None and target_context.explicit:
+                        health_bridge_tool = target_context.bridge
+                        state_bridge_tool = target_context.bridge
+                    else:
+                        health_bridge_tool = runtime["bridge"]
+                        state_bridge_tool = BridgeTool(build_bridge_client())
                     raw_result = await validate_managed_addon_state(
                         managed_addon_id=managed_addon_id,
                         managed_addon_record=managed_addon_record,
@@ -3488,6 +3493,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 envelope = (
                     finalize_notification_target_envelope(envelope, target_context)
                     if tool_name == "kodi_notifications_sample"
+                    else finalize_orchestration_target_envelope(
+                        envelope, target_context
+                    )
+                    if tool_name == "managed_addon_validate_state"
                     else finalize_screenshot_target_envelope(
                         envelope,
                         target_context,

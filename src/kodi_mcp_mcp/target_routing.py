@@ -103,6 +103,140 @@ def finalize_target_envelope(
     return routed
 
 
+_ORCHESTRATION_LOCATION_TEXT = re.compile(
+    r"(?:[A-Za-z][A-Za-z0-9+.-]+://|[A-Za-z]:[\\/]|(?<![A-Za-z0-9._~/-])/(?=[A-Za-z0-9._~-])|(?:^|[\s:=('\"\[,])(?:\\\\|~/))"
+)
+_ORCHESTRATION_HOST_PORT_TEXT = re.compile(
+    r"""
+    (?<![A-Za-z0-9._-])
+    (?:
+        \[(?=[0-9A-Fa-f:]*:)[0-9A-Fa-f:]+\]
+        |
+        (?=[A-Za-z0-9-]{1,63}:)(?=[A-Za-z0-9-]*[A-Za-z])
+        [A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?
+        |
+        [A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?
+        (?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+
+    )
+    :[0-9]{1,5}(?![A-Za-z0-9])
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+_ORCHESTRATION_LOCATION_FIELDS = frozenset(
+    {
+        "address",
+        "directory",
+        "endpoint",
+        "host",
+        "hostname",
+        "location",
+        "netloc",
+        "path",
+        "port",
+        "repo_root",
+        "url",
+    }
+)
+_ORCHESTRATION_CREDENTIAL_FIELDS = frozenset(
+    {
+        "access_token",
+        "api_key",
+        "auth",
+        "authorization",
+        "credential",
+        "credentials",
+        "passwd",
+        "password",
+        "secret",
+        "token",
+        "username",
+    }
+)
+_ORCHESTRATION_DIAGNOSTIC_FIELDS = frozenset(
+    {"description", "detail", "diagnostic", "error", "message", "reason"}
+)
+
+
+def finalize_orchestration_target_envelope(
+    envelope: dict[str, Any], context: TargetContext
+) -> dict[str, Any]:
+    """Redact explicit orchestration locations, then add safe target identity."""
+
+    if not context.explicit or context.target is None:
+        return envelope
+
+    def redact_field(item: Any) -> Any:
+        if isinstance(item, dict):
+            return {key: redact_field(nested) for key, nested in item.items()}
+        if isinstance(item, list):
+            return [redact_field(nested) for nested in item]
+        if isinstance(item, tuple):
+            return tuple(redact_field(nested) for nested in item)
+        return item if item in (None, "") else "[redacted]"
+
+    def redact_provenance(item: Any, *, diagnostic: bool = False) -> Any:
+        if isinstance(item, str):
+            return (
+                "[redacted]"
+                if _ORCHESTRATION_LOCATION_TEXT.search(item)
+                or (diagnostic and _ORCHESTRATION_HOST_PORT_TEXT.search(item))
+                else item
+            )
+        if isinstance(item, dict):
+            sanitized: dict[Any, Any] = {}
+            for key, nested in item.items():
+                normalized = str(key).lower().replace("-", "_")
+                location_field = normalized in _ORCHESTRATION_LOCATION_FIELDS or normalized.endswith(
+                    (
+                        "_address",
+                        "_directory",
+                        "_dir",
+                        "_endpoint",
+                        "_host",
+                        "_hostname",
+                        "_location",
+                        "_path",
+                        "_port",
+                        "_root",
+                        "_url",
+                    )
+                )
+                credential_field = normalized in _ORCHESTRATION_CREDENTIAL_FIELDS or normalized.endswith(
+                    (
+                        "_api_key",
+                        "_auth",
+                        "_authorization",
+                        "_credential",
+                        "_credentials",
+                        "_passwd",
+                        "_password",
+                        "_secret",
+                        "_token",
+                        "_username",
+                    )
+                )
+                diagnostic_field = normalized in _ORCHESTRATION_DIAGNOSTIC_FIELDS or (
+                    normalized.endswith("_error")
+                    and normalized not in {"error_code", "error_type"}
+                )
+                sanitized[key] = (
+                    redact_field(nested)
+                    if location_field or credential_field
+                    else redact_provenance(
+                        nested, diagnostic=diagnostic or diagnostic_field
+                    )
+                )
+            return sanitized
+        if isinstance(item, list):
+            return [redact_provenance(nested, diagnostic=diagnostic) for nested in item]
+        if isinstance(item, tuple):
+            return tuple(redact_provenance(nested, diagnostic=diagnostic) for nested in item)
+        return item
+
+    prepared = redact_provenance(deepcopy(envelope))
+    return finalize_target_envelope(prepared, context)
+
+
 def finalize_notification_target_envelope(
     envelope: dict[str, Any], context: TargetContext
 ) -> dict[str, Any]:
