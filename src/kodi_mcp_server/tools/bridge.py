@@ -18,6 +18,9 @@ class BridgeTool:
     async def get_bridge_health(self) -> ResponseMessage:
         return await self.client.get_health()
 
+    async def get_mcp_state(self) -> ResponseMessage:
+        return await self.client.mcp_state()
+
     async def get_bridge_ping(self) -> ResponseMessage:
         return await self.client.get_ping()
 
