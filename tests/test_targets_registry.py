@@ -38,6 +38,39 @@ def _configured(target_id, host):
     }
 
 
+def test_registry_warns_when_aliases_share_a_mutation_domain():
+    first = _configured("living-room", "first-route")
+    alias = _configured("living-room-alias", "second-route")
+    first["mutation_domain_id"] = "physical-living-room"
+    alias["mutation_domain_id"] = "physical-living-room"
+
+    with pytest.warns(TargetConfigWarning, match="share mutation domain"):
+        registry = TargetRegistry.from_sources(
+            legacy=_legacy(), targets_json=json.dumps([first, alias])
+        )
+
+    assert registry.get("living-room").mutation_domain_id == registry.get(
+        "living-room-alias"
+    ).mutation_domain_id
+
+
+def test_registry_rejects_conflicting_domains_for_same_canonical_bridge_endpoint():
+    first = _configured("living-room", "same-bridge")
+    conflicting_alias = _configured("living-room-alias", "same-bridge")
+    first["mutation_domain_id"] = "physical-living-room"
+    conflicting_alias["mutation_domain_id"] = "wrong-separate-domain"
+
+    with pytest.warns(TargetConfigWarning, match="conflicts.*canonical bridge"):
+        registry = TargetRegistry.from_sources(
+            legacy=_legacy(), targets_json=json.dumps([first, conflicting_alias])
+        )
+
+    assert [target.target_id for target in registry.list()] == [
+        "default",
+        "living-room",
+    ]
+
+
 def test_registry_synthesizes_exact_legacy_default_target():
     registry = TargetRegistry.from_sources(legacy=_legacy())
 

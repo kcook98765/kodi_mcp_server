@@ -1,6 +1,15 @@
 """MCP/API tool registration for kodi_mcp_server."""
 
+import asyncio
+
 from fastapi import Query, File, Form, UploadFile
+from fastapi.responses import JSONResponse
+
+from kodi_mcp_server.orchestration_locking import (
+    LOCK_TIMEOUT_HTTP_STATUS,
+    OrchestrationLockTimeout,
+    lock_timeout_http_payload,
+)
 
 from kodi_mcp_server.composition import (
     build_addon_ops_tool,
@@ -283,13 +292,19 @@ def configure_mcp_app(app):
 
     @app.post("/tools/publish_addon_to_repo")
     async def publish_addon_to_repo_endpoint(request: PublishAddonRequest):
-        result = await build_repo_tool().publish_addon_to_repo(
-            addon_zip_path=request.addon_zip_path,
-            addon_id=request.addon_id,
-            addon_name=request.addon_name,
-            addon_version=request.addon_version,
-            provider_name=request.provider_name,
-        )
+        try:
+            result = await build_repo_tool().publish_addon_to_repo(
+                addon_zip_path=request.addon_zip_path,
+                addon_id=request.addon_id,
+                addon_name=request.addon_name,
+                addon_version=request.addon_version,
+                provider_name=request.provider_name,
+            )
+        except OrchestrationLockTimeout as exc:
+            return JSONResponse(
+                status_code=LOCK_TIMEOUT_HTTP_STATUS,
+                content=lock_timeout_http_payload(exc),
+            )
         return result.to_dict()
 
     @app.post("/tools/repo/publish_artifact")
@@ -301,13 +316,20 @@ def configure_mcp_app(app):
 
         from kodi_mcp_server.dev_loop_artifacts import repo_publish_artifact
 
-        result = repo_publish_artifact(
-            artifact_id=request.artifact_id,
-            addon_id=request.addon_id,
-            addon_name=request.addon_name,
-            addon_version=request.addon_version,
-            provider_name=request.provider_name,
-        )
+        try:
+            result = await asyncio.to_thread(
+                repo_publish_artifact,
+                artifact_id=request.artifact_id,
+                addon_id=request.addon_id,
+                addon_name=request.addon_name,
+                addon_version=request.addon_version,
+                provider_name=request.provider_name,
+            )
+        except OrchestrationLockTimeout as exc:
+            return JSONResponse(
+                status_code=LOCK_TIMEOUT_HTTP_STATUS,
+                content=lock_timeout_http_payload(exc),
+            )
         return {
             "request_id": result.get("request_id"),
             "result": result.get("result"),
@@ -338,7 +360,8 @@ def configure_mcp_app(app):
             # Stream the incoming upload to disk to avoid buffering the whole file in memory.
             store = ArtifactStore(root_dir=PROJECT_ROOT / "artifacts")
             # Use a file-like register helper to write directly into the store directory.
-            record = store.register_filelike(
+            record = await asyncio.to_thread(
+                store.register_filelike,
                 fileobj=file.file,
                 filename=file.filename or "upload.zip",
                 addon_id=(addon_id.strip() if isinstance(addon_id, str) and addon_id.strip() else None),
@@ -369,6 +392,11 @@ def configure_mcp_app(app):
                 "error_code": None,
                 "latency_ms": None,
             }
+        except OrchestrationLockTimeout as exc:
+            return JSONResponse(
+                status_code=LOCK_TIMEOUT_HTTP_STATUS,
+                content=lock_timeout_http_payload(exc, request_id=request_id),
+            )
         except Exception as exc:
             return {
                 "request_id": request_id,

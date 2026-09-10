@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass, field
 from typing import Any, Mapping
@@ -32,6 +33,12 @@ def _validate_url(value: str, field: str, schemes: set[str], *, optional: bool =
         raise TargetValidationError(
             f"{field} must be an absolute {expected} URL with an authority"
         )
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise TargetValidationError(f"{field} has an invalid port") from exc
+    if port is not None and not 1 <= port <= 65535:
+        raise TargetValidationError(f"{field} has an invalid port")
     if parsed.username is not None or parsed.password is not None:
         raise TargetValidationError(
             f"{field} must not contain inline credentials; use auth references"
@@ -45,6 +52,30 @@ def _validate_auth_reference(value: str | None, field: str) -> None:
         raise TargetValidationError(
             f"{field} auth reference must use env:VARIABLE; inline secrets are not allowed"
         )
+
+
+def derive_mutation_domain_id(target_id: str, bridge_url: str) -> str:
+    """Derive a stable, credential-free identity from the canonical bridge endpoint.
+
+    Query strings and fragments are excluded because they may carry credentials.
+    Host case, default ports, and trailing slashes are normalized so obvious
+    aliases converge on one mutation domain. DNS trailing-dot, IDNA, and alternate
+    IPv6 spellings are intentionally not resolved here; an explicit
+    ``mutation_domain_id`` is authoritative when aliases must be forced together.
+    """
+
+    if not bridge_url:
+        identity = f"unconfigured:{target_id}"
+        return f"target-{hashlib.sha256(identity.encode('utf-8')).hexdigest()[:32]}"
+    parsed = urlparse(bridge_url)
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").lower()
+    port = parsed.port
+    default_port = 443 if scheme == "https" else 80
+    authority = host if port in (None, default_port) else f"{host}:{port}"
+    path = parsed.path.rstrip("/") or "/"
+    identity = f"{scheme}://{authority}{path}"
+    return f"bridge-{hashlib.sha256(identity.encode('utf-8')).hexdigest()[:32]}"
 
 
 @dataclass(frozen=True)
@@ -150,6 +181,7 @@ class Target:
     target_id: str
     name: str
     endpoints: TargetEndpoints
+    mutation_domain_id: str | None = None
     auth: TargetAuthReferences = field(
         default_factory=TargetAuthReferences,
         repr=False,
@@ -170,6 +202,18 @@ class Target:
             raise TargetValidationError("target name must be a nonempty string")
         if not isinstance(self.endpoints, TargetEndpoints):
             raise TargetValidationError("endpoints must be TargetEndpoints")
+        if self.mutation_domain_id is None:
+            object.__setattr__(
+                self,
+                "mutation_domain_id",
+                derive_mutation_domain_id(self.target_id, self.endpoints.bridge_url),
+            )
+        elif not isinstance(self.mutation_domain_id, str) or not _TARGET_ID_RE.fullmatch(
+            self.mutation_domain_id
+        ):
+            raise TargetValidationError(
+                "mutation domain id must be 1-64 lowercase letters, digits, dots, underscores, or dashes and start alphanumeric"
+            )
         if not isinstance(self.auth, TargetAuthReferences):
             raise TargetValidationError("auth must be TargetAuthReferences")
         if isinstance(self.timeout_seconds, bool) or not isinstance(
@@ -203,6 +247,7 @@ class Target:
             {
                 "id",
                 "name",
+                "mutation_domain_id",
                 "endpoints",
                 "auth",
                 "groups",
@@ -216,6 +261,7 @@ class Target:
             return cls(
                 target_id=data["id"],
                 name=data["name"],
+                mutation_domain_id=data.get("mutation_domain_id"),
                 endpoints=TargetEndpoints.from_dict(data["endpoints"]),
                 auth=TargetAuthReferences.from_dict(data.get("auth")),
                 groups=data.get("groups", ()),
@@ -231,6 +277,7 @@ class Target:
         return {
             "id": self.target_id,
             "name": self.name,
+            "mutation_domain_id": self.mutation_domain_id,
             "endpoints": self.endpoints.to_dict(),
             "auth": self.auth.to_dict(),
             "groups": list(self.groups),

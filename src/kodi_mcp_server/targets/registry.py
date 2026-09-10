@@ -20,6 +20,7 @@ from .model import (
     TargetAuthReferences,
     TargetEndpoints,
     TargetValidationError,
+    derive_mutation_domain_id,
 )
 
 
@@ -76,7 +77,44 @@ class TargetRegistry:
 
         inline_targets = cls._read_json_source(targets_json, "inline target JSON")
         cls._merge_optional_source(registry, inline_targets, "inline target JSON")
+        cls._reject_conflicting_endpoint_domains(registry)
+        cls._warn_shared_mutation_domains(registry)
         return registry
+
+    @staticmethod
+    def _reject_conflicting_endpoint_domains(registry: "TargetRegistry") -> None:
+        ordered = [registry.get("default")] + [
+            target for target in registry.list() if target.target_id != "default"
+        ]
+        by_endpoint: dict[str, Target] = {}
+        for target in ordered:
+            endpoint_domain = derive_mutation_domain_id(
+                target.target_id, target.endpoints.bridge_url
+            )
+            existing = by_endpoint.get(endpoint_domain)
+            if existing is None:
+                by_endpoint[endpoint_domain] = target
+                continue
+            if existing.mutation_domain_id != target.mutation_domain_id:
+                del registry._targets[target.target_id]
+                warnings.warn(
+                    f"target {target.target_id} ignored: mutation domain conflicts with {existing.target_id} for the same canonical bridge endpoint",
+                    TargetConfigWarning,
+                    stacklevel=2,
+                )
+
+    @staticmethod
+    def _warn_shared_mutation_domains(registry: "TargetRegistry") -> None:
+        domains: dict[str, list[str]] = {}
+        for target in registry.list():
+            domains.setdefault(str(target.mutation_domain_id), []).append(target.target_id)
+        for target_ids in domains.values():
+            if len(target_ids) > 1:
+                warnings.warn(
+                    f"targets {', '.join(target_ids)} share mutation domain and will serialize mutations",
+                    TargetConfigWarning,
+                    stacklevel=2,
+                )
 
     @staticmethod
     def _legacy_default(settings: LegacyTargetSettings) -> Target:

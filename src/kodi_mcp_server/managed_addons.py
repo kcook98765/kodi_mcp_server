@@ -12,9 +12,13 @@ This module owns:
 
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 import re
+import tempfile
 import time
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +26,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 from kodi_mcp_server.addon_xml import read_addon_id, read_addon_id_and_version, read_addon_version
 from kodi_mcp_server.milestone_a_bridge import stage_dev_repo_zip
+from kodi_mcp_server.orchestration_locking import acquire_global_workflow_lock
 from kodi_mcp_server.paths import AUTHORITATIVE_REPO_ROOT, LEGACY_ADDON_ARTIFACTS_ROOT, PROJECT_DIR
 from kodi_mcp_server.repo_ops import RepoPublisher
 
@@ -30,6 +35,15 @@ REGISTRY_SCHEMA_VERSION = 1
 REGISTRY_PATH = PROJECT_DIR / "managed_addons.json"
 
 _SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+
+
+def _global_locked(function):
+    @wraps(function)
+    def locked(*args, **kwargs):
+        with acquire_global_workflow_lock():
+            return function(*args, **kwargs)
+
+    return locked
 
 
 def _now() -> int:
@@ -62,6 +76,7 @@ def load_managed_registry() -> dict[str, Any]:
     return data
 
 
+@_global_locked
 def save_managed_registry(registry: dict[str, Any]) -> dict[str, Any]:
     """Save managed registry, updating updated_at."""
 
@@ -72,7 +87,19 @@ def save_managed_registry(registry: dict[str, Any]) -> dict[str, Any]:
     registry.setdefault("addons", {})
 
     REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    REGISTRY_PATH.write_text(json.dumps(registry, indent=2, sort_keys=True), encoding="utf-8")
+    fd, temporary_name = tempfile.mkstemp(prefix=".managed-addons-", dir=REGISTRY_PATH.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as temporary:
+            temporary.write(json.dumps(registry, indent=2, sort_keys=True))
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.replace(temporary_name, REGISTRY_PATH)
+    except BaseException:
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+        raise
     return registry
 
 
@@ -88,6 +115,7 @@ def _validate_source_path(source_path: Path) -> Path:
     return source_path
 
 
+@_global_locked
 def build_addon_zip_from_source(source_path: Path, addon_id: str, version: str) -> Path:
     """Build a Kodi-compatible versioned addon zip from an external source tree.
 
@@ -138,6 +166,7 @@ def build_addon_zip_from_source(source_path: Path, addon_id: str, version: str) 
     return zip_path
 
 
+@_global_locked
 def build_dev_repo_zip(repo_version: str | None = None) -> Path:
     """Build a zip containing the current dev repo artifacts.
 
@@ -194,7 +223,9 @@ async def build_and_stage_dev_repo_zip(
 ) -> dict[str, Any]:
     """Build the dev repo zip then stage it via the Kodi addon bridge."""
 
-    zip_path = build_dev_repo_zip(repo_version=repo_version)
+    zip_path = await asyncio.to_thread(
+        build_dev_repo_zip, repo_version=repo_version
+    )
     stage_result = await stage_dev_repo_zip(zip_path=str(zip_path), repo_version=repo_version, verify=verify)
     return {
         "repo_zip_path": str(zip_path),
@@ -202,6 +233,7 @@ async def build_and_stage_dev_repo_zip(
     }
 
 
+@_global_locked
 def _write_addon_version(addon_xml_path: Path, version: str) -> None:
     text = addon_xml_path.read_text(encoding="utf-8", errors="replace")
     # Replace only the first version=... occurrence (the addon tag attribute).
@@ -250,6 +282,7 @@ def determine_build_version(
     return bumped
 
 
+@_global_locked
 def managed_addon_register(source_path: str) -> dict[str, Any]:
     """Register/update a managed addon entry for a local source tree."""
 
@@ -309,6 +342,7 @@ def managed_addon_list() -> dict[str, Any]:
     return {"ok": True, "managed_addons": items, "count": len(items)}
 
 
+@_global_locked
 def managed_addon_build(
     managed_addon_id: str,
     version_policy: str,
@@ -386,6 +420,7 @@ def managed_addon_build(
     }
 
 
+@_global_locked
 def managed_addon_publish(managed_addon_id: str) -> dict[str, Any]:
     """Publish the last built zip for a managed addon into the dev repo."""
 
@@ -454,6 +489,7 @@ def managed_addon_publish(managed_addon_id: str) -> dict[str, Any]:
     }
 
 
+@_global_locked
 def managed_addon_build_and_publish(
     managed_addon_id: str,
     version_policy: str,
@@ -481,6 +517,24 @@ def managed_addon_build_and_publish(
     }
 
 
+@_global_locked
+def _prepare_managed_addon_repo_zip(
+    *,
+    managed_addon_id: str,
+    version_policy: str,
+    explicit_version: str | None,
+    repo_version: str | None,
+) -> tuple[dict[str, Any], Path | None]:
+    build_publish_result = managed_addon_build_and_publish(
+        managed_addon_id=managed_addon_id,
+        version_policy=version_policy,
+        explicit_version=explicit_version,
+    )
+    if not build_publish_result.get("ok"):
+        return build_publish_result, None
+    return build_publish_result, build_dev_repo_zip(repo_version=repo_version)
+
+
 async def managed_addon_build_publish_and_stage(
     managed_addon_id: str,
     version_policy: str,
@@ -488,17 +542,25 @@ async def managed_addon_build_publish_and_stage(
     repo_version: str | None = None,
     verify: bool = True,
 ) -> dict[str, Any]:
-    """Build addon -> publish to dev repo -> build dev repo zip -> stage to Kodi."""
+    """Build/publish/freeze under one lock, then stage without that lock."""
 
-    build_publish_result = managed_addon_build_and_publish(
+    build_publish_result, zip_path = await asyncio.to_thread(
+        _prepare_managed_addon_repo_zip,
         managed_addon_id=managed_addon_id,
         version_policy=version_policy,
         explicit_version=explicit_version,
+        repo_version=repo_version,
     )
-    if not build_publish_result.get("ok"):
+    if not build_publish_result.get("ok") or zip_path is None:
         return build_publish_result
 
-    stage = await build_and_stage_dev_repo_zip(repo_version=repo_version, verify=verify)
+    stage_result = await stage_dev_repo_zip(
+        zip_path=str(zip_path), repo_version=repo_version, verify=verify
+    )
+    stage = {
+        "repo_zip_path": str(zip_path),
+        "addon_stage_result": stage_result,
+    }
 
     return {
         "ok": True,

@@ -81,6 +81,7 @@ from kodi_mcp_server.managed_addons import (
     managed_addon_register,
 )
 from kodi_mcp_server.managed_addon_validation import validate_managed_addon_state
+from kodi_mcp_server.orchestration_locking import OrchestrationLockTimeout
 from kodi_mcp_server.dev_loop_artifacts import (
     artifact_upload_zip as _artifact_upload_zip,
     repo_publish_artifact as _repo_publish_artifact,
@@ -3246,7 +3247,10 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
-                    raw_result = managed_addon_register(source_path=str(args.get("source_path") or "").strip())
+                    raw_result = await asyncio.to_thread(
+                        managed_addon_register,
+                        source_path=str(args.get("source_path") or "").strip(),
+                    )
                 elif tool_name == "managed_addon_list":
                     raw_result = managed_addon_list()
                 elif tool_name == "managed_addon_get":
@@ -3325,7 +3329,8 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
-                    raw_result = _artifact_upload_zip(
+                    raw_result = await asyncio.to_thread(
+                        _artifact_upload_zip,
                         zip_base64=str(args.get("zip_base64") or ""),
                         filename=str(args.get("filename") or "upload.zip"),
                         addon_id=(str(args.get("addon_id") or "").strip() if args.get("addon_id") is not None else None),
@@ -3335,7 +3340,8 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     args = params.arguments or {}
                     if not isinstance(args, dict):
                         args = {}
-                    raw_result = _repo_publish_artifact(
+                    raw_result = await asyncio.to_thread(
+                        _repo_publish_artifact,
                         artifact_id=str(args.get("artifact_id") or "").strip(),
                         addon_id=str(args.get("addon_id") or "").strip(),
                         addon_name=str(args.get("addon_name") or "").strip(),
@@ -3462,6 +3468,19 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     }
                 if tool_name in LOG_TOOL_NAMES and envelope.get("ok"):
                     envelope["raw"] = _compact_log_raw(raw_value, envelope.get("data"))
+            except OrchestrationLockTimeout as exc:
+                latency_ms = int((time.time() - start) * 1000)
+                envelope = {
+                    "ok": False,
+                    "tool": tool_name,
+                    "data": None,
+                    "error": str(exc),
+                    "error_type": "resource_busy",
+                    "error_code": exc.error_code,
+                    "latency_ms": latency_ms,
+                    "request_id": None,
+                    "raw": None,
+                }
             except TargetNotFoundError as exc:
                 latency_ms = int((time.time() - start) * 1000)
                 envelope = {

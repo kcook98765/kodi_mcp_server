@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import stat
 import uuid
@@ -110,7 +111,7 @@ async def install_repository_bootstrap(bridge_tool) -> ResponseMessage:
 
     request_id = str(uuid.uuid4())
     try:
-        build = build_repo_addon(repo_base_url=REPO_BASE_URL)
+        build = await asyncio.to_thread(build_repo_addon, repo_base_url=REPO_BASE_URL)
         if build.get("status") != "ok":
             raise RepositoryBootstrapError(f"canonical repository build failed: {build.get('error')}")
         artifact = validate_repository_bootstrap_zip(str(build.get("output_zip") or ""))
