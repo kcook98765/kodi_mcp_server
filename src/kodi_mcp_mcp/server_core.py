@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from copy import deepcopy
 import json
 import os
 import re
@@ -46,6 +47,7 @@ from kodi_mcp_mcp.output_contracts import (
 )
 from kodi_mcp_mcp.target_routing import (
     finalize_notification_target_envelope,
+    finalize_screenshot_target_envelope,
     finalize_target_envelope,
     resolve_target_context,
     schema_with_optional_target,
@@ -185,9 +187,17 @@ def _validate_tool_arguments(
         "addon_execute",
         "bridge_bootstrap_status",
         "bridge_write_log_marker",
+        "kodi_gui_screenshot",
         "kodi_notifications_sample",
     }
-    if redact_arguments or sanitize_unresolved_arguments:
+    rejected_target = any(
+        bool(item.absolute_path) and next(iter(item.absolute_path)) == "target"
+        for item in errors
+    )
+    sanitize_validation_error = (
+        redact_arguments or sanitize_unresolved_arguments or rejected_target
+    )
+    if sanitize_validation_error:
         detail = (
             f"invalid argument {field}: does not satisfy the advertised schema"
             if field
@@ -208,7 +218,7 @@ def _validate_tool_arguments(
             "field": ".".join(str(part) for part in item.absolute_path) or None,
             "message": (
                 "does not satisfy the advertised schema"
-                if redact_arguments or sanitize_unresolved_arguments
+                if sanitize_validation_error
                 else item.message
             ),
             "validator": item.validator,
@@ -227,6 +237,8 @@ def _validate_tool_arguments(
             else candidate
         )
     )
+    if rejected_target and isinstance(safe_candidate, dict) and "target" in safe_candidate:
+        safe_candidate = {**safe_candidate, "target": "[redacted]"}
     return _invalid_params_result(tool_name, safe_candidate, detail, validation)
 
 
@@ -575,7 +587,7 @@ async def _capture_screenshot_with_retry(bridge: Any, *, include_image: bool) ->
         except TimeoutError:
             return failure("screenshot capture remained black until the retry timeout expired")
 
-        raw_value = _as_dict(raw_result)
+        raw_value = deepcopy(_as_dict(raw_result))
         bridge_result = raw_value.get("result") if isinstance(raw_value, dict) else None
         if not isinstance(bridge_result, dict):
             return raw_result
@@ -2616,6 +2628,7 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 return validation_error
 
             pending_image_content: ImageContent | None = None
+            trusted_server_screenshot: dict[str, Any] | None = None
             target_context = None
             start = time.time()
             envelope: dict[str, Any]
@@ -3174,9 +3187,9 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                     include_image = include_image if isinstance(include_image, bool) else False
                     store = store if isinstance(store, bool) else True
                     raw_result = await _capture_screenshot_with_retry(
-                        runtime["bridge"], include_image=(include_image or store)
+                        bridge_tool, include_image=(include_image or store)
                     )
-                    raw_value = _as_dict(raw_result)
+                    raw_value = deepcopy(_as_dict(raw_result))
                     bridge_result = raw_value.get("result") if isinstance(raw_value, dict) else None
                     image_base64 = bridge_result.get("image_base64") if isinstance(bridge_result, dict) else None
                     payload_error = None
@@ -3184,7 +3197,8 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                         stored = None
                         if store:
                             stored = store_screenshot_from_base64(image_base64)
-                            bridge_result["server_screenshot"] = stored
+                            trusted_server_screenshot = deepcopy(stored)
+                            bridge_result["server_screenshot"] = deepcopy(stored)
                             raw_size = int(stored["size_bytes"])
                         else:
                             raw_size = len(base64.b64decode(image_base64, validate=True))
@@ -3570,6 +3584,12 @@ def build_mcp_server(runtime: Runtime) -> Tuple[Server, Any]:
                 envelope = (
                     finalize_notification_target_envelope(envelope, target_context)
                     if tool_name == "kodi_notifications_sample"
+                    else finalize_screenshot_target_envelope(
+                        envelope,
+                        target_context,
+                        trusted_server_screenshot=trusted_server_screenshot,
+                    )
+                    if tool_name == "kodi_gui_screenshot"
                     else finalize_target_envelope(envelope, target_context)
                 )
 

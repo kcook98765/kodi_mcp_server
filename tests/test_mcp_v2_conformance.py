@@ -144,6 +144,7 @@ async def test_v2_tools_list_complete_and_schemas_stable():
                 "kodi_artist_albums",
                 "kodi_gui_state",
                 "kodi_gui_action",
+                "kodi_gui_screenshot",
                 "kodi_library_browse",
                 "kodi_library_search",
                 "kodi_library_summary",

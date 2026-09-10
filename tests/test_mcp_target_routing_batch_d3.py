@@ -25,7 +25,6 @@ TARGET_PROPERTY = {
 }
 STILL_UNTARGETED = frozenset(
     {
-        "kodi_gui_screenshot",
         "managed_addon_build_publish_and_stage",
         "managed_addon_build_publish_stage_and_apply",
         "managed_addon_validate_state",
@@ -202,9 +201,10 @@ async def test_exact_d3_inventory_and_canonical_schema():
         | tool_contract.BATCH_D2_TARGET_TOOL_NAMES
         | D3_TOOL_NAMES
         | tool_contract.BATCH_D4_TARGET_TOOL_NAMES
+        | tool_contract.BATCH_D5_TARGET_TOOL_NAMES
     )
     assert targeted == tool_contract.EXPLICIT_TARGET_TOOL_NAMES
-    assert len(targeted) == 35
+    assert len(targeted) == 36
     assert by_name["kodi_notifications_sample"].input_schema == {
         "type": "object",
         "properties": {

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+import re
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 from kodi_mcp_server.targets.model import Target
 from kodi_mcp_server.targets.resolver import resolve_target
@@ -165,4 +167,123 @@ def finalize_notification_target_envelope(
         routed_data["messages"] = deepcopy(sanitized_messages)
     if raw_has_messages and isinstance(routed_raw_result, dict):
         routed_raw_result["messages"] = deepcopy(sanitized_messages)
+    return routed
+
+
+_SCREENSHOT_LOCATION_TEXT = re.compile(
+    r"(?:[A-Za-z][A-Za-z0-9+.-]+://|[A-Za-z]:[\\/]|(?:^|[\s:=('\"])(?:/|\\\\|~/))"
+)
+_SCREENSHOT_ENCODED_PATH_TEXT = re.compile(
+    r"(?:%2e%2e|%2f|%5c)", re.IGNORECASE
+)
+_SERVER_SCREENSHOT_FILENAME = re.compile(
+    r"^(?:0|[1-9][0-9]*)-[0-9a-f]{12}\.png$"
+)
+
+
+def _trusted_server_screenshot_route(metadata: Any) -> str | None:
+    """Accept only the server-store route bound to its validated PNG filename."""
+
+    if not isinstance(metadata, dict):
+        return None
+    filename = metadata.get("filename")
+    route = metadata.get("url")
+    if (
+        not isinstance(filename, str)
+        or _SERVER_SCREENSHOT_FILENAME.fullmatch(filename) is None
+        or not isinstance(route, str)
+        or not route
+    ):
+        return None
+
+    parsed = urlsplit(route)
+    expected_path = f"/screenshots/{filename}"
+    if parsed.query or parsed.fragment or parsed.username is not None or parsed.password is not None:
+        return None
+    if parsed.scheme or parsed.netloc:
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return None
+    elif route != expected_path:
+        return None
+    if parsed.path != expected_path:
+        return None
+    return route
+
+
+def finalize_screenshot_target_envelope(
+    envelope: dict[str, Any],
+    context: TargetContext,
+    *,
+    trusted_server_screenshot: Any = None,
+) -> dict[str, Any]:
+    """Redact screenshot provenance and restore only a server-generated route.
+
+    Bridge-returned paths, locations, and URLs are never trusted. The one URL
+    that may survive is produced by the local screenshot store and accepted
+    only when it is a credential-free route for that store's validated PNG
+    filename.
+    """
+
+    if not context.explicit or context.target is None:
+        return envelope
+
+    def redact_field(item: Any) -> Any:
+        if isinstance(item, dict):
+            return {key: redact_field(nested) for key, nested in item.items()}
+        if isinstance(item, list):
+            return [redact_field(nested) for nested in item]
+        if isinstance(item, tuple):
+            return tuple(redact_field(nested) for nested in item)
+        return item if item in (None, "") else "[redacted]"
+
+    def redact_provenance(item: Any) -> Any:
+        if isinstance(item, str):
+            text = item.strip()
+            return (
+                "[redacted]"
+                if _SCREENSHOT_LOCATION_TEXT.search(text)
+                or _SCREENSHOT_ENCODED_PATH_TEXT.search(text)
+                else item
+            )
+        if isinstance(item, dict):
+            sanitized: dict[Any, Any] = {}
+            for key, nested in item.items():
+                normalized = str(key).lower().replace("-", "_")
+                location_field = normalized in {
+                    "filename",
+                    "location",
+                    "path",
+                    "url",
+                } or normalized.endswith(
+                    ("_filename", "_location", "_path", "_url")
+                )
+                sanitized[key] = (
+                    redact_field(nested)
+                    if location_field
+                    else redact_provenance(nested)
+                )
+            return sanitized
+        if isinstance(item, list):
+            return [redact_provenance(nested) for nested in item]
+        if isinstance(item, tuple):
+            return tuple(redact_provenance(nested) for nested in item)
+        return item
+
+    trusted_route = _trusted_server_screenshot_route(trusted_server_screenshot)
+    prepared = redact_provenance(deepcopy(envelope))
+    routed = finalize_target_envelope(prepared, context)
+    if trusted_route is None or not routed.get("ok"):
+        return routed
+
+    candidates = []
+    data = routed.get("data")
+    if isinstance(data, dict):
+        candidates.append(data.get("server_screenshot"))
+    raw = routed.get("raw")
+    raw_result = raw.get("result") if isinstance(raw, dict) else None
+    if isinstance(raw_result, dict):
+        candidates.append(raw_result.get("server_screenshot"))
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            candidate["url"] = trusted_route
     return routed
