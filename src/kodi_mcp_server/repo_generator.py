@@ -9,12 +9,14 @@ import os
 import shutil
 import tempfile
 import zipfile
+from functools import wraps
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from jinja2 import Environment, FileSystemLoader
 
 from kodi_mcp_server.config import REPO_BASE_URL, REPO_ROOT
+from kodi_mcp_server.orchestration_locking import acquire_global_workflow_lock
 from kodi_mcp_server.repository_addon_manifest import load_repository_addon_manifest
 
 
@@ -22,6 +24,15 @@ class RepoGeneratorError(Exception):
     """Raised when repo addon generation fails."""
 
     pass
+
+
+def _global_repo_locked(function):
+    @wraps(function)
+    def locked(*args, **kwargs):
+        with acquire_global_workflow_lock():
+            return function(*args, **kwargs)
+
+    return locked
 
 
 def get_checksum(data: bytes) -> str:
@@ -81,6 +92,7 @@ def render_template(
     output_path.write_text(template.render(**context), encoding="utf-8")
 
 
+@_global_repo_locked
 def build_repo_addon(
     repo_version: Optional[str] = None,
     repo_base_url: Optional[str] = None,
@@ -188,6 +200,7 @@ def build_repo_addon(
             shutil.rmtree(staging)
 
 
+@_global_repo_locked
 def generate_addons_xml_gz(repo_root: Path = REPO_ROOT, output: Optional[Path] = None):
     """Generate addons.xml.gz for repository serving.
 

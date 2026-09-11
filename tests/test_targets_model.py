@@ -42,6 +42,7 @@ def test_target_construction_normalizes_collections_and_round_trips():
     assert list(target.to_dict()) == [
         "id",
         "name",
+        "mutation_domain_id",
         "endpoints",
         "auth",
         "groups",
@@ -49,6 +50,51 @@ def test_target_construction_normalizes_collections_and_round_trips():
         "expected_kodi_version",
         "timeout_seconds",
     ]
+
+
+def test_mutation_domain_defaults_to_canonical_secret_free_bridge_identity():
+    first = _target(
+        endpoints=TargetEndpoints(
+            jsonrpc_url="http://one.example:8080/jsonrpc",
+            bridge_url="HTTP://KODI21.EXAMPLE:80/base/",
+        ),
+        auth=TargetAuthReferences(bridge_token="env:FIRST_SECRET"),
+    )
+    alias = _target(
+        target_id="alias",
+        endpoints=TargetEndpoints(
+            jsonrpc_url="http://different.example:8080/jsonrpc",
+            bridge_url="http://kodi21.example/base?token=ignored-secret",
+        ),
+        auth=TargetAuthReferences(bridge_token="env:SECOND_SECRET"),
+    )
+
+    assert first.mutation_domain_id == alias.mutation_domain_id
+    assert first.mutation_domain_id.startswith("bridge-")
+    assert "kodi21" not in first.mutation_domain_id
+    assert "secret" not in first.mutation_domain_id
+
+
+@pytest.mark.parametrize(
+    "mutation_domain_id", ["", "Kodi21", "-kodi", "kodi 21", "x" * 65]
+)
+def test_target_rejects_malformed_explicit_mutation_domain_id(mutation_domain_id):
+    with pytest.raises(TargetValidationError, match="mutation domain id"):
+        _target(mutation_domain_id=mutation_domain_id)
+
+
+def test_explicit_mutation_domain_is_stable_across_alias_endpoints():
+    first = _target(mutation_domain_id="physical-kodi-21")
+    alias = _target(
+        target_id="alias",
+        mutation_domain_id="physical-kodi-21",
+        endpoints=TargetEndpoints(
+            jsonrpc_url="http://gateway.example/kodi21/jsonrpc",
+            bridge_url="http://gateway.example/kodi21/bridge",
+        ),
+    )
+
+    assert first.mutation_domain_id == alias.mutation_domain_id == "physical-kodi-21"
 
 
 @pytest.mark.parametrize("target_id", ["", "Kodi21", "-kodi", "kodi 21", "x" * 65])
@@ -65,6 +111,7 @@ def test_target_rejects_invalid_ids(target_id):
         ("websocket_url", "http://kodi:9090/jsonrpc"),
         ("jsonrpc_url", "http:///jsonrpc"),
         ("jsonrpc_url", "http://user:secret@kodi:8080/jsonrpc"),
+        ("bridge_url", "http://kodi:99999"),
     ],
 )
 def test_target_rejects_endpoint_schemes_or_missing_authority(field, value):

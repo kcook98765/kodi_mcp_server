@@ -10,17 +10,29 @@ Serves only the authoritative project-root repo tree. Legacy `server/repo*`
 locations are intentionally not used.
 """
 
+import asyncio
 import hashlib
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse, FileResponse, RedirectResponse, HTMLResponse
+from fastapi.responses import JSONResponse, FileResponse, RedirectResponse, HTMLResponse, Response
 
 from kodi_mcp_server.config import REPO_BASE_URL, REPO_ROOT
+from kodi_mcp_server.orchestration_locking import acquire_global_workflow_lock
 from kodi_mcp_server.repository_addon_manifest import load_repository_addon_manifest
 from kodi_mcp_server.screenshot_store import cleanup_screenshots, screenshot_path_for
 
 router = APIRouter()
+_LOCKED_METADATA_TYPES = {
+    "addons.xml": "application/xml",
+    "addons.xml.md5": "text/plain",
+    "addons.xml.gz": "application/gzip",
+}
+
+
+def _read_repository_metadata_locked(path: Path) -> bytes:
+    with acquire_global_workflow_lock():
+        return path.read_bytes()
 
 
 def canonical_repository_artifact(repo_addon_path: Path | None = None) -> Path:
@@ -325,4 +337,14 @@ def mount_repo_static(app):
             raise HTTPException(status_code=404, detail="File not found")
         if file_path.is_dir():
             return PlainTextResponse("Directory listing not available", status_code=404)
+        if path in _LOCKED_METADATA_TYPES:
+            try:
+                content = await asyncio.to_thread(
+                    _read_repository_metadata_locked, resolved_file
+                )
+            except FileNotFoundError:
+                raise HTTPException(status_code=404, detail="File not found")
+            return Response(
+                content=content, media_type=_LOCKED_METADATA_TYPES[path]
+            )
         return FileResponse(file_path)

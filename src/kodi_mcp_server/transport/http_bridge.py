@@ -542,6 +542,46 @@ class HttpBridgeClient:
             repo_id, zip_path, mode, repo_version, sha256,
         )
 
+    async def repo_stage_snapshot(
+        self,
+        repo_id: str,
+        snapshot,
+        mode: str = "overwrite",
+        repo_version: str | None = None,
+    ) -> ResponseMessage:
+        """Future seam: stage exact descriptor-backed snapshot bytes once.
+
+        This internal primitive is intentionally unused by current MCP tools and
+        has no retry behavior. Existing ``repo_stage_upload`` path semantics are
+        unchanged.
+        """
+        import asyncio
+
+        return await asyncio.to_thread(
+            self._repo_stage_snapshot_blocking,
+            repo_id,
+            snapshot,
+            mode,
+            repo_version,
+        )
+
+    def _repo_stage_snapshot_blocking(
+        self,
+        repo_id: str,
+        snapshot,
+        mode: str = "overwrite",
+        repo_version: str | None = None,
+    ) -> ResponseMessage:
+        with snapshot.open_reader() as stream:
+            return self._repo_stage_stream_blocking(
+                repo_id,
+                stream,
+                snapshot.size_bytes,
+                mode,
+                repo_version,
+                snapshot.sha256,
+            )
+
     def _repo_stage_upload_blocking(
         self,
         repo_id: str,
@@ -550,14 +590,7 @@ class HttpBridgeClient:
         repo_version: str | None = None,
         sha256: str | None = None,
     ) -> ResponseMessage:
-        """Synchronous body of ``repo_stage_upload`` (local stat + http.client
-        streaming).
-
-        Kept fully synchronous so the async wrapper can hand it to
-        ``asyncio.to_thread``; the request path/method, headers, chunking,
-        error taxonomy, and connection cleanup are exactly the ones this
-        method always had.
-        """
+        """Synchronous body of the existing path-based staging operation."""
         request_id = "bridge-repo-stage"
         try:
             path_obj = Path(zip_path)
@@ -577,6 +610,37 @@ class HttpBridgeClient:
                 error_type=ErrorType.UNKNOWN_ERROR,
             )
 
+        start_time = time.time()
+        try:
+            with path_obj.open("rb") as stream:
+                return self._repo_stage_stream_blocking(
+                    repo_id,
+                    stream,
+                    size_bytes,
+                    mode,
+                    repo_version,
+                    sha256,
+                )
+        except Exception as exc:
+            return self._response(
+                request_id=request_id,
+                result=None,
+                error=f"request failed: {exc}",
+                error_type=ErrorType.UNKNOWN_ERROR,
+                latency_ms=int((time.time() - start_time) * 1000),
+            )
+
+    def _repo_stage_stream_blocking(
+        self,
+        repo_id: str,
+        stream,
+        size_bytes: int,
+        mode: str = "overwrite",
+        repo_version: str | None = None,
+        sha256: str | None = None,
+    ) -> ResponseMessage:
+        """Stream one already-open artifact descriptor with no retry."""
+        request_id = "bridge-repo-stage"
         parsed = urllib_parse.urlparse(self.base_url)
         scheme = parsed.scheme.lower()
         host = parsed.hostname
@@ -594,7 +658,6 @@ class HttpBridgeClient:
 
         query = urllib_parse.urlencode({"repo_id": repo_id, "mode": mode})
         request_path = f"/repo/stage?{query}"
-
         headers = {
             "Content-Type": "application/zip",
             "Content-Length": str(size_bytes),
@@ -614,22 +677,20 @@ class HttpBridgeClient:
                 conn = http.client.HTTPConnection(host, port, timeout=self.timeout)
 
             conn.putrequest("POST", request_path)
-            for k, v in headers.items():
-                conn.putheader(k, v)
+            for key, value in headers.items():
+                conn.putheader(key, value)
             conn.endheaders()
 
-            with path_obj.open("rb") as f:
-                while True:
-                    chunk = f.read(64 * 1024)
-                    if not chunk:
-                        break
-                    conn.send(chunk)
+            stream.seek(0)
+            while True:
+                chunk = stream.read(64 * 1024)
+                if not chunk:
+                    break
+                conn.send(chunk)
 
             resp = conn.getresponse()
             raw = resp.read() or b""
             latency_ms = int((time.time() - start_time) * 1000)
-
-            parsed_json = None
             try:
                 parsed_json = json.loads(raw.decode("utf-8")) if raw else None
             except Exception:
@@ -644,7 +705,6 @@ class HttpBridgeClient:
                     error_code=resp.status,
                     latency_ms=latency_ms,
                 )
-
             return self._response(
                 request_id=request_id,
                 result=parsed_json,

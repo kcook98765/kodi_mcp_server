@@ -1,31 +1,54 @@
 """Minimal server-owned Artifact Store.
 
-Purpose
--------
-Provide an agent-safe indirection layer so remote clients can reference an
-uploaded/built artifact by opaque id instead of a server-host filesystem path.
-
-Scope (intentional)
--------------------
-- Store zip files under a controlled directory.
-- Maintain a tiny JSON index mapping artifact_id -> metadata.
-- No lifecycle management, cleanup, auth, or multi-tenant concerns (yet).
+Registration is serialized by the global workflow lock. New artifact bytes are
+written to a unique same-directory temporary, fsynced, and atomically activated
+before the atomic index update. A crash between activation and index publication
+may leave a recoverable unindexed orphan, never a partial registered artifact.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import tempfile
 import uuid
 from dataclasses import dataclass
+from functools import wraps
 from pathlib import Path
 from typing import Any
+
+from kodi_mcp_server.orchestration_locking import acquire_global_workflow_lock
+
+
+class ArtifactConflictError(ValueError):
+    error_code = "ARTIFACT_ID_CONFLICT"
+
+    def __init__(self) -> None:
+        super().__init__("artifact id is already registered")
+
+
+def _fsync_directory(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _global_locked(method):
+    @wraps(method)
+    def locked(self, *args, **kwargs):
+        with acquire_global_workflow_lock():
+            return method(self, *args, **kwargs)
+
+    return locked
 
 
 @dataclass(frozen=True)
 class ArtifactRecord:
     artifact_id: str
-    path: str  # absolute path on server host (internal)
+    path: str
     addon_id: str | None = None
     version: str | None = None
     addon_name: str | None = None
@@ -41,22 +64,10 @@ class ArtifactRecord:
 
 
 class ArtifactStore:
-    """File-backed minimal artifact store.
-
-    Index format:
-        {
-          "schema_version": 1,
-          "artifacts": {
-            "<artifact_id>": {"path": "...", "addon_id": "...", "version": "..."}
-          }
-        }
-    """
-
     SCHEMA_VERSION = 1
 
     def __init__(self, root_dir: Path):
         self.root_dir = root_dir
-        self.root_dir.mkdir(parents=True, exist_ok=True)
         self.index_path = self.root_dir / "index.json"
 
     def _load_index(self) -> dict[str, Any]:
@@ -75,8 +86,76 @@ class ArtifactStore:
         return data
 
     def _save_index(self, index: dict[str, Any]) -> None:
-        self.index_path.write_text(json.dumps(index, indent=2, sort_keys=True), encoding="utf-8")
+        self.root_dir.mkdir(parents=True, exist_ok=True)
+        fd, temporary_name = tempfile.mkstemp(prefix=".index-", dir=self.root_dir)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as temporary:
+                temporary.write(json.dumps(index, indent=2, sort_keys=True))
+                temporary.flush()
+                os.fsync(temporary.fileno())
+            os.replace(temporary_name, self.index_path)
+            _fsync_directory(self.root_dir)
+        except BaseException:
+            try:
+                os.unlink(temporary_name)
+            except FileNotFoundError:
+                pass
+            raise
 
+    def _begin_registration(
+        self, artifact_id: str | None, suffix: str
+    ) -> tuple[str, dict[str, Any], Path, Path]:
+        artifact_id = artifact_id or str(uuid.uuid4())
+        index = self._load_index()
+        artifacts = index.get("artifacts") or {}
+        if str(artifact_id) in artifacts:
+            raise ArtifactConflictError()
+        self.root_dir.mkdir(parents=True, exist_ok=True)
+        final_path = (self.root_dir / f"{artifact_id}{suffix}").resolve()
+        fd, temporary_name = tempfile.mkstemp(
+            prefix=".artifact-", suffix=suffix, dir=self.root_dir
+        )
+        os.close(fd)
+        return str(artifact_id), index, Path(temporary_name), final_path
+
+    def _finish_registration(
+        self,
+        *,
+        artifact_id: str,
+        index: dict[str, Any],
+        temporary: Path,
+        final_path: Path,
+        addon_id: str | None,
+        version: str | None,
+        addon_name: str | None,
+    ) -> ArtifactRecord:
+        os.replace(temporary, final_path)
+        _fsync_directory(self.root_dir)
+        artifacts = index.get("artifacts") or {}
+        artifacts[artifact_id] = {
+            "path": str(final_path),
+            "addon_id": addon_id,
+            "version": version,
+            "addon_name": addon_name,
+        }
+        index["artifacts"] = artifacts
+        self._save_index(index)
+        return ArtifactRecord(
+            artifact_id=artifact_id,
+            path=str(final_path),
+            addon_id=addon_id,
+            version=version,
+            addon_name=addon_name,
+        )
+
+    @staticmethod
+    def _cleanup_temporary(temporary: Path) -> None:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+    @_global_locked
     def register_existing_file(
         self,
         *,
@@ -86,41 +165,31 @@ class ArtifactStore:
         addon_name: str | None = None,
         artifact_id: str | None = None,
     ) -> ArtifactRecord:
-        """Register an existing file path and return its artifact record.
-
-        The file is copied into the store-controlled directory to ensure that
-        the artifact is stable and does not depend on external paths.
-        """
-
-        p = Path(file_path).expanduser().resolve()
-        if not p.exists() or not p.is_file():
-            raise FileNotFoundError(f"artifact file not found: {p}")
-
-        artifact_id = artifact_id or str(uuid.uuid4())
-
-        # Copy into store-controlled location.
-        dest_name = f"{artifact_id}{p.suffix or '.zip'}"
-        dest_path = (self.root_dir / dest_name).resolve()
-        shutil.copy2(p, dest_path)
-        index = self._load_index()
-        artifacts = index.get("artifacts") or {}
-        artifacts[str(artifact_id)] = {
-            "path": str(dest_path),
-            "addon_id": addon_id,
-            "version": version,
-            "addon_name": addon_name,
-        }
-        index["artifacts"] = artifacts
-        self._save_index(index)
-
-        return ArtifactRecord(
-            artifact_id=str(artifact_id),
-            path=str(dest_path),
-            addon_id=addon_id,
-            version=version,
-            addon_name=addon_name,
+        source = Path(file_path).expanduser().resolve()
+        if not source.exists() or not source.is_file():
+            raise FileNotFoundError(f"artifact file not found: {source}")
+        suffix = source.suffix or ".zip"
+        artifact_id, index, temporary, final_path = self._begin_registration(
+            artifact_id, suffix
         )
+        try:
+            with source.open("rb") as incoming, temporary.open("wb") as destination:
+                shutil.copyfileobj(incoming, destination, length=64 * 1024)
+                destination.flush()
+                os.fsync(destination.fileno())
+            return self._finish_registration(
+                artifact_id=artifact_id,
+                index=index,
+                temporary=temporary,
+                final_path=final_path,
+                addon_id=addon_id,
+                version=version,
+                addon_name=addon_name,
+            )
+        finally:
+            self._cleanup_temporary(temporary)
 
+    @_global_locked
     def register_bytes(
         self,
         *,
@@ -131,40 +200,30 @@ class ArtifactStore:
         addon_name: str | None = None,
         artifact_id: str | None = None,
     ) -> ArtifactRecord:
-        """Register an uploaded artifact from bytes.
-
-        This is the minimal ingest primitive used by remote upload endpoints.
-        """
-
         if not isinstance(data, (bytes, bytearray)):
             raise TypeError("data must be bytes")
-
-        artifact_id = artifact_id or str(uuid.uuid4())
         suffix = Path(str(filename or "")).suffix or ".zip"
-        dest_name = f"{artifact_id}{suffix}"
-        dest_path = (self.root_dir / dest_name).resolve()
-        # Write bytes to file in a single operation (backwards compatible for small uploads)
-        dest_path.write_bytes(bytes(data))
-
-        index = self._load_index()
-        artifacts = index.get("artifacts") or {}
-        artifacts[str(artifact_id)] = {
-            "path": str(dest_path),
-            "addon_id": addon_id,
-            "version": version,
-            "addon_name": addon_name,
-        }
-        index["artifacts"] = artifacts
-        self._save_index(index)
-
-        return ArtifactRecord(
-            artifact_id=str(artifact_id),
-            path=str(dest_path),
-            addon_id=addon_id,
-            version=version,
-            addon_name=addon_name,
+        artifact_id, index, temporary, final_path = self._begin_registration(
+            artifact_id, suffix
         )
+        try:
+            with temporary.open("wb") as destination:
+                destination.write(bytes(data))
+                destination.flush()
+                os.fsync(destination.fileno())
+            return self._finish_registration(
+                artifact_id=artifact_id,
+                index=index,
+                temporary=temporary,
+                final_path=final_path,
+                addon_id=addon_id,
+                version=version,
+                addon_name=addon_name,
+            )
+        finally:
+            self._cleanup_temporary(temporary)
 
+    @_global_locked
     def register_filelike(
         self,
         *,
@@ -176,46 +235,30 @@ class ArtifactStore:
         artifact_id: str | None = None,
         chunk_size: int = 64 * 1024,
     ) -> ArtifactRecord:
-        """Register an uploaded artifact from a file-like stream.
-
-        Writes the incoming stream directly into the store directory in chunks to avoid
-        buffering the entire file in memory.
-        """
-
-        artifact_id = artifact_id or str(uuid.uuid4())
         suffix = Path(str(filename or "")).suffix or ".zip"
-        dest_name = f"{artifact_id}{suffix}"
-        dest_path = (self.root_dir / dest_name).resolve()
-
-        # Ensure parent directory exists
-        dest_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Write stream to destination in chunks
-        with dest_path.open("wb") as dst:
-            while True:
-                chunk = fileobj.read(chunk_size)
-                if not chunk:
-                    break
-                dst.write(chunk)
-
-        index = self._load_index()
-        artifacts = index.get("artifacts") or {}
-        artifacts[str(artifact_id)] = {
-            "path": str(dest_path),
-            "addon_id": addon_id,
-            "version": version,
-            "addon_name": addon_name,
-        }
-        index["artifacts"] = artifacts
-        self._save_index(index)
-
-        return ArtifactRecord(
-            artifact_id=str(artifact_id),
-            path=str(dest_path),
-            addon_id=addon_id,
-            version=version,
-            addon_name=addon_name,
+        artifact_id, index, temporary, final_path = self._begin_registration(
+            artifact_id, suffix
         )
+        try:
+            with temporary.open("wb") as destination:
+                while True:
+                    chunk = fileobj.read(chunk_size)
+                    if not chunk:
+                        break
+                    destination.write(chunk)
+                destination.flush()
+                os.fsync(destination.fileno())
+            return self._finish_registration(
+                artifact_id=artifact_id,
+                index=index,
+                temporary=temporary,
+                final_path=final_path,
+                addon_id=addon_id,
+                version=version,
+                addon_name=addon_name,
+            )
+        finally:
+            self._cleanup_temporary(temporary)
 
     def get(self, artifact_id: str) -> ArtifactRecord | None:
         artifact_id = str(artifact_id or "").strip()

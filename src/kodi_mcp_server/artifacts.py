@@ -19,6 +19,7 @@ from .paths import (
     KODI_ADDON_PACKAGES_ROOT,
     LEGACY_ADDON_ARTIFACTS_ROOT,
 )
+from .orchestration_locking import acquire_global_workflow_lock
 
 
 @dataclass(frozen=True)
@@ -75,13 +76,15 @@ class AddonArtifact:
 
     def build_legacy_zip(self) -> Path:
         """Build the legacy compatibility zip artifact at `addon/*.zip`."""
-        zip_path = self.legacy_build_zip_path
-        if zip_path.exists():
-            zip_path.unlink()
-        with ZipFile(zip_path, "w", ZIP_DEFLATED) as zf:
-            for src_path, archive_name in self.zip_members():
-                zf.write(src_path, archive_name)
-        return zip_path
+        with acquire_global_workflow_lock():
+            zip_path = self.legacy_build_zip_path
+            if zip_path.exists():
+                zip_path.unlink()
+            zip_path.parent.mkdir(parents=True, exist_ok=True)
+            with ZipFile(zip_path, "w", ZIP_DEFLATED) as zf:
+                for src_path, archive_name in self.zip_members():
+                    zf.write(src_path, archive_name)
+            return zip_path
 
 
 def read_addon_version(addon_xml_path: Path) -> str:

@@ -17,6 +17,7 @@ Notes on scope:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import hashlib
@@ -26,6 +27,8 @@ import zipfile
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
+
+from kodi_mcp_server.orchestration_locking import acquire_global_workflow_lock
 
 
 def _project_root() -> Path:
@@ -42,7 +45,7 @@ def _authoritative_repo_root() -> Path:
     return Path(REPO_ROOT)
 
 
-def _ensure_dev_repo_initialized(*, repo_root: Path) -> None:
+def _ensure_dev_repo_initialized_unlocked(*, repo_root: Path) -> None:
     """Ensure repo/dev-repo exists and has minimal metadata files.
 
     This mirrors the defensive initialization in http_app's background
@@ -66,6 +69,11 @@ def _ensure_dev_repo_initialized(*, repo_root: Path) -> None:
     if not addons_md5_path.exists():
         md5 = hashlib.md5(addons_xml_path.read_bytes()).hexdigest()
         addons_md5_path.write_text(f"{md5}  addons.xml\n", encoding="utf-8")
+
+
+def _ensure_dev_repo_initialized(*, repo_root: Path) -> None:
+    with acquire_global_workflow_lock():
+        _ensure_dev_repo_initialized_unlocked(repo_root=repo_root)
 
 
 def inspect_addon_zip(
@@ -191,7 +199,7 @@ def artifact_upload_zip(
     }
 
 
-def repo_publish_artifact(
+def _repo_publish_artifact_unlocked(
     *,
     artifact_id: str,
     addon_id: str,
@@ -333,6 +341,38 @@ def repo_publish_artifact(
     }
 
 
+def repo_publish_artifact(
+    *,
+    artifact_id: str,
+    addon_id: str,
+    addon_name: str,
+    addon_version: str,
+    provider_name: str = "kodi_mcp",
+) -> dict[str, Any]:
+    """Publish one stored artifact while serializing all shared state writes."""
+
+    repo_root = _authoritative_repo_root()
+    with acquire_global_workflow_lock():
+        return _repo_publish_artifact_unlocked(
+            artifact_id=artifact_id,
+            addon_id=addon_id,
+            addon_name=addon_name,
+            addon_version=addon_version,
+            provider_name=provider_name,
+        )
+
+
+def _prepare_current_dev_repo_zip(repo_version: str | None) -> Path:
+    """Initialize and freeze the legacy dev-repo ZIP under one server lock."""
+
+    from kodi_mcp_server.managed_addons import build_dev_repo_zip
+
+    repo_root = _authoritative_repo_root()
+    with acquire_global_workflow_lock():
+        _ensure_dev_repo_initialized_unlocked(repo_root=repo_root)
+        return build_dev_repo_zip(repo_version=repo_version)
+
+
 async def repo_stage_current_dev_repo(
     *,
     repo_version: str | None = None,
@@ -340,13 +380,9 @@ async def repo_stage_current_dev_repo(
 ) -> dict[str, Any]:
     """Build a dev-repo zip from current repo state and stage it to Kodi."""
 
-    from kodi_mcp_server.managed_addons import build_dev_repo_zip
     from kodi_mcp_server.milestone_a_bridge import stage_dev_repo_zip
 
-    repo_root = _authoritative_repo_root()
-    _ensure_dev_repo_initialized(repo_root=repo_root)
-
-    zip_path = build_dev_repo_zip(repo_version=repo_version)
+    zip_path = await asyncio.to_thread(_prepare_current_dev_repo_zip, repo_version)
     stage_out = await stage_dev_repo_zip(zip_path=str(zip_path), repo_version=repo_version, verify=verify)
     return {
         "ok": True,
@@ -455,7 +491,8 @@ async def repo_publish_stage_apply_artifact(
 ) -> dict[str, Any]:
     """One-shot agent-safe artifact publish -> stage -> apply -> verify."""
 
-    publish = repo_publish_artifact(
+    publish = await asyncio.to_thread(
+        repo_publish_artifact,
         artifact_id=artifact_id,
         addon_id=addon_id,
         addon_name=addon_name,

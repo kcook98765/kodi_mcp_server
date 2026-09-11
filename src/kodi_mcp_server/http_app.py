@@ -108,32 +108,22 @@ async def _addon_registration_loop(*, stop_event: asyncio.Event) -> None:
                                 import zipfile
                                 from pathlib import Path
 
+                                from kodi_mcp_server.dev_loop_artifacts import _ensure_dev_repo_initialized
                                 from kodi_mcp_server.milestone_a_bridge import stage_dev_repo_zip
                                 from kodi_mcp_server.repo_generator import build_repo_addon
                                 from kodi_mcp_server.paths import AUTHORITATIVE_REPO_ROOT
 
-                                # Ensure the authoritative repo content root exists so the repo add-on's
-                                # URLs have something to point at (even if empty).
-                                dev_repo_dir = AUTHORITATIVE_REPO_ROOT / "dev-repo"
-                                dev_repo_dir.mkdir(parents=True, exist_ok=True)
-                                addons_xml_path = dev_repo_dir / "addons.xml"
-                                if not addons_xml_path.exists():
-                                    addons_xml_path.write_text(
-                                        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-                                        '<addons>\n'
-                                        '</addons>\n',
-                                        encoding="utf-8",
-                                    )
-                                addons_md5_path = dev_repo_dir / "addons.xml.md5"
-                                if not addons_md5_path.exists():
-                                    import hashlib
-
-                                    md5 = hashlib.md5(addons_xml_path.read_bytes()).hexdigest()
-                                    addons_md5_path.write_text(f"{md5}  addons.xml\n", encoding="utf-8")
+                                # Both helpers coordinate through the shared global
+                                # workflow lock. Their locks are released before the
+                                # bridge network call below.
+                                await asyncio.to_thread(
+                                    _ensure_dev_repo_initialized,
+                                    repo_root=AUTHORITATIVE_REPO_ROOT,
+                                )
 
                                 # First-time onboarding needs an installable *repository add-on zip*.
                                 # Do NOT stage a raw zip of repo/dev-repo contents.
-                                repo_addon = build_repo_addon()
+                                repo_addon = await asyncio.to_thread(build_repo_addon)
                                 if repo_addon.get("status") != "ok":
                                     raise RuntimeError(f"build_repo_addon failed: {repo_addon}")
 

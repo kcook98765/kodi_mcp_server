@@ -217,6 +217,7 @@ async def test_target_info_returns_safe_detail_without_auth_or_endpoint_location
         "bridge_url",
         "websocket_url",
         "tcp_host",
+        "mutation_domain",
         '"auth"',
     ):
         assert forbidden not in rendered

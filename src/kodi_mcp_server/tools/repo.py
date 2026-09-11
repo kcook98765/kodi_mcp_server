@@ -4,12 +4,14 @@ This layer preserves the existing external tool contract while adapting inputs
 into the shared internal artifact model used across build and publish steps.
 """
 
+import asyncio
 import uuid
 from pathlib import Path
 from typing import Optional
 
 from ..config import REPO_ROOT
 from ..models.messages import ResponseMessage
+from ..orchestration_locking import OrchestrationLockTimeout
 from ..repo_ops import RepoPublisher
 
 
@@ -29,7 +31,8 @@ class RepoTool:
         provider_name: str = "kodi_mcp",
     ) -> ResponseMessage:
         try:
-            result = self.publisher.publish_addon(
+            result = await asyncio.to_thread(
+                self.publisher.publish_addon,
                 addon_zip_path=addon_zip_path,
                 addon_id=addon_id,
                 addon_name=addon_name,
@@ -41,6 +44,8 @@ class RepoTool:
                 result=result,
                 error=None,
             )
+        except OrchestrationLockTimeout:
+            raise
         except FileNotFoundError as exc:
             return ResponseMessage(
                 request_id=str(uuid.uuid4()),

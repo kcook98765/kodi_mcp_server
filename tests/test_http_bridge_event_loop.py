@@ -727,6 +727,35 @@ def test_repo_stage_upload_generic_error_mapping(tmp_path, monkeypatch):
     assert result.latency_ms is not None
 
 
+def test_repo_stage_upload_permission_error_on_open_keeps_legacy_envelope(
+    tmp_path, monkeypatch
+):
+    from pathlib import Path
+    from kodi_mcp_server.models.messages import ErrorType
+
+    zip_file = tmp_path / "dev_repo.zip"
+    zip_file.write_bytes(b"zip")
+    original_open = Path.open
+
+    def denied(self, *args, **kwargs):
+        if self == zip_file:
+            raise PermissionError("permission denied")
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", denied)
+    client = HttpBridgeClient("http://127.0.0.1:9")
+    result = _run_plain(
+        client.repo_stage_upload(repo_id="dev-repo", zip_path=str(zip_file))
+    )
+
+    assert result.request_id == "bridge-repo-stage"
+    assert result.result is None
+    assert result.error == "request failed: permission denied"
+    assert result.error_type == ErrorType.UNKNOWN_ERROR
+    assert result.error_code is None
+    assert result.latency_ms is not None
+
+
 def test_repo_stage_upload_no_retry_on_network_failure(tmp_path, monkeypatch):
     """repo_stage_upload must make exactly one connection attempt even when
     the connect itself fails (URLError) — no retry loop may be introduced.
@@ -771,4 +800,55 @@ def test_repo_stage_upload_no_retry_on_network_failure(tmp_path, monkeypatch):
     assert result.result is None
     assert result.error == "connection error: name resolution failed"
     assert result.error_type == ErrorType.NETWORK_ERROR
+
+
+def test_repo_stage_snapshot_uses_frozen_descriptor_bytes_and_exact_identity(
+    tmp_path, monkeypatch
+):
+    from kodi_mcp_server.orchestration_snapshot import create_repository_snapshot
+
+    source = tmp_path / "repo"
+    source.mkdir()
+    (source / "addons.xml").write_bytes(b"frozen-metadata")
+    captured = {}
+    client = HttpBridgeClient("http://127.0.0.1:9")
+
+    def capture_stream(repo_id, stream, size_bytes, mode, repo_version, sha256):
+        captured.update(
+            repo_id=repo_id,
+            payload=stream.read(),
+            size_bytes=size_bytes,
+            mode=mode,
+            repo_version=repo_version,
+            sha256=sha256,
+        )
+        return ResponseMessage(request_id="snapshot", result={"ok": True}, error=None)
+
+    monkeypatch.setattr(client, "_repo_stage_stream_blocking", capture_stream)
+    with create_repository_snapshot(
+        source_dir=source,
+        snapshot_root=tmp_path / "snapshots",
+        lock_root=tmp_path / "locks",
+    ) as snapshot:
+        with snapshot.open_reader() as reader:
+            expected = reader.read()
+        (source / "addons.xml").write_bytes(b"replacement-metadata")
+        result = _run_plain(
+            client.repo_stage_snapshot(
+                repo_id="dev-repo",
+                snapshot=snapshot,
+                mode="overwrite",
+                repo_version="p2",
+            )
+        )
+
+    assert result.error is None
+    assert captured == {
+        "repo_id": "dev-repo",
+        "payload": expected,
+        "size_bytes": len(expected),
+        "mode": "overwrite",
+        "repo_version": "p2",
+        "sha256": snapshot.sha256,
+    }
 
