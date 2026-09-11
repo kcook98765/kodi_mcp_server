@@ -168,10 +168,9 @@ def test_repo_generator_outputs_use_global_lock(tmp_path, monkeypatch):
 
 
 def test_real_dev_repo_gzip_writer_contends_on_snapshot_global_lock(tmp_path):
-    from kodi_mcp_server.paths import AUTHORITATIVE_REPO_ROOT
-
-    dev_repo = AUTHORITATIVE_REPO_ROOT / "dev-repo"
-    assert (dev_repo / "addons.xml").is_file()
+    dev_repo = tmp_path / "repo" / "dev-repo"
+    dev_repo.mkdir(parents=True)
+    (dev_repo / "addons.xml").write_text("<addons/>", encoding="utf-8")
     ctx = multiprocessing.get_context("spawn")
     ready = ctx.Event()
     release = ctx.Event()
