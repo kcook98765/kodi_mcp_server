@@ -1,3 +1,8 @@
+Notice: This repo has been superseded by https://github.com/kcook98765/kodi-lab
+
+
+
+
 # Kodi MCP Server
 
 This repository provides an **MCP (Model Context Protocol) server for Kodi**.
